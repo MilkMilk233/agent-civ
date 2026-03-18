@@ -237,6 +237,12 @@
       align-items: end;
     }
 
+    .toolbar-stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .toolbar-history,
     .toolbar-filters {
       display: grid;
       grid-template-columns: repeat(3, minmax(180px, 1fr));
@@ -1466,6 +1472,7 @@
 
     @media (max-width: 1480px) {
       .toolbar-bottom,
+      .toolbar-history,
       .toolbar-filters,
       .dual-grid,
       .artifact-grid,
@@ -1531,18 +1538,37 @@
         </div>
       </div>
       <div class="toolbar-bottom">
-        <div class="toolbar-filters filters">
-          <div class="field">
-            <label for="civFilter">Civilization</label>
-            <select id="civFilter"></select>
+        <div class="toolbar-stack">
+          <div class="toolbar-history filters">
+            <div class="field">
+              <label for="sourceMode">Data Source</label>
+              <select id="sourceMode">
+                <option value="live">Live stream</option>
+                <option value="replay">Stored replay</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="historyBatch">Batch</label>
+              <select id="historyBatch"></select>
+            </div>
+            <div class="field">
+              <label for="historyMatch">Match</label>
+              <select id="historyMatch"></select>
+            </div>
           </div>
-          <div class="field">
-            <label for="typeFilter">Event Type</label>
-            <select id="typeFilter"></select>
-          </div>
-          <div class="field">
-            <label for="textFilter">Search</label>
-            <input id="textFilter" type="search" placeholder="Search turns, notes, errors, prompt...">
+          <div class="toolbar-filters filters">
+            <div class="field">
+              <label for="civFilter">Civilization</label>
+              <select id="civFilter"></select>
+            </div>
+            <div class="field">
+              <label for="typeFilter">Event Type</label>
+              <select id="typeFilter"></select>
+            </div>
+            <div class="field">
+              <label for="textFilter">Search</label>
+              <input id="textFilter" type="search" placeholder="Search turns, notes, errors, prompt...">
+            </div>
           </div>
         </div>
         <div class="status-line" id="status">Connecting to the observability stream...</div>
@@ -1619,6 +1645,9 @@
     const refreshBtn = document.getElementById('refresh');
     const autoEl = document.getElementById('autorefresh');
     const showDetailsEl = document.getElementById('showDetails');
+    const sourceModeEl = document.getElementById('sourceMode');
+    const historyBatchEl = document.getElementById('historyBatch');
+    const historyMatchEl = document.getElementById('historyMatch');
     const civFilterEl = document.getElementById('civFilter');
     const typeFilterEl = document.getElementById('typeFilter');
     const textFilterEl = document.getElementById('textFilter');
@@ -1637,7 +1666,13 @@
 
     const STATE = {
       snapshot: null,
+      replay: null,
       selectedRunKey: null,
+      sourceMode: 'live',
+      historyBatches: [],
+      historyMatches: [],
+      selectedBatchId: null,
+      selectedMatchId: null,
       civFilter: 'all',
       typeFilter: 'all',
       textFilter: '',
@@ -1741,6 +1776,39 @@
     function clampText(text, maxChars) {
       const str = String(text || '');
       return str.length > maxChars ? `${str.slice(0, maxChars)}...` : str;
+    }
+
+    function formatRatePercent(rate) {
+      if (rate === null || rate === undefined || !Number.isFinite(rate)) return '-';
+      return `${(rate * 100).toFixed(1)}%`;
+    }
+
+    function batchOptionLabel(batch) {
+      const status = batch.finishedAtEpochMs ? 'complete' : 'running';
+      return `${batch.name || batch.batchId} · ${batch.completedMatches}/${batch.plannedMatches} matches · ${status}`;
+    }
+
+    function matchOptionLabel(match) {
+      const winner = match.winnerSide === 'agent'
+        ? 'agent win'
+        : match.winnerSide === 'legacy'
+          ? 'legacy win'
+          : match.winnerSide === 'draw'
+            ? 'draw'
+            : match.status;
+      return `${match.label || match.matchId} · ${winner} · T${match.totalTurns || 0}`;
+    }
+
+    function activeSnapshot() {
+      if (STATE.sourceMode === 'replay' && STATE.replay) {
+        return {
+          recentEvents: STATE.replay.recentEvents || [],
+          totalBufferedEvents: (STATE.replay.recentEvents || []).length,
+          generatedAtEpochMs: Date.now(),
+        };
+      }
+
+      return STATE.snapshot || { recentEvents: [], totalBufferedEvents: 0, generatedAtEpochMs: Date.now() };
     }
 
     function renderExpandableSection(previewHtml, fullHtml, label, expandByDefault) {
@@ -1934,6 +2002,15 @@
       ];
       selectEl.innerHTML = options.join('');
       selectEl.value = values.includes(currentValue) ? currentValue : 'all';
+    }
+
+    function buildSelectOptionsFromItems(selectEl, items, currentValue, placeholderLabel) {
+      const options = [
+        `<option value="">${esc(placeholderLabel)}</option>`,
+        ...items.map(item => `<option value="${esc(item.value)}">${esc(item.label)}</option>`),
+      ];
+      selectEl.innerHTML = options.join('');
+      selectEl.value = items.some(item => item.value === currentValue) ? currentValue : '';
     }
 
     function detailValue(event, key) {
@@ -3006,7 +3083,23 @@
     }
 
     function render() {
-      const snapshot = STATE.snapshot || { recentEvents: [], totalBufferedEvents: 0, generatedAtEpochMs: Date.now() };
+      sourceModeEl.value = STATE.sourceMode;
+      buildSelectOptionsFromItems(
+        historyBatchEl,
+        STATE.historyBatches.map(batch => ({ value: batch.batchId, label: batchOptionLabel(batch) })),
+        STATE.selectedBatchId,
+        STATE.historyBatches.length ? 'Select a batch' : 'No stored batches',
+      );
+      buildSelectOptionsFromItems(
+        historyMatchEl,
+        STATE.historyMatches.map(match => ({ value: match.matchId, label: matchOptionLabel(match) })),
+        STATE.selectedMatchId,
+        STATE.historyMatches.length ? 'Select a match' : 'No matches in batch',
+      );
+      historyBatchEl.disabled = STATE.sourceMode !== 'replay' || !STATE.historyBatches.length;
+      historyMatchEl.disabled = STATE.sourceMode !== 'replay' || !STATE.historyMatches.length;
+
+      const snapshot = activeSnapshot();
       const allRuns = buildRuns(snapshot.recentEvents || []);
       const civValues = [...new Set(allRuns.map(run => run.civName))].sort((a, b) => a.localeCompare(b));
 
@@ -3042,16 +3135,85 @@
 
       const shownEvents = selectedRun ? selectedRun.events.filter(eventMatchesFilters).length : 0;
       const totalFetched = snapshot.recentEvents ? snapshot.recentEvents.length : 0;
-      statusEl.textContent = selectedRun
-        ? `Showing ${runLabel(selectedRun)}. ${shownEvents}/${selectedRun.events.length} events match the current filters. ${totalFetched} events fetched from the server.`
-        : `No turns match the current filters. ${totalFetched} events fetched from the server.`;
+      if (STATE.sourceMode === 'replay' && STATE.replay) {
+        const batch = STATE.replay.batch;
+        const match = STATE.replay.match;
+        statusEl.textContent = selectedRun
+          ? `Replaying ${match.label || match.matchId}. Batch ${batch.name || batch.batchId}: ${batch.completedMatches}/${batch.plannedMatches} matches, agent win rate ${formatRatePercent(batch.agentWins / Math.max(batch.completedMatches || 1, 1))}, fallback rate ${formatRatePercent(batch.fallbackRate)}, illegal rate ${formatRatePercent(batch.illegalActionRate)}. ${shownEvents}/${selectedRun.events.length} events match the current filters.`
+          : `Replaying ${match.label || match.matchId}. Batch ${batch.name || batch.batchId}: ${batch.completedMatches}/${batch.plannedMatches} matches, agent win rate ${formatRatePercent(batch.agentWins / Math.max(batch.completedMatches || 1, 1))}, fallback rate ${formatRatePercent(batch.fallbackRate)}, illegal rate ${formatRatePercent(batch.illegalActionRate)}.`;
+      } else if (STATE.sourceMode === 'replay') {
+        statusEl.textContent = STATE.historyBatches.length
+          ? 'Select a stored match to replay its turn traces.'
+          : 'No stored evaluation batches were found yet.';
+      } else {
+        statusEl.textContent = selectedRun
+          ? `Showing ${runLabel(selectedRun)}. ${shownEvents}/${selectedRun.events.length} events match the current filters. ${totalFetched} events fetched from the server.`
+          : `No turns match the current filters. ${totalFetched} events fetched from the server.`;
+      }
+    }
+
+    async function loadLiveSnapshot() {
+      const response = await fetch('/api/snapshot?limit=500', { cache: 'no-store' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      STATE.snapshot = await response.json();
+      STATE.replay = null;
+    }
+
+    async function loadReplayLists() {
+      const batchesResponse = await fetch('/api/history/batches', { cache: 'no-store' });
+      if (!batchesResponse.ok) throw new Error(`HTTP ${batchesResponse.status}`);
+      STATE.historyBatches = await batchesResponse.json();
+
+      if (!STATE.historyBatches.length) {
+        STATE.historyMatches = [];
+        STATE.selectedBatchId = null;
+        STATE.selectedMatchId = null;
+        STATE.replay = null;
+        return;
+      }
+
+      if (!STATE.historyBatches.some(batch => batch.batchId === STATE.selectedBatchId)) {
+        STATE.selectedBatchId = STATE.historyBatches[0].batchId;
+      }
+
+      const matchesResponse = await fetch(`/api/history/matches?batchId=${encodeURIComponent(STATE.selectedBatchId)}`, { cache: 'no-store' });
+      if (!matchesResponse.ok) throw new Error(`HTTP ${matchesResponse.status}`);
+      STATE.historyMatches = await matchesResponse.json();
+
+      if (!STATE.historyMatches.length) {
+        STATE.selectedMatchId = null;
+        STATE.replay = null;
+        return;
+      }
+
+      if (!STATE.historyMatches.some(match => match.matchId === STATE.selectedMatchId)) {
+        STATE.selectedMatchId = STATE.historyMatches[0].matchId;
+      }
+    }
+
+    async function loadReplayMatch() {
+      if (!STATE.selectedBatchId || !STATE.selectedMatchId) {
+        STATE.replay = null;
+        return;
+      }
+
+      const response = await fetch(
+        `/api/history/replay?batchId=${encodeURIComponent(STATE.selectedBatchId)}&matchId=${encodeURIComponent(STATE.selectedMatchId)}`,
+        { cache: 'no-store' },
+      );
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      STATE.replay = await response.json();
+      STATE.snapshot = null;
     }
 
     async function load() {
       try {
-        const response = await fetch('/api/snapshot?limit=500', { cache: 'no-store' });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        STATE.snapshot = await response.json();
+        if (STATE.sourceMode === 'replay') {
+          await loadReplayLists();
+          await loadReplayMatch();
+        } else {
+          await loadLiveSnapshot();
+        }
         render();
       } catch (error) {
         statusEl.textContent = `Fetch failed: ${error.message}`;
@@ -3059,6 +3221,25 @@
     }
 
     refreshBtn.addEventListener('click', load);
+
+    sourceModeEl.addEventListener('change', async () => {
+      STATE.sourceMode = sourceModeEl.value === 'replay' ? 'replay' : 'live';
+      STATE.selectedRunKey = null;
+      await load();
+    });
+
+    historyBatchEl.addEventListener('change', async () => {
+      STATE.selectedBatchId = historyBatchEl.value || null;
+      STATE.selectedMatchId = null;
+      STATE.selectedRunKey = null;
+      await load();
+    });
+
+    historyMatchEl.addEventListener('change', async () => {
+      STATE.selectedMatchId = historyMatchEl.value || null;
+      STATE.selectedRunKey = null;
+      await load();
+    });
 
     civFilterEl.addEventListener('change', () => {
       STATE.civFilter = civFilterEl.value;

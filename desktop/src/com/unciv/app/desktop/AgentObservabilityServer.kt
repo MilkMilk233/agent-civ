@@ -7,16 +7,20 @@ import com.unciv.utils.Log
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.Executors
+import kotlinx.serialization.encodeToString
 
 object AgentObservabilityServer {
     private var server: HttpServer? = null
 
-    fun startFromEnvironment() {
+    fun startFromEnvironment(forceEnable: Boolean = false) {
         val enabled = (System.getenv("UNCIV_AGENT_OBS_ENABLED") ?: "true").lowercase() !in setOf("0", "false", "no")
-        if (!enabled) return
+        if (!enabled && !forceEnable) return
 
-        val port = (System.getenv("UNCIV_AGENT_OBS_PORT") ?: "7071").toIntOrNull() ?: 7071
-        start(port)
+        start(configuredPort())
+    }
+
+    fun configuredPort(): Int {
+        return (System.getenv("UNCIV_AGENT_OBS_PORT") ?: "7071").toIntOrNull() ?: 7071
     }
 
     private fun start(port: Int) {
@@ -34,6 +38,44 @@ object AgentObservabilityServer {
                     AgentObservability.snapshotJson(parseSnapshotLimit(exchange)),
                     "application/json; charset=utf-8",
                 )
+                "/api/history/batches" -> respond(
+                    exchange,
+                    200,
+                    AgentEvaluationJson.json.encodeToString(AgentEvaluationStore.listBatches()),
+                    "application/json; charset=utf-8",
+                )
+                "/api/history/matches" -> {
+                    val batchId = queryParam(exchange, "batchId")
+                    if (batchId.isNullOrBlank()) {
+                        respond(exchange, 400, """{"error":"Missing batchId"}""", "application/json; charset=utf-8")
+                    } else {
+                        respond(
+                            exchange,
+                            200,
+                            AgentEvaluationJson.json.encodeToString(AgentEvaluationStore.listMatches(batchId)),
+                            "application/json; charset=utf-8",
+                        )
+                    }
+                }
+                "/api/history/replay" -> {
+                    val batchId = queryParam(exchange, "batchId")
+                    val matchId = queryParam(exchange, "matchId")
+                    if (batchId.isNullOrBlank() || matchId.isNullOrBlank()) {
+                        respond(exchange, 400, """{"error":"Missing batchId or matchId"}""", "application/json; charset=utf-8")
+                    } else {
+                        val replay = AgentEvaluationStore.loadReplay(batchId, matchId)
+                        if (replay == null) {
+                            respond(exchange, 404, """{"error":"Replay not found"}""", "application/json; charset=utf-8")
+                        } else {
+                            respond(
+                                exchange,
+                                200,
+                                AgentEvaluationJson.json.encodeToString(replay),
+                                "application/json; charset=utf-8",
+                            )
+                        }
+                    }
+                }
                 else -> respond(exchange, 404, "Not found", "text/plain; charset=utf-8")
             }
         }
@@ -53,16 +95,21 @@ object AgentObservabilityServer {
     }
 
     private fun parseSnapshotLimit(exchange: HttpExchange): Int {
-        val rawQuery = exchange.requestURI.rawQuery ?: return 500
+        return queryParam(exchange, "limit")
+            ?.toIntOrNull()
+            ?.coerceIn(1, 500)
+            ?: 500
+    }
+
+    private fun queryParam(exchange: HttpExchange, name: String): String? {
+        val rawQuery = exchange.requestURI.rawQuery ?: return null
         return rawQuery
             .split('&')
             .firstNotNullOfOrNull { entry ->
                 val parts = entry.split('=', limit = 2)
-                if (parts.firstOrNull() != "limit") return@firstNotNullOfOrNull null
-                parts.getOrNull(1)?.toIntOrNull()
+                if (parts.firstOrNull() != name) return@firstNotNullOfOrNull null
+                parts.getOrNull(1)
             }
-            ?.coerceIn(1, 500)
-            ?: 500
     }
 
     private val htmlPage: String by lazy {

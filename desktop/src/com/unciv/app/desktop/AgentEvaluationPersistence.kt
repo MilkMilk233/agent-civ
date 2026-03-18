@@ -1,0 +1,532 @@
+package com.unciv.app.desktop
+
+import com.unciv.logic.GameInfo
+import com.unciv.logic.VictoryData
+import com.unciv.logic.automation.agent.AgentObservabilityEvent
+import com.unciv.logic.civilization.PlayerType
+import com.unciv.logic.files.UncivFiles
+import java.io.BufferedWriter
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
+import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
+import kotlin.io.path.exists
+import kotlin.io.path.isDirectory
+import kotlin.io.path.listDirectoryEntries
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+
+@Serializable
+data class AgentEvaluationBatchSummary(
+    val batchId: String = "",
+    val name: String = "",
+    val configPath: String = "",
+    val startedAtEpochMs: Long = 0L,
+    val finishedAtEpochMs: Long? = null,
+    val status: String = "running",
+    val requestedGames: Int = 0,
+    val plannedMatches: Int = 0,
+    val completedMatches: Int = 0,
+    val failedMatches: Int = 0,
+    val pairMatchesBySeed: Boolean = true,
+    val maxTurns: Int = 0,
+    val baseRuleset: String = "",
+    val difficulty: String = "",
+    val mapType: String = "",
+    val mapSize: String = "",
+    val agentLabel: String = "AI_AGENT",
+    val legacyLabel: String = "AI",
+    val agentWins: Int = 0,
+    val legacyWins: Int = 0,
+    val draws: Int = 0,
+    val avgTurns: Double = 0.0,
+    val avgInferenceLatencyMs: Double? = null,
+    val fallbackRate: Double = 0.0,
+    val blockedRate: Double = 0.0,
+    val illegalActionRate: Double = 0.0,
+)
+
+@Serializable
+data class AgentEvaluationMatchSummary(
+    val batchId: String = "",
+    val matchId: String = "",
+    val label: String = "",
+    val seed: Long = 0L,
+    val pairIndex: Int = 0,
+    val rolesSwapped: Boolean = false,
+    val startedAtEpochMs: Long = 0L,
+    val finishedAtEpochMs: Long? = null,
+    val status: String = "running",
+    val gameId: String = "",
+    val agentCivName: String = "",
+    val legacyCivName: String = "",
+    val winnerCivName: String? = null,
+    val winnerSide: String = "draw",
+    val victoryType: String? = null,
+    val totalTurns: Int = 0,
+    val agentTurnCount: Int = 0,
+    val fallbackTurns: Int = 0,
+    val blockedTurns: Int = 0,
+    val avgInferenceLatencyMs: Double? = null,
+    val illegalActionRate: Double = 0.0,
+    val maxRejectedActionsOnTurn: Int = 0,
+    val interesting: Boolean = false,
+    val topConcerns: List<String> = emptyList(),
+    val finalSaveFileName: String? = null,
+)
+
+@Serializable
+data class AgentEvaluationTurnSummary(
+    val civName: String = "",
+    val turn: Int = 0,
+    val status: String = "idle",
+    val statusLabel: String = "Observing",
+    val plannedActions: Int = 0,
+    val executedActions: Int = 0,
+    val rejectedActions: Int = 0,
+    val llmLatencyMs: Long? = null,
+    val fallback: Boolean = false,
+    val blocked: Boolean = false,
+    val illegalActionRate: Double = 0.0,
+    val notes: String? = null,
+    val topConcern: String? = null,
+)
+
+@Serializable
+data class AgentEvaluationReplayResponse(
+    val batch: AgentEvaluationBatchSummary,
+    val match: AgentEvaluationMatchSummary,
+    val turnSummaries: List<AgentEvaluationTurnSummary>,
+    val recentEvents: List<AgentObservabilityEvent>,
+)
+
+object AgentEvaluationJson {
+    val json = Json {
+        prettyPrint = true
+        encodeDefaults = true
+        explicitNulls = false
+        ignoreUnknownKeys = true
+    }
+
+    val compactJson = Json {
+        prettyPrint = false
+        encodeDefaults = true
+        explicitNulls = false
+        ignoreUnknownKeys = true
+    }
+}
+
+object AgentEvaluationStore {
+    private const val batchesDirName = "batches"
+    private const val batchSummaryFile = "batch-summary.json"
+    private const val matchSummaryFile = "match-summary.json"
+    private const val turnSummaryFile = "turn-summaries.json"
+    private const val eventsFile = "events.jsonl"
+    private const val configFile = "config.json"
+    private const val finalSaveFile = "final-game.uncivsave"
+
+    fun rootDir(): Path = Paths.get(
+        (System.getenv("UNCIV_AGENT_EVAL_DIR") ?: "agent-evaluations").trim().ifEmpty { "agent-evaluations" },
+    )
+
+    fun batchDir(batchId: String): Path = rootDir().resolve(batchesDirName).resolve(batchId)
+
+    fun matchDir(batchId: String, matchId: String): Path = batchDir(batchId).resolve("matches").resolve(matchId)
+
+    fun writeBatchSummary(summary: AgentEvaluationBatchSummary) {
+        writeJson(batchDir(summary.batchId).resolve(batchSummaryFile), summary)
+    }
+
+    fun writeConfig(batchId: String, rawConfigJson: String) {
+        val path = batchDir(batchId).resolve(configFile)
+        ensureParent(path)
+        Files.write(path, rawConfigJson.toByteArray(StandardCharsets.UTF_8))
+    }
+
+    fun writeMatchSummary(summary: AgentEvaluationMatchSummary) {
+        writeJson(matchDir(summary.batchId, summary.matchId).resolve(matchSummaryFile), summary)
+    }
+
+    fun writeTurnSummaries(batchId: String, matchId: String, turns: List<AgentEvaluationTurnSummary>) {
+        writeJson(matchDir(batchId, matchId).resolve(turnSummaryFile), turns)
+    }
+
+    fun createTraceWriter(batchId: String, matchId: String): AgentEvaluationTraceWriter {
+        val path = matchDir(batchId, matchId).resolve(eventsFile)
+        ensureParent(path)
+        val writer = Files.newBufferedWriter(
+            path,
+            StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.APPEND,
+        )
+        return AgentEvaluationTraceWriter(writer)
+    }
+
+    fun writeFinalSave(batchId: String, matchId: String, gameInfo: GameInfo): String {
+        val path = matchDir(batchId, matchId).resolve(finalSaveFile)
+        ensureParent(path)
+        Files.writeString(
+            path,
+            UncivFiles.gameInfoToString(gameInfo, forceZip = true, updateChecksum = true),
+            StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+            StandardOpenOption.WRITE,
+        )
+        return path.fileName.toString()
+    }
+
+    fun listBatches(limit: Int = 100): List<AgentEvaluationBatchSummary> {
+        val dir = rootDir().resolve(batchesDirName)
+        if (!dir.exists() || !dir.isDirectory()) return emptyList()
+        return dir.listDirectoryEntries()
+            .mapNotNull { entry -> readJsonOrNull<AgentEvaluationBatchSummary>(entry.resolve(batchSummaryFile)) }
+            .sortedWith(compareByDescending<AgentEvaluationBatchSummary> { it.startedAtEpochMs }.thenByDescending { it.batchId })
+            .take(limit)
+    }
+
+    fun loadBatch(batchId: String): AgentEvaluationBatchSummary? {
+        return readJsonOrNull(batchDir(batchId).resolve(batchSummaryFile))
+    }
+
+    fun listMatches(batchId: String): List<AgentEvaluationMatchSummary> {
+        val dir = batchDir(batchId).resolve("matches")
+        if (!dir.exists() || !dir.isDirectory()) return emptyList()
+        return dir.listDirectoryEntries()
+            .mapNotNull { entry -> readJsonOrNull<AgentEvaluationMatchSummary>(entry.resolve(matchSummaryFile)) }
+            .sortedWith(compareBy<AgentEvaluationMatchSummary> { it.seed }.thenBy { it.pairIndex }.thenBy { it.matchId })
+    }
+
+    fun loadTurnSummaries(batchId: String, matchId: String): List<AgentEvaluationTurnSummary> {
+        return readJsonOrNull(matchDir(batchId, matchId).resolve(turnSummaryFile)) ?: emptyList()
+    }
+
+    fun loadEvents(batchId: String, matchId: String): List<AgentObservabilityEvent> {
+        val path = matchDir(batchId, matchId).resolve(eventsFile)
+        if (!path.exists()) return emptyList()
+        val raw = Files.readString(path, StandardCharsets.UTF_8)
+        return splitSequentialJsonObjects(raw)
+            .asSequence()
+            .mapNotNull { jsonBody ->
+                runCatching { AgentEvaluationJson.json.decodeFromString<AgentObservabilityEvent>(jsonBody) }.getOrNull()
+            }
+            .toList()
+    }
+
+    fun loadReplay(batchId: String, matchId: String): AgentEvaluationReplayResponse? {
+        val batch = loadBatch(batchId) ?: return null
+        val match = readJsonOrNull<AgentEvaluationMatchSummary>(matchDir(batchId, matchId).resolve(matchSummaryFile)) ?: return null
+        return AgentEvaluationReplayResponse(
+            batch = batch,
+            match = match,
+            turnSummaries = loadTurnSummaries(batchId, matchId),
+            recentEvents = loadEvents(batchId, matchId),
+        )
+    }
+
+    private inline fun <reified T> readJsonOrNull(path: Path): T? {
+        if (!path.exists()) return null
+        return runCatching {
+            AgentEvaluationJson.json.decodeFromString<T>(Files.readString(path, StandardCharsets.UTF_8))
+        }.getOrNull()
+    }
+
+    private fun writeJson(path: Path, value: Any) {
+        ensureParent(path)
+        val tempPath = path.resolveSibling("${path.fileName}.tmp")
+        val body = when (value) {
+            is AgentEvaluationBatchSummary -> AgentEvaluationJson.json.encodeToString(value)
+            is AgentEvaluationMatchSummary -> AgentEvaluationJson.json.encodeToString(value)
+            is List<*> -> AgentEvaluationJson.json.encodeToString(value.filterIsInstance<AgentEvaluationTurnSummary>())
+            else -> error("Unsupported json payload ${value::class.qualifiedName}")
+        }
+        Files.writeString(
+            tempPath,
+            body,
+            StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+            StandardOpenOption.WRITE,
+        )
+        Files.move(tempPath, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+    }
+
+    private fun ensureParent(path: Path) {
+        Files.createDirectories(path.parent)
+    }
+
+    private fun splitSequentialJsonObjects(raw: String): List<String> {
+        val body = raw.trim()
+        if (body.isEmpty()) return emptyList()
+
+        val objects = mutableListOf<String>()
+        var depth = 0
+        var startIndex = -1
+        var inString = false
+        var escaping = false
+
+        for ((index, char) in body.withIndex()) {
+            if (escaping) {
+                escaping = false
+                continue
+            }
+
+            when (char) {
+                '\\' -> if (inString) escaping = true
+                '"' -> inString = !inString
+                '{' -> if (!inString) {
+                    if (depth == 0) startIndex = index
+                    depth++
+                }
+                '}' -> if (!inString) {
+                    depth--
+                    if (depth == 0 && startIndex >= 0) {
+                        objects += body.substring(startIndex, index + 1)
+                        startIndex = -1
+                    }
+                }
+            }
+        }
+
+        return objects
+    }
+}
+
+class AgentEvaluationTraceWriter(
+    private val writer: BufferedWriter,
+) : AutoCloseable {
+    @Synchronized
+    fun append(event: AgentObservabilityEvent) {
+        writer.write(AgentEvaluationJson.compactJson.encodeToString(event))
+        writer.newLine()
+        writer.flush()
+    }
+
+    override fun close() {
+        writer.close()
+    }
+}
+
+object AgentEvaluationAnalyzer {
+    fun analyzeTurns(events: List<AgentObservabilityEvent>, agentCivName: String): List<AgentEvaluationTurnSummary> {
+        return events
+            .groupBy { TurnKey(it.civName ?: "Unknown", it.turn ?: -1) }
+            .entries
+            .asSequence()
+            .filter { it.key.civName == agentCivName && it.key.turn >= 0 }
+            .map { (key, groupedEvents) -> analyzeTurn(key, groupedEvents.sortedBy { event -> event.epochMs }) }
+            .sortedBy { it.turn }
+            .toList()
+    }
+
+    fun buildMatchSummary(
+        batchId: String,
+        matchId: String,
+        label: String,
+        seed: Long,
+        pairIndex: Int,
+        rolesSwapped: Boolean,
+        startedAtEpochMs: Long,
+        finishedAtEpochMs: Long,
+        gameInfo: GameInfo,
+        agentCivName: String,
+        legacyCivName: String,
+        turnSummaries: List<AgentEvaluationTurnSummary>,
+        finalSaveFileName: String?,
+        failureMessage: String? = null,
+    ): AgentEvaluationMatchSummary {
+        val fallbackTurns = turnSummaries.count { it.fallback }
+        val blockedTurns = turnSummaries.count { it.blocked }
+        val avgLatency = turnSummaries.mapNotNull { it.llmLatencyMs?.toDouble() }.averageOrNull()
+        val illegalRate = turnSummaries
+            .filter { it.plannedActions > 0 }
+            .map { it.illegalActionRate }
+            .averageOrNull() ?: 0.0
+        val winnerCivName = gameInfo.victoryData?.winningCiv
+        val winnerSide = when (winnerCivName) {
+            agentCivName -> "agent"
+            legacyCivName -> "legacy"
+            null -> "draw"
+            else -> "other"
+        }
+        val topConcerns = mutableListOf<String>()
+        if (failureMessage != null) topConcerns += failureMessage
+        topConcerns += turnSummaries.mapNotNull { it.topConcern }.distinct().take(5)
+        val interesting = winnerSide != "agent" || fallbackTurns > 0 || blockedTurns > 0 || turnSummaries.any { it.rejectedActions > 0 }
+
+        return AgentEvaluationMatchSummary(
+            batchId = batchId,
+            matchId = matchId,
+            label = label,
+            seed = seed,
+            pairIndex = pairIndex,
+            rolesSwapped = rolesSwapped,
+            startedAtEpochMs = startedAtEpochMs,
+            finishedAtEpochMs = finishedAtEpochMs,
+            status = if (failureMessage == null) "completed" else "failed",
+            gameId = gameInfo.gameId,
+            agentCivName = agentCivName,
+            legacyCivName = legacyCivName,
+            winnerCivName = winnerCivName,
+            winnerSide = winnerSide,
+            victoryType = gameInfo.victoryData?.victoryType,
+            totalTurns = gameInfo.turns,
+            agentTurnCount = turnSummaries.size,
+            fallbackTurns = fallbackTurns,
+            blockedTurns = blockedTurns,
+            avgInferenceLatencyMs = avgLatency,
+            illegalActionRate = illegalRate,
+            maxRejectedActionsOnTurn = turnSummaries.maxOfOrNull { it.rejectedActions } ?: 0,
+            interesting = interesting,
+            topConcerns = topConcerns.distinct().take(5),
+            finalSaveFileName = finalSaveFileName,
+        )
+    }
+
+    fun buildBatchSummary(
+        batchId: String,
+        name: String,
+        configPath: String,
+        startedAtEpochMs: Long,
+        finishedAtEpochMs: Long?,
+        requestedGames: Int,
+        plannedMatches: Int,
+        pairMatchesBySeed: Boolean,
+        maxTurns: Int,
+        baseRuleset: String,
+        difficulty: String,
+        mapType: String,
+        mapSize: String,
+        matches: List<AgentEvaluationMatchSummary>,
+    ): AgentEvaluationBatchSummary {
+        val completedMatches = matches.count { it.status == "completed" }
+        val failedMatches = matches.count { it.status == "failed" }
+        val agentWins = matches.count { it.winnerSide == "agent" }
+        val legacyWins = matches.count { it.winnerSide == "legacy" }
+        val draws = matches.count { it.winnerSide == "draw" }
+
+        return AgentEvaluationBatchSummary(
+            batchId = batchId,
+            name = name,
+            configPath = configPath,
+            startedAtEpochMs = startedAtEpochMs,
+            finishedAtEpochMs = finishedAtEpochMs,
+            status = if (finishedAtEpochMs == null) "running" else "completed",
+            requestedGames = requestedGames,
+            plannedMatches = plannedMatches,
+            completedMatches = completedMatches,
+            failedMatches = failedMatches,
+            pairMatchesBySeed = pairMatchesBySeed,
+            maxTurns = maxTurns,
+            baseRuleset = baseRuleset,
+            difficulty = difficulty,
+            mapType = mapType,
+            mapSize = mapSize,
+            agentWins = agentWins,
+            legacyWins = legacyWins,
+            draws = draws,
+            avgTurns = matches.map { it.totalTurns.toDouble() }.averageOrNull() ?: 0.0,
+            avgInferenceLatencyMs = matches.mapNotNull { it.avgInferenceLatencyMs }.averageOrNull(),
+            fallbackRate = matches
+                .filter { it.agentTurnCount > 0 }
+                .map { it.fallbackTurns.toDouble() / it.agentTurnCount.toDouble() }
+                .averageOrNull() ?: 0.0,
+            blockedRate = matches
+                .filter { it.agentTurnCount > 0 }
+                .map { it.blockedTurns.toDouble() / it.agentTurnCount.toDouble() }
+                .averageOrNull() ?: 0.0,
+            illegalActionRate = matches.map { it.illegalActionRate }.averageOrNull() ?: 0.0,
+        )
+    }
+
+    private fun analyzeTurn(key: TurnKey, events: List<AgentObservabilityEvent>): AgentEvaluationTurnSummary {
+        val requestEvent = events.firstOrNull { it.type == "llm_request" }
+        val responseEvent = events.lastOrNull { it.type == "llm_response" }
+        val planParsedEvent = events.lastOrNull { it.type == "llm_plan_parsed" }
+        val parseErrorEvent = events.lastOrNull { it.type == "llm_parse_error" }
+        val requestErrorEvent = events.lastOrNull { it.type == "llm_request_error" }
+        val httpErrorEvent = events.lastOrNull { it.type == "llm_http_error" }
+        val planAppliedEvent = events.lastOrNull { it.type == "plan_applied" }
+        val fallbackEvent = events.lastOrNull { it.type == "fallback_legacy" }
+        val planMissingEvent = events.lastOrNull { it.type == "plan_missing" }
+        val handoffToLegacy = detail(planParsedEvent, "handoffToLegacyAI")?.toBooleanStrictOrNull() ?: false
+        val plannedActions = detail(planAppliedEvent, "plannedActions")?.toIntOrNull()
+            ?: detail(fallbackEvent, "plannedActions")?.toIntOrNull()
+            ?: detail(planParsedEvent, "actions")?.toIntOrNull()
+            ?: 0
+        val executedActions = detail(planAppliedEvent, "executedActions")?.toIntOrNull()
+            ?: detail(fallbackEvent, "executedActions")?.toIntOrNull()
+            ?: 0
+        val rejectedActions = detail(planAppliedEvent, "rejectedActions")?.toIntOrNull()
+            ?: detail(fallbackEvent, "rejectedActions")?.toIntOrNull()
+            ?: 0
+        val blocked = parseErrorEvent != null || requestErrorEvent != null || httpErrorEvent != null
+        val fallback = fallbackEvent != null || planMissingEvent != null || handoffToLegacy
+        val status = when {
+            blocked -> "blocked"
+            fallback -> "fallback"
+            planAppliedEvent != null -> "applied"
+            requestEvent != null || responseEvent != null || planParsedEvent != null -> "live"
+            else -> "idle"
+        }
+        val statusLabel = when (status) {
+            "blocked" -> "Blocked"
+            "fallback" -> "Fallback"
+            "applied" -> "Applied"
+            "live" -> "Live"
+            else -> "Observing"
+        }
+        val llmLatencyMs = diffMs(requestEvent, responseEvent ?: requestErrorEvent ?: httpErrorEvent)
+        val topConcern = when {
+            parseErrorEvent != null -> detail(parseErrorEvent, "error") ?: "Structured plan could not be decoded."
+            requestErrorEvent != null -> detail(requestErrorEvent, "error") ?: "Planner request failed."
+            httpErrorEvent != null -> "Planner returned ${detail(httpErrorEvent, "status") ?: "a non-200 status"}."
+            planMissingEvent != null -> "No structured plan was produced."
+            fallbackEvent != null -> "Legacy AI took over after plan execution."
+            handoffToLegacy -> "Model requested handoff to legacy AI."
+            rejectedActions > 0 -> "$rejectedActions actions were rejected by the engine."
+            else -> null
+        }
+
+        return AgentEvaluationTurnSummary(
+            civName = key.civName,
+            turn = key.turn,
+            status = status,
+            statusLabel = statusLabel,
+            plannedActions = plannedActions,
+            executedActions = executedActions,
+            rejectedActions = rejectedActions,
+            llmLatencyMs = llmLatencyMs,
+            fallback = fallback,
+            blocked = blocked,
+            illegalActionRate = if (plannedActions > 0) rejectedActions.toDouble() / plannedActions.toDouble() else 0.0,
+            notes = detail(planParsedEvent, "notes")?.ifBlank { null },
+            topConcern = topConcern,
+        )
+    }
+
+    private fun detail(event: AgentObservabilityEvent?, key: String): String? {
+        return event?.details?.get(key)
+    }
+
+    private fun diffMs(startEvent: AgentObservabilityEvent?, endEvent: AgentObservabilityEvent?): Long? {
+        if (startEvent == null || endEvent == null) return null
+        val delta = endEvent.epochMs - startEvent.epochMs
+        return delta.takeIf { it >= 0L }
+    }
+
+    private fun Iterable<Double>.averageOrNull(): Double? {
+        val values = toList()
+        if (values.isEmpty()) return null
+        return values.sum() / values.size.toDouble()
+    }
+
+    private data class TurnKey(
+        val civName: String,
+        val turn: Int,
+    )
+}

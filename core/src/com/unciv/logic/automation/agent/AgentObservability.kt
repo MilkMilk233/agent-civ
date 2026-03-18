@@ -14,6 +14,8 @@ object AgentObservability {
     private val nextId = AtomicLong(1)
     private val startedAtEpochMs = System.currentTimeMillis()
     private val events = ArrayDeque<AgentObservabilityEvent>()
+    private val listeners = LinkedHashMap<Long, (AgentObservabilityEvent) -> Unit>()
+    private val nextListenerId = AtomicLong(1)
 
     private val json = Json {
         prettyPrint = false
@@ -41,9 +43,18 @@ object AgentObservability {
                 .associate { it.key.take(80) to it.value.take(maxDetailValueLength) },
         )
 
-        synchronized(lock) {
+        val activeListeners = synchronized(lock) {
             events.addLast(event)
             while (events.size > maxEvents) events.removeFirst()
+            listeners.values.toList()
+        }
+
+        for (listener in activeListeners) {
+            try {
+                listener(event)
+            } catch (_: Exception) {
+                // Observability should not break the turn pipeline.
+            }
         }
     }
 
@@ -63,6 +74,26 @@ object AgentObservability {
 
     fun snapshotJson(limit: Int = 200): String {
         return json.encodeToString(snapshot(limit))
+    }
+
+    fun clear() {
+        synchronized(lock) {
+            events.clear()
+        }
+    }
+
+    fun addListener(listener: (AgentObservabilityEvent) -> Unit): Long {
+        val id = nextListenerId.getAndIncrement()
+        synchronized(lock) {
+            listeners[id] = listener
+        }
+        return id
+    }
+
+    fun removeListener(id: Long) {
+        synchronized(lock) {
+            listeners.remove(id)
+        }
     }
 }
 

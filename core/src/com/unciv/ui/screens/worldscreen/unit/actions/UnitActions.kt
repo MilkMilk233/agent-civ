@@ -135,6 +135,7 @@ object UnitActions {
 
     private suspend fun SequenceScope<UnitAction>.addUnmappedUnitActions(unit: MapUnit) {
         val tile = unit.getTile()
+        val hasWorldScreen = UncivGame.Current.worldScreen != null
 
         // General actions
         addAutomateActions(unit)
@@ -165,8 +166,10 @@ object UnitActions {
                 GUI.getMap().setCenterPosition(unit.getMovementDestination().position, true)
             })
         }
-        addEscortAction(unit)
-        addSwapAction(unit)
+        if (hasWorldScreen) {
+            addEscortAction(unit)
+            addSwapAction(unit)
+        }
         addDisbandAction(unit)
     }
 
@@ -250,6 +253,7 @@ object UnitActions {
     }
 
     private suspend fun SequenceScope<UnitAction>.addPromoteActions(unit: MapUnit) {
+        if (UncivGame.Current.worldScreen == null) return
         if (!unit.promotions.canBePromoted()) return
         // promotion does not consume movement points, but is not allowed if a unit has exhausted its movement or has attacked
         yield(UnitAction(UnitActionType.Promote,

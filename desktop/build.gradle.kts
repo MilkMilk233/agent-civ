@@ -26,6 +26,8 @@ java {
 }
 
 val mainClassName = "com.unciv.app.desktop.DesktopLauncher"
+val agentEvaluationMainClassName = "com.unciv.app.desktop.AgentBatchEvaluationLauncher"
+val agentReplayMainClassName = "com.unciv.app.desktop.AgentReplayServerLauncher"
 val assetsDir = file("../android/assets")
 val discordDir = file("discord_rpc")
 val deployFolder = file("../deploy")
@@ -47,6 +49,24 @@ tasks.register<JavaExec>("debug") {
     workingDir = assetsDir
     isIgnoreExitValue = true
     debug = true
+}
+
+tasks.register<JavaExec>("runAgentEvaluation") {
+    dependsOn(tasks.getByName("classes"))
+    mainClass.set(agentEvaluationMainClassName)
+    classpath = sourceSets.main.get().runtimeClasspath
+    standardInput = System.`in`
+    workingDir = assetsDir
+    isIgnoreExitValue = true
+}
+
+tasks.register<JavaExec>("runAgentReplay") {
+    dependsOn(tasks.getByName("classes"))
+    mainClass.set(agentReplayMainClassName)
+    classpath = sourceSets.main.get().runtimeClasspath
+    standardInput = System.`in`
+    workingDir = assetsDir
+    isIgnoreExitValue = true
 }
 
 tasks.register<Jar>("dist") { // Compiles the jar file

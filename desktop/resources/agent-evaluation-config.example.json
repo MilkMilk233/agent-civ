@@ -1,0 +1,40 @@
+{
+  "name": "agent-vs-legacy-baseline",
+  "games": 4,
+  "maxTurns": 250,
+  "seedStart": 1000,
+  "pairMatchesBySeed": true,
+  "saveFinalGames": true,
+  "saveOnlyInterestingGames": true,
+  "gameParameters": {
+    "difficulty": "King",
+    "speed": "Standard",
+    "numberOfCityStates": 0,
+    "noBarbarians": true,
+    "maxTurns": 250,
+    "players": [
+      {
+        "chosenCiv": "Germany",
+        "playerType": "AI_AGENT"
+      },
+      {
+        "chosenCiv": "Persia",
+        "playerType": "AI"
+      }
+    ]
+  },
+  "mapParameters": {
+    "type": "Pangaea",
+    "shape": "Hexagonal",
+    "mapSize": {
+      "name": "Tiny",
+      "radius": 10,
+      "width": 23,
+      "height": 15
+    },
+    "noRuins": true,
+    "noNaturalWonders": true,
+    "strategicBalance": true,
+    "legendaryStart": true
+  }
+}

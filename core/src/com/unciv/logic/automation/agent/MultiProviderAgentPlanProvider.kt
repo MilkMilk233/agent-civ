@@ -5,6 +5,7 @@ import com.unciv.utils.Log
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -13,11 +14,13 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -31,6 +34,11 @@ class MultiProviderAgentPlanProvider(
     private val baseUrl: String,
     private val provider: LlmProvider,
     private val model: String,
+    private val requestTimeoutMs: Long,
+    private val connectTimeoutMs: Long,
+    private val socketTimeoutMs: Long,
+    private val maxAttempts: Int,
+    private val retryDelayMs: Long,
 ) : AgentPlanProvider {
 
     private val json = Json {
@@ -39,6 +47,17 @@ class MultiProviderAgentPlanProvider(
     }
 
     private val client = HttpClient(CIO) {
+        engine {
+            requestTimeout = requestTimeoutMs
+            endpoint.connectTimeout = connectTimeoutMs
+            endpoint.socketTimeout = socketTimeoutMs
+            endpoint.connectAttempts = 2
+        }
+        install(HttpTimeout) {
+            requestTimeoutMillis = requestTimeoutMs
+            connectTimeoutMillis = connectTimeoutMs
+            socketTimeoutMillis = socketTimeoutMs
+        }
         install(ContentNegotiation) {
             json(json)
         }
@@ -55,6 +74,10 @@ class MultiProviderAgentPlanProvider(
                 "provider" to provider.name,
                 "model" to model,
                 "baseUrl" to baseUrl,
+                "requestTimeoutMs" to requestTimeoutMs.toString(),
+                "connectTimeoutMs" to connectTimeoutMs.toString(),
+                "socketTimeoutMs" to socketTimeoutMs.toString(),
+                "maxAttempts" to maxAttempts.toString(),
                 "prompt" to prompt,
             ),
         )
@@ -220,33 +243,72 @@ class MultiProviderAgentPlanProvider(
         useBearerToken: Boolean = true,
         civName: String? = null,
         turn: Int? = null,
-    ) = try {
-        val response = client.post(url) {
-            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
-            if (useBearerToken) header(HttpHeaders.Authorization, "Bearer $apiKey")
-            for ((name, value) in extraHeaders) header(name, value)
-            setBody(payload)
+    ): JsonObject? {
+        var lastException: Exception? = null
+        var attemptsUsed = 0
+
+        repeat(maxAttempts) { index ->
+            attemptsUsed = index + 1
+            try {
+                val response = client.post(url) {
+                    header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+                    if (useBearerToken) header(HttpHeaders.Authorization, "Bearer $apiKey")
+                    for ((name, value) in extraHeaders) header(name, value)
+                    setBody(payload)
+                }
+
+                if (response.status == HttpStatusCode.OK) {
+                    return json.parseToJsonElement(response.body<String>()).jsonObject
+                }
+
+                val shouldRetry = attemptsUsed < maxAttempts && response.status.value.let { it == 429 || it >= 500 }
+                if (shouldRetry) {
+                    Log.debug(
+                        "AI (agent): provider returned %s on attempt %s/%s, retrying url=%s",
+                        response.status,
+                        attemptsUsed,
+                        maxAttempts,
+                        url,
+                    )
+                    delay(retryDelayMs)
+                    return@repeat
+                }
+
+                Log.debug("AI (agent): provider returned %s, url=%s", response.status, url)
+                AgentObservability.record(
+                    type = "llm_http_error",
+                    message = "Provider returned non-200 status",
+                    civName = civName,
+                    turn = turn,
+                    details = mapOf(
+                        "status" to response.status.toString(),
+                        "url" to url,
+                        "provider" to provider.name,
+                        "model" to model,
+                        "attempts" to attemptsUsed.toString(),
+                        "requestTimeoutMs" to requestTimeoutMs.toString(),
+                        "connectTimeoutMs" to connectTimeoutMs.toString(),
+                        "socketTimeoutMs" to socketTimeoutMs.toString(),
+                    ),
+                )
+                return null
+            } catch (ex: Exception) {
+                lastException = ex
+                if (attemptsUsed < maxAttempts) {
+                    Log.debug(
+                        "AI (agent): provider request failed on attempt %s/%s, retrying url=%s",
+                        attemptsUsed,
+                        maxAttempts,
+                        url,
+                    )
+                    Log.debug("AI (agent): provider exception", ex)
+                    delay(retryDelayMs)
+                    return@repeat
+                }
+            }
         }
 
-        if (response.status != HttpStatusCode.OK) {
-            Log.debug("AI (agent): provider returned %s, url=%s", response.status, url)
-            AgentObservability.record(
-                type = "llm_http_error",
-                message = "Provider returned non-200 status",
-                civName = civName,
-                turn = turn,
-                details = mapOf(
-                    "status" to response.status.toString(),
-                    "url" to url,
-                    "provider" to provider.name,
-                    "model" to model,
-                ),
-            )
-            null
-        } else {
-            json.parseToJsonElement(response.body<String>()).jsonObject
-        }
-    } catch (ex: Exception) {
+        val ex = lastException ?: return null
         Log.debug("AI (agent): provider request failed, url=%s", url)
         Log.debug("AI (agent): provider exception", ex)
         AgentObservability.record(
@@ -258,10 +320,14 @@ class MultiProviderAgentPlanProvider(
                 "url" to url,
                 "provider" to provider.name,
                 "model" to model,
+                "attempts" to attemptsUsed.toString(),
+                "requestTimeoutMs" to requestTimeoutMs.toString(),
+                "connectTimeoutMs" to connectTimeoutMs.toString(),
+                "socketTimeoutMs" to socketTimeoutMs.toString(),
                 "error" to (ex.message ?: ex::class.simpleName.orEmpty()),
             ),
         )
-        null
+        return null
     }
 
     private fun String.normalizedBase(): String = trim().trimEnd('/')
@@ -289,11 +355,22 @@ class MultiProviderAgentPlanProvider(
 
     companion object {
         const val defaultGatewayBaseUrl = "https://ai-gateway.andrew.cmu.edu"
+        const val defaultRequestTimeoutMs = 60_000L
+        const val defaultConnectTimeoutMs = 10_000L
+        const val defaultSocketTimeoutMs = 60_000L
+        const val defaultMaxAttempts = 1
+        const val defaultRetryDelayMs = 1_000L
 
         fun defaultModel(provider: LlmProvider): String = when (provider) {
             LlmProvider.OpenAI -> "gpt-4o-mini"
             LlmProvider.Google -> "gemini-2.5-flash"
             LlmProvider.Anthropic -> "claude-3-5-sonnet-latest"
         }
+
+        fun envLong(name: String, default: Long): Long =
+            System.getenv(name)?.trim()?.toLongOrNull()?.takeIf { it > 0 } ?: default
+
+        fun envInt(name: String, default: Int): Int =
+            System.getenv(name)?.trim()?.toIntOrNull()?.takeIf { it > 0 } ?: default
     }
 }

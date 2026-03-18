@@ -5,7 +5,9 @@ import com.unciv.UncivGame
 import com.unciv.logic.files.FileChooser
 import com.unciv.logic.files.PlatformSaverLoader
 import com.unciv.utils.Concurrency
+import java.awt.AWTError
 import java.awt.GraphicsEnvironment
+import java.awt.HeadlessException
 import java.io.File
 
 
@@ -63,8 +65,17 @@ class LinuxX11SaverLoader : PlatformSaverLoader {
     val stage get() = UncivGame.Current.screen!!.stage
 
     companion object {
-        fun isRequired() = System.getProperty("os.name", "") == "Linux" &&
-            // System.getenv("XDG_SESSION_TYPE") == "x11" - below seems safer
-            GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice.javaClass.simpleName == "X11GraphicsDevice"
+        fun isRequired(): Boolean {
+            if (System.getProperty("os.name", "") != "Linux") return false
+
+            return try {
+                // System.getenv("XDG_SESSION_TYPE") == "x11" - below is more accurate when the X11 session is ready.
+                GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice.javaClass.simpleName == "X11GraphicsDevice"
+            } catch (_: AWTError) {
+                false
+            } catch (_: HeadlessException) {
+                false
+            }
+        }
     }
 }

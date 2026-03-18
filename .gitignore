@@ -153,6 +153,7 @@ android/assets/MultiplayerGames/
 android/assets/music/
 android/assets/SaveFiles/
 android/assets/scenarios/
+android/assets/agent-evaluations/
 
 # When running the desktop app locally using "gradlew desktop:run"
 lasterror.txt
@@ -165,6 +166,7 @@ MultiplayerGames/
 music/
 SaveFiles/
 scenarios/
+agent-evaluations/
 
 # server artifacts
 server.auth

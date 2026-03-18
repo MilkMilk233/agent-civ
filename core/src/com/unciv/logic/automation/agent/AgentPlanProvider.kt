@@ -35,6 +35,26 @@ object AgentPlanProviderFactory {
                 baseUrl = baseUrl,
                 provider = provider,
                 model = if (model.isNotEmpty()) model else MultiProviderAgentPlanProvider.defaultModel(provider),
+                requestTimeoutMs = MultiProviderAgentPlanProvider.envLong(
+                    "UNCIV_LLM_REQUEST_TIMEOUT_MS",
+                    MultiProviderAgentPlanProvider.defaultRequestTimeoutMs,
+                ),
+                connectTimeoutMs = MultiProviderAgentPlanProvider.envLong(
+                    "UNCIV_LLM_CONNECT_TIMEOUT_MS",
+                    MultiProviderAgentPlanProvider.defaultConnectTimeoutMs,
+                ),
+                socketTimeoutMs = MultiProviderAgentPlanProvider.envLong(
+                    "UNCIV_LLM_SOCKET_TIMEOUT_MS",
+                    MultiProviderAgentPlanProvider.defaultSocketTimeoutMs,
+                ),
+                maxAttempts = MultiProviderAgentPlanProvider.envInt(
+                    "UNCIV_LLM_MAX_ATTEMPTS",
+                    MultiProviderAgentPlanProvider.defaultMaxAttempts,
+                ),
+                retryDelayMs = MultiProviderAgentPlanProvider.envLong(
+                    "UNCIV_LLM_RETRY_DELAY_MS",
+                    MultiProviderAgentPlanProvider.defaultRetryDelayMs,
+                ),
             )
         } else {
             if (!warnedAboutMissingKey) {

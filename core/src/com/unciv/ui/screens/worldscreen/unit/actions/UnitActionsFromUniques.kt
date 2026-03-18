@@ -374,6 +374,7 @@ object UnitActionsFromUniques {
         if (!unit.hasUnique(UniqueType.BuildImprovements)) return@sequence
         val unitCivBestRoad = unit.civ.tech.getBestRoadAvailable()
         if (unitCivBestRoad == RoadStatus.None) return@sequence
+        val worldScreen = UncivGame.Current.worldScreen ?: return@sequence
 
         val uniquesToCheck = UnitActionModifiers.getUsableUnitActionUniques(unit, UniqueType.BuildImprovements)
 
@@ -386,8 +387,6 @@ object UnitActionsFromUniques {
 
         if(unique == null) return@sequence
         val useFrequency = getUseFrequency(unit, unique, 25f)
-
-        val worldScreen = GUI.getWorldScreen()
         yield(UnitAction(UnitActionType.ConnectRoad, useFrequency, // Press once for a multiturn command, it doesn't need to be used that frequently
                isCurrentAction = unit.isAutomatingRoadConnection(),
                action = {
@@ -465,6 +464,7 @@ object UnitActionsFromUniques {
     }
 
     internal fun getBuildingImprovementsActions(unit: MapUnit, tile: Tile): Sequence<UnitAction> {
+        if (UncivGame.Current.worldScreen == null) return emptySequence()
         if (!unit.cache.hasUniqueToBuildImprovements) return emptySequence()
         val unique = unit.getMatchingUniques(UniqueType.BuildImprovements).first()
 

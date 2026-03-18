@@ -102,10 +102,12 @@ allprojects {
 
 project(":desktop") {
     apply(plugin = "kotlin")
+    apply(plugin = "kotlinx-serialization")
 
     dependencies {
         "implementation"(project(":core"))
         "implementation"("org.jetbrains.kotlinx:kotlinx-coroutines-core:$coroutinesVersion")
+        "implementation"("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
         "implementation"("com.badlogicgames.gdx:gdx-backend-lwjgl3:$gdxVersion")
         "implementation"("com.badlogicgames.gdx:gdx-platform:$gdxVersion:natives-desktop")
 

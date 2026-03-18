@@ -1,0 +1,40 @@
+{
+  "name": "agent-vs-legacy-smoke",
+  "games": 1,
+  "maxTurns": 40,
+  "seedStart": 2000,
+  "pairMatchesBySeed": true,
+  "saveFinalGames": false,
+  "saveOnlyInterestingGames": false,
+  "gameParameters": {
+    "difficulty": "King",
+    "speed": "Standard",
+    "numberOfCityStates": 0,
+    "noBarbarians": true,
+    "maxTurns": 40,
+    "players": [
+      {
+        "chosenCiv": "Germany",
+        "playerType": "AI_AGENT"
+      },
+      {
+        "chosenCiv": "Persia",
+        "playerType": "AI"
+      }
+    ]
+  },
+  "mapParameters": {
+    "type": "Pangaea",
+    "shape": "Hexagonal",
+    "mapSize": {
+      "name": "Tiny",
+      "radius": 10,
+      "width": 23,
+      "height": 15
+    },
+    "noRuins": true,
+    "noNaturalWonders": true,
+    "strategicBalance": true,
+    "legendaryStart": true
+  }
+}

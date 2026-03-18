@@ -35,6 +35,7 @@ import kotlin.system.exitProcess
 
 internal object DesktopLauncher {
 
+    @OptIn(kotlin.time.ExperimentalTime::class)
     @JvmStatic
     fun main(arg: Array<String>) {
 
@@ -51,6 +52,17 @@ internal object DesktopLauncher {
             runBlocking {
                 CreateGameFromSettings.startGame(settingsPath)
             }
+            exitProcess(0)
+        }
+
+        val agentEvalArg = arg.find { it.startsWith("--agenteval=") }
+        if (agentEvalArg != null) {
+            AgentBatchEvaluationLauncher.main(arrayOf(agentEvalArg.substringAfter("=")))
+            exitProcess(0)
+        }
+
+        if (arg.any { it == "--agentreplay" }) {
+            AgentReplayServerLauncher.main(emptyArray())
             exitProcess(0)
         }
 

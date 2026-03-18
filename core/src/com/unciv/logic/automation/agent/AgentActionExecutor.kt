@@ -43,7 +43,24 @@ class AgentActionExecutor {
                         continue
                     }
 
-                    if (UnitActions.invokeUnitAction(unit, actionType)) executed++ else rejected++
+                    val invoked = runCatching {
+                        UnitActions.invokeUnitAction(unit, actionType)
+                    }.getOrElse { ex ->
+                        AgentObservability.record(
+                            type = "plan_action_error",
+                            message = "Unit action execution failed",
+                            civName = civInfo.civName,
+                            turn = civInfo.gameInfo.turns,
+                            details = mapOf(
+                                "unitId" to action.unitId.toString(),
+                                "actionType" to action.actionType,
+                                "error" to (ex.message ?: ex::class.simpleName.orEmpty()),
+                            ),
+                        )
+                        false
+                    }
+
+                    if (invoked) executed++ else rejected++
                 }
 
                 is AgentActionCommand.CityChooseConstruction -> {
