@@ -60,6 +60,27 @@ object AgentObservabilityServer {
                     AgentBatchRunnerService.templateConfigJson(),
                     "application/json; charset=utf-8",
                 )
+                "/api/history/runner/options" -> {
+                    val response = runCatching { AgentBatchRunnerService.formOptions() }
+                    response.fold(
+                        onSuccess = { options ->
+                            respond(
+                                exchange,
+                                200,
+                                AgentEvaluationJson.json.encodeToString(options),
+                                "application/json; charset=utf-8",
+                            )
+                        },
+                        onFailure = { error ->
+                            respond(
+                                exchange,
+                                if (error is IllegalStateException) 409 else 400,
+                                """{"error":${AgentEvaluationJson.compactJson.encodeToString(error.message ?: "Failed to load batch form options")}}""",
+                                "application/json; charset=utf-8",
+                            )
+                        },
+                    )
+                }
                 "/api/history/runner/start" -> {
                     if (exchange.requestMethod.uppercase() != "POST") {
                         respond(exchange, 405, """{"error":"Method not allowed"}""", "application/json; charset=utf-8")

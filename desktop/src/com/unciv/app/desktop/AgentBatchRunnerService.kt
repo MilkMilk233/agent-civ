@@ -1,6 +1,13 @@
 package com.unciv.app.desktop
 
+import com.unciv.Constants
 import com.unciv.json.json
+import com.unciv.logic.civilization.PlayerType
+import com.unciv.logic.map.MapShape
+import com.unciv.logic.map.MapSize
+import com.unciv.logic.map.MapType
+import com.unciv.models.metadata.BaseRuleset
+import com.unciv.models.ruleset.RulesetCache
 import com.unciv.utils.Log
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.Executors
@@ -20,6 +27,35 @@ data class AgentBatchRunnerStatus(
     val lastCompletedBatchStatus: String? = null,
     val lastError: String? = null,
     val storageDir: String = "",
+)
+
+@Serializable
+data class AgentBatchRunnerMapSizeOption(
+    val name: String,
+    val radius: Int,
+    val width: Int,
+    val height: Int,
+)
+
+@Serializable
+data class AgentBatchRunnerRulesetOptions(
+    val name: String,
+    val difficulties: List<String>,
+    val speeds: List<String>,
+    val civilizations: List<String>,
+)
+
+@Serializable
+data class AgentBatchRunnerFormOptions(
+    val defaultBaseRuleset: String = BaseRuleset.Civ_V_GnK.fullName,
+    val baseRulesets: List<String> = emptyList(),
+    val playerTypes: List<String> = emptyList(),
+    val rulesets: List<AgentBatchRunnerRulesetOptions> = emptyList(),
+    val mapTypes: List<String> = emptyList(),
+    val mapShapes: List<String> = emptyList(),
+    val mapSizes: List<AgentBatchRunnerMapSizeOption> = emptyList(),
+    val supportedCompetitivePlayerCount: Int = 2,
+    val supportsAdditionalCompetitivePlayers: Boolean = false,
 )
 
 @kotlin.time.ExperimentalTime
@@ -70,6 +106,86 @@ object AgentBatchRunnerService {
             ?.use { it.readText() }
             ?.trim()
             ?: """{"name":"agent-vs-legacy-smoke","games":1,"maxTurns":40,"seedStart":2000,"pairMatchesBySeed":true}"""
+    }
+
+    fun formOptions(): AgentBatchRunnerFormOptions {
+        synchronized(lock) {
+            check(launchEnabled) { "Batch launch options are only available from the replay server." }
+        }
+
+        AgentBatchEvaluationEnvironment.ensureReady()
+
+        val baseRulesets = RulesetCache.getSortedBaseRulesets().ifEmpty { listOf(BaseRuleset.Civ_V_GnK.fullName) }
+        val fallbackRuleset = baseRulesets.firstOrNull()?.let { RulesetCache[it] }
+            ?: RulesetCache[BaseRuleset.Civ_V_GnK.fullName]
+            ?: RulesetCache.values.firstOrNull()
+            ?: error("No rulesets are loaded for batch options")
+
+        val rulesets = baseRulesets.map { rulesetName ->
+            val ruleset = RulesetCache[rulesetName] ?: fallbackRuleset
+            AgentBatchRunnerRulesetOptions(
+                name = rulesetName,
+                difficulties = ruleset.difficulties.keys.toList(),
+                speeds = ruleset.speeds.keys.toList(),
+                civilizations = buildList {
+                    add(Constants.random)
+                    addAll(
+                        ruleset.nations.values
+                            .asSequence()
+                            .filter { it.isMajorCiv }
+                            .map { it.name }
+                            .sorted()
+                            .toList(),
+                    )
+                }.distinct(),
+            )
+        }
+
+        return AgentBatchRunnerFormOptions(
+            defaultBaseRuleset = baseRulesets.firstOrNull() ?: BaseRuleset.Civ_V_GnK.fullName,
+            baseRulesets = baseRulesets,
+            playerTypes = listOf(PlayerType.AI_AGENT.name, PlayerType.AI.name),
+            rulesets = rulesets,
+            mapTypes = listOf(
+                MapType.pangaea,
+                MapType.continentAndIslands,
+                MapType.twoContinents,
+                MapType.threeContinents,
+                MapType.fourCorners,
+                MapType.archipelago,
+                MapType.fractal,
+                MapType.innerSea,
+                MapType.lakes,
+                MapType.smallContinents,
+                MapType.perlin,
+                MapType.empty,
+            ),
+            mapShapes = listOf(
+                MapShape.hexagonal,
+                MapShape.rectangular,
+                MapShape.flatEarth,
+            ),
+            mapSizes = buildList {
+                addAll(
+                    MapSize.Predefined.entries.map { size ->
+                        AgentBatchRunnerMapSizeOption(
+                            name = size.name,
+                            radius = size.radius,
+                            width = size.width,
+                            height = size.height,
+                        )
+                    },
+                )
+                add(
+                    AgentBatchRunnerMapSizeOption(
+                        name = MapSize.custom,
+                        radius = MapSize.Tiny.radius,
+                        width = MapSize.Tiny.width,
+                        height = MapSize.Tiny.height,
+                    ),
+                )
+            },
+        )
     }
 
     fun submit(rawConfigJson: String): AgentBatchRunnerStatus {
