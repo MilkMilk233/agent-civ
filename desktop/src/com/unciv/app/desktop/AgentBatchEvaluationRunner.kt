@@ -17,6 +17,7 @@ import com.unciv.models.ruleset.RulesetCache
 import com.unciv.models.skins.SkinCache
 import com.unciv.models.tilesets.TileSetCache
 import com.unciv.utils.Log
+import java.util.concurrent.CancellationException
 import kotlin.time.ExperimentalTime
 
 data class AgentEvaluationConfig(
@@ -33,23 +34,41 @@ data class AgentEvaluationConfig(
 
 @ExperimentalTime
 object AgentBatchEvaluationRunner {
-    fun run(configPath: String) {
+    fun run(configPath: String): AgentEvaluationBatchSummary {
         val configFile = FileHandle(configPath)
         val config = json().fromJsonFile(AgentEvaluationConfig::class.java, configFile)
-        validateConfig(config)
+        return runConfig(
+            config = config,
+            configPath = configFile.path(),
+            rawConfigJson = configFile.readString(Charsets.UTF_8.name()),
+        )
+    }
 
-        val batchId = buildBatchId(config.name)
+    fun runConfig(
+        config: AgentEvaluationConfig,
+        configPath: String,
+        rawConfigJson: String,
+        batchId: String = createBatchId(config.name),
+        shouldCancel: () -> Boolean = { false },
+    ): AgentEvaluationBatchSummary {
+        validateConfig(config)
         val batchStartedAt = System.currentTimeMillis()
         val batchName = config.name.ifBlank { batchId }
         val plannedMatches = config.games * if (config.pairMatchesBySeed) 2 else 1
         val completedMatches = mutableListOf<AgentEvaluationMatchSummary>()
 
-        AgentEvaluationStore.writeConfig(batchId, configFile.readString(Charsets.UTF_8.name()))
+        fun throwIfCancelled() {
+            if (shouldCancel() || Thread.currentThread().isInterrupted) {
+                throw CancellationException("Batch cancelled by user")
+            }
+        }
+
+        AgentEvaluationStore.writeConfig(batchId, rawConfigJson)
         AgentEvaluationStore.writeBatchSummary(
             AgentEvaluationAnalyzer.buildBatchSummary(
                 batchId = batchId,
                 name = batchName,
-                configPath = configFile.path(),
+                configPath = configPath,
                 startedAtEpochMs = batchStartedAt,
                 finishedAtEpochMs = null,
                 requestedGames = config.games,
@@ -61,48 +80,101 @@ object AgentBatchEvaluationRunner {
                 mapType = config.mapParameters.type,
                 mapSize = config.mapParameters.mapSize.name,
                 matches = completedMatches,
+                statusOverride = "running",
             ),
         )
 
         println("Starting batch $batchId with $plannedMatches matches")
 
-        for (index in 0 until config.games) {
-            val seed = config.seedStart + index
-            completedMatches += runSingleMatch(
-                batchId = batchId,
-                config = config,
-                configPath = configFile.path(),
-                seed = seed,
-                pairIndex = 0,
-                rolesSwapped = false,
-            )
-            AgentEvaluationStore.writeBatchSummary(buildBatchSummary(batchId, batchName, configFile.path(), batchStartedAt, config, completedMatches, null))
+        var finalStatus = "completed"
 
-            if (config.pairMatchesBySeed) {
-                completedMatches += runSingleMatch(
+        try {
+            for (index in 0 until config.games) {
+                throwIfCancelled()
+                val seed = config.seedStart + index
+                val primaryMatch = runSingleMatch(
                     batchId = batchId,
                     config = config,
-                    configPath = configFile.path(),
+                    configPath = configPath,
                     seed = seed,
-                    pairIndex = 1,
-                    rolesSwapped = true,
+                    pairIndex = 0,
+                    rolesSwapped = false,
+                    shouldCancel = shouldCancel,
                 )
-                AgentEvaluationStore.writeBatchSummary(buildBatchSummary(batchId, batchName, configFile.path(), batchStartedAt, config, completedMatches, null))
+                completedMatches += primaryMatch
+                AgentEvaluationStore.writeBatchSummary(
+                    buildBatchSummary(
+                        batchId,
+                        batchName,
+                        configPath,
+                        batchStartedAt,
+                        config,
+                        completedMatches,
+                        null,
+                        statusOverride = "running",
+                    ),
+                )
+                if (primaryMatch.status == "cancelled") {
+                    finalStatus = "cancelled"
+                    break
+                }
+
+                if (config.pairMatchesBySeed) {
+                    throwIfCancelled()
+                    val swappedMatch = runSingleMatch(
+                        batchId = batchId,
+                        config = config,
+                        configPath = configPath,
+                        seed = seed,
+                        pairIndex = 1,
+                        rolesSwapped = true,
+                        shouldCancel = shouldCancel,
+                    )
+                    completedMatches += swappedMatch
+                    AgentEvaluationStore.writeBatchSummary(
+                        buildBatchSummary(
+                            batchId,
+                            batchName,
+                            configPath,
+                            batchStartedAt,
+                            config,
+                            completedMatches,
+                            null,
+                            statusOverride = "running",
+                        ),
+                    )
+                    if (swappedMatch.status == "cancelled") {
+                        finalStatus = "cancelled"
+                        break
+                    }
+                }
             }
+        } catch (_: CancellationException) {
+            finalStatus = "cancelled"
         }
 
         val finishedAtEpochMs = System.currentTimeMillis()
-        val finalBatchSummary = buildBatchSummary(batchId, batchName, configFile.path(), batchStartedAt, config, completedMatches, finishedAtEpochMs)
+        val finalBatchSummary = buildBatchSummary(
+            batchId,
+            batchName,
+            configPath,
+            batchStartedAt,
+            config,
+            completedMatches,
+            finishedAtEpochMs,
+            statusOverride = finalStatus,
+        )
         AgentEvaluationStore.writeBatchSummary(finalBatchSummary)
 
         println(
-            "Completed batch $batchId: " +
+            "${if (finalStatus == "cancelled") "Cancelled" else "Completed"} batch $batchId: " +
                 "agentWins=${finalBatchSummary.agentWins}, " +
                 "legacyWins=${finalBatchSummary.legacyWins}, " +
                 "draws=${finalBatchSummary.draws}, " +
                 "fallbackRate=${"%.1f".format(finalBatchSummary.fallbackRate * 100)}%, " +
                 "illegalRate=${"%.1f".format(finalBatchSummary.illegalActionRate * 100)}%",
         )
+        return finalBatchSummary
     }
 
     private fun runSingleMatch(
@@ -112,6 +184,7 @@ object AgentBatchEvaluationRunner {
         seed: Long,
         pairIndex: Int,
         rolesSwapped: Boolean,
+        shouldCancel: () -> Boolean = { false },
     ): AgentEvaluationMatchSummary {
         val startedAt = System.currentTimeMillis()
         val matchId = "$batchId-s${seed}-p${pairIndex}"
@@ -121,37 +194,49 @@ object AgentBatchEvaluationRunner {
         var listenerId: Long? = null
         var traceWriter: AgentEvaluationTraceWriter? = null
         val capturedEvents = mutableListOf<com.unciv.logic.automation.agent.AgentObservabilityEvent>()
+        var gameInfo: com.unciv.logic.GameInfo? = null
+        var agentCivName: String? = null
+        var legacyCivName: String? = null
+
+        fun throwIfCancelled() {
+            if (shouldCancel() || Thread.currentThread().isInterrupted) {
+                throw CancellationException("Batch cancelled by user")
+            }
+        }
 
         try {
+            throwIfCancelled()
             val gameParameters = config.gameParameters.deepCopyForEvaluation().withBatchDefaults()
             if (rolesSwapped) gameParameters.swapAgentAndLegacyPlayerTypes()
             val mapParameters = config.mapParameters.clone().apply { this.seed = seed }
             val gameSetupInfo = GameSetupInfo(gameParameters, mapParameters)
-            val gameInfo = GameStarter.startNewGame(gameSetupInfo)
+            gameInfo = GameStarter.startNewGame(gameSetupInfo)
             gameInfo.gameParameters.victoryTypes = ArrayList(gameInfo.ruleset.victories.keys)
             gameInfo.simulateUntilWin = true
             gameInfo.simulateMaxTurns = config.maxTurns
             UncivGame.Current.gameInfo = gameInfo
 
-            val agentCivName = gameInfo.civilizations.firstOrNull {
+            agentCivName = gameInfo.civilizations.firstOrNull {
                 !it.isSpectator() && it.isMajorCiv() && it.playerType == PlayerType.AI_AGENT
             }?.civName ?: error("No AI_AGENT civilization found after game setup")
-            val legacyCivName = gameInfo.civilizations.firstOrNull {
+            legacyCivName = gameInfo.civilizations.firstOrNull {
                 !it.isSpectator() && it.isMajorCiv() && it.playerType == PlayerType.AI
             }?.civName ?: error("No legacy AI civilization found after game setup")
+            val agentCivNameValue = agentCivName
+            val legacyCivNameValue = legacyCivName
 
             val initialSummary = AgentEvaluationMatchSummary(
                 batchId = batchId,
                 matchId = matchId,
-                label = "$label · $agentCivName vs $legacyCivName",
+                label = "$label · $agentCivNameValue vs $legacyCivNameValue",
                 seed = seed,
                 pairIndex = pairIndex,
                 rolesSwapped = rolesSwapped,
                 startedAtEpochMs = startedAt,
                 status = "running",
                 gameId = gameInfo.gameId,
-                agentCivName = agentCivName,
-                legacyCivName = legacyCivName,
+                agentCivName = agentCivNameValue,
+                legacyCivName = legacyCivNameValue,
             )
             AgentEvaluationStore.writeMatchSummary(initialSummary)
 
@@ -163,10 +248,12 @@ object AgentBatchEvaluationRunner {
             }
 
             println("Running ${initialSummary.label}")
+            throwIfCancelled()
             gameInfo.nextTurn()
+            throwIfCancelled()
 
             val finishedAt = System.currentTimeMillis()
-            val turnSummaries = AgentEvaluationAnalyzer.analyzeTurns(capturedEvents, agentCivName)
+            val turnSummaries = AgentEvaluationAnalyzer.analyzeTurns(capturedEvents, agentCivNameValue)
             AgentEvaluationStore.writeTurnSummaries(batchId, matchId, turnSummaries)
             var matchSummary = AgentEvaluationAnalyzer.buildMatchSummary(
                 batchId = batchId,
@@ -178,8 +265,8 @@ object AgentBatchEvaluationRunner {
                 startedAtEpochMs = startedAt,
                 finishedAtEpochMs = finishedAt,
                 gameInfo = gameInfo,
-                agentCivName = agentCivName,
-                legacyCivName = legacyCivName,
+                agentCivName = agentCivNameValue,
+                legacyCivName = legacyCivNameValue,
                 turnSummaries = turnSummaries,
                 finalSaveFileName = null,
             )
@@ -199,6 +286,48 @@ object AgentBatchEvaluationRunner {
                     "blockedTurns=${matchSummary.blockedTurns}",
             )
             return matchSummary
+        } catch (ex: CancellationException) {
+            val finishedAt = System.currentTimeMillis()
+            val turnSummaries = agentCivName?.let { AgentEvaluationAnalyzer.analyzeTurns(capturedEvents, it) } ?: emptyList()
+            AgentEvaluationStore.writeTurnSummaries(batchId, matchId, turnSummaries)
+
+            val cancelledSummary = if (gameInfo != null && agentCivName != null && legacyCivName != null) {
+                AgentEvaluationAnalyzer.buildMatchSummary(
+                    batchId = batchId,
+                    matchId = matchId,
+                    label = "$label · $agentCivName vs $legacyCivName",
+                    seed = seed,
+                    pairIndex = pairIndex,
+                    rolesSwapped = rolesSwapped,
+                    startedAtEpochMs = startedAt,
+                    finishedAtEpochMs = finishedAt,
+                    gameInfo = gameInfo,
+                    agentCivName = agentCivName,
+                    legacyCivName = legacyCivName,
+                    turnSummaries = turnSummaries,
+                    finalSaveFileName = null,
+                    failureMessage = "Batch cancelled by user",
+                    statusOverride = "cancelled",
+                    winnerSideOverride = "cancelled",
+                )
+            } else {
+                AgentEvaluationMatchSummary(
+                    batchId = batchId,
+                    matchId = matchId,
+                    label = label,
+                    seed = seed,
+                    pairIndex = pairIndex,
+                    rolesSwapped = rolesSwapped,
+                    startedAtEpochMs = startedAt,
+                    finishedAtEpochMs = finishedAt,
+                    status = "cancelled",
+                    winnerSide = "cancelled",
+                    topConcerns = listOf("Batch cancelled by user"),
+                )
+            }
+
+            AgentEvaluationStore.writeMatchSummary(cancelledSummary)
+            return cancelledSummary
         } catch (ex: Exception) {
             Log.error("Agent evaluation match failed", ex)
             val failureSummary = buildList {
@@ -240,6 +369,7 @@ object AgentBatchEvaluationRunner {
         config: AgentEvaluationConfig,
         matches: List<AgentEvaluationMatchSummary>,
         finishedAtEpochMs: Long?,
+        statusOverride: String? = null,
     ): AgentEvaluationBatchSummary {
         return AgentEvaluationAnalyzer.buildBatchSummary(
             batchId = batchId,
@@ -256,6 +386,7 @@ object AgentBatchEvaluationRunner {
             mapType = config.mapParameters.type,
             mapSize = config.mapParameters.mapSize.name,
             matches = matches,
+            statusOverride = statusOverride,
         )
     }
 
@@ -275,7 +406,7 @@ object AgentBatchEvaluationRunner {
         }
     }
 
-    private fun buildBatchId(name: String): String {
+    fun createBatchId(name: String): String {
         val slug = name
             .lowercase()
             .replace(Regex("[^a-z0-9]+"), "-")
@@ -324,19 +455,35 @@ internal object AgentBatchEvaluationLauncher {
     fun main(arg: Array<String>) {
         require(arg.isNotEmpty()) { "Usage: AgentBatchEvaluationLauncher <config.json>" }
 
+        AgentBatchEvaluationEnvironment.ensureReady(startObservabilityServer = true)
+        AgentBatchEvaluationRunner.run(arg[0])
+    }
+}
+
+@ExperimentalTime
+internal object AgentBatchEvaluationEnvironment {
+    private var initialized = false
+
+    @Synchronized
+    fun ensureReady(startObservabilityServer: Boolean = false) {
         Log.backend = DesktopLogBackend()
-        val game = UncivGame(true)
-        UncivGame.Current = game
-        UncivGame.Current.settings = GameSettings().apply {
-            showTutorials = false
-            turnsBetweenAutosaves = 10000
+
+        if (!initialized) {
+            val game = UncivGame(true)
+            UncivGame.Current = game
+            UncivGame.Current.settings = GameSettings().apply {
+                showTutorials = false
+                turnsBetweenAutosaves = 10000
+            }
+
+            RulesetCache.loadRulesets(true)
+            TileSetCache.loadTileSetConfigs(true)
+            SkinCache.loadSkinConfigs(true)
+            initialized = true
         }
 
-        RulesetCache.loadRulesets(true)
-        TileSetCache.loadTileSetConfigs(true)
-        SkinCache.loadSkinConfigs(true)
-        AgentObservabilityServer.startFromEnvironment()
-
-        AgentBatchEvaluationRunner.run(arg[0])
+        if (startObservabilityServer) {
+            AgentObservabilityServer.startFromEnvironment()
+        }
     }
 }

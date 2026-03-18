@@ -14,6 +14,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
+import java.util.concurrent.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.SerializationException
@@ -64,6 +65,7 @@ class MultiProviderAgentPlanProvider(
     }
 
     override fun buildPlan(observation: AgentObservation, civInfo: Civilization): AgentActionPlan? = runBlocking {
+        throwIfCancelled()
         val prompt = AgentPromptBuilder.build(observation)
         AgentObservability.record(
             type = "llm_request",
@@ -88,6 +90,7 @@ class MultiProviderAgentPlanProvider(
             provider == LlmProvider.Anthropic -> requestAnthropicDirect(prompt, civInfo.civName, civInfo.gameInfo.turns)
             else -> requestOpenAiCompatible(prompt, civInfo.civName, civInfo.gameInfo.turns)
         } ?: return@runBlocking null
+        throwIfCancelled()
 
         AgentObservability.record(
             type = "llm_response",
@@ -249,6 +252,7 @@ class MultiProviderAgentPlanProvider(
 
         repeat(maxAttempts) { index ->
             attemptsUsed = index + 1
+            throwIfCancelled()
             try {
                 val response = client.post(url) {
                     header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
@@ -256,6 +260,7 @@ class MultiProviderAgentPlanProvider(
                     for ((name, value) in extraHeaders) header(name, value)
                     setBody(payload)
                 }
+                throwIfCancelled()
 
                 if (response.status == HttpStatusCode.OK) {
                     return json.parseToJsonElement(response.body<String>()).jsonObject
@@ -293,6 +298,9 @@ class MultiProviderAgentPlanProvider(
                 )
                 return null
             } catch (ex: Exception) {
+                if (ex is CancellationException || Thread.currentThread().isInterrupted) {
+                    throw cancellationException(ex)
+                }
                 lastException = ex
                 if (attemptsUsed < maxAttempts) {
                     Log.debug(
@@ -328,6 +336,16 @@ class MultiProviderAgentPlanProvider(
             ),
         )
         return null
+    }
+
+    private fun throwIfCancelled() {
+        if (Thread.currentThread().isInterrupted) {
+            throw CancellationException("Planner request cancelled")
+        }
+    }
+
+    private fun cancellationException(cause: Exception): CancellationException {
+        return CancellationException("Planner request cancelled").apply { initCause(cause) }
     }
 
     private fun String.normalizedBase(): String = trim().trimEnd('/')

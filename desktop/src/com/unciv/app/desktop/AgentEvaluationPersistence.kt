@@ -31,6 +31,7 @@ data class AgentEvaluationBatchSummary(
     val plannedMatches: Int = 0,
     val completedMatches: Int = 0,
     val failedMatches: Int = 0,
+    val cancelledMatches: Int = 0,
     val pairMatchesBySeed: Boolean = true,
     val maxTurns: Int = 0,
     val baseRuleset: String = "",
@@ -127,6 +128,7 @@ object AgentEvaluationStore {
     private const val eventsFile = "events.jsonl"
     private const val configFile = "config.json"
     private const val finalSaveFile = "final-game.uncivsave"
+    private const val staleRunThresholdMs = 3 * 60 * 1000L
 
     fun rootDir(): Path = Paths.get(
         (System.getenv("UNCIV_AGENT_EVAL_DIR") ?: "agent-evaluations").trim().ifEmpty { "agent-evaluations" },
@@ -178,6 +180,25 @@ object AgentEvaluationStore {
             StandardOpenOption.WRITE,
         )
         return path.fileName.toString()
+    }
+
+    fun reconcileStaleRunningEntries(
+        activeBatchId: String? = null,
+        nowEpochMs: Long = System.currentTimeMillis(),
+    ) {
+        val dir = rootDir().resolve(batchesDirName)
+        if (!dir.exists() || !dir.isDirectory()) return
+
+        dir.listDirectoryEntries().forEach { entry ->
+            val batchSummary = readJsonOrNull<AgentEvaluationBatchSummary>(entry.resolve(batchSummaryFile)) ?: return@forEach
+            if (batchSummary.status != "running") return@forEach
+            if (batchSummary.batchId == activeBatchId) return@forEach
+
+            val lastActivityEpochMs = batchLastActivityEpochMs(batchSummary.batchId) ?: batchSummary.startedAtEpochMs
+            if (nowEpochMs - lastActivityEpochMs <= staleRunThresholdMs) return@forEach
+
+            abortBatch(batchSummary, lastActivityEpochMs)
+        }
     }
 
     fun listBatches(limit: Int = 100): List<AgentEvaluationBatchSummary> {
@@ -259,6 +280,99 @@ object AgentEvaluationStore {
         Files.createDirectories(path.parent)
     }
 
+    private fun abortBatch(summary: AgentEvaluationBatchSummary, finishedAtEpochMs: Long) {
+        val matches = listMatches(summary.batchId).map { matchSummary ->
+            if (matchSummary.status == "running") abortMatch(matchSummary) else matchSummary
+        }
+
+        val abortedSummary = AgentEvaluationAnalyzer.buildBatchSummary(
+            batchId = summary.batchId,
+            name = summary.name,
+            configPath = summary.configPath,
+            startedAtEpochMs = summary.startedAtEpochMs,
+            finishedAtEpochMs = finishedAtEpochMs,
+            requestedGames = summary.requestedGames,
+            plannedMatches = summary.plannedMatches,
+            pairMatchesBySeed = summary.pairMatchesBySeed,
+            maxTurns = summary.maxTurns,
+            baseRuleset = summary.baseRuleset,
+            difficulty = summary.difficulty,
+            mapType = summary.mapType,
+            mapSize = summary.mapSize,
+            matches = matches,
+            statusOverride = "aborted",
+        )
+        writeBatchSummary(abortedSummary)
+    }
+
+    private fun abortMatch(summary: AgentEvaluationMatchSummary): AgentEvaluationMatchSummary {
+        val events = loadEvents(summary.batchId, summary.matchId)
+        val existingTurnSummaries = loadTurnSummaries(summary.batchId, summary.matchId)
+        val turnSummaries = if (existingTurnSummaries.isEmpty() && summary.agentCivName.isNotBlank()) {
+            AgentEvaluationAnalyzer.analyzeTurns(events, summary.agentCivName)
+        } else {
+            existingTurnSummaries
+        }
+
+        if (turnSummaries.isNotEmpty()) {
+            writeTurnSummaries(summary.batchId, summary.matchId, turnSummaries)
+        }
+
+        val latencies = turnSummaries.mapNotNull { it.llmLatencyMs?.toDouble() }
+        val illegalRates = turnSummaries.filter { it.plannedActions > 0 }.map { it.illegalActionRate }
+        val topConcerns = buildList {
+            add("Run appears to have been interrupted before finalization.")
+            addAll(summary.topConcerns)
+            addAll(turnSummaries.mapNotNull { it.topConcern })
+        }.distinct().take(5)
+
+        val finishedAtEpochMs = listOfNotNull(
+            matchLastActivityEpochMs(summary.batchId, summary.matchId),
+            events.lastOrNull()?.epochMs,
+            summary.finishedAtEpochMs,
+        ).maxOrNull() ?: System.currentTimeMillis()
+
+        val derivedTotalTurns = turnSummaries.maxOfOrNull { it.turn } ?: summary.totalTurns
+
+        val abortedSummary = summary.copy(
+            finishedAtEpochMs = finishedAtEpochMs,
+            status = "aborted",
+            winnerSide = "aborted",
+            totalTurns = maxOf(summary.totalTurns, derivedTotalTurns),
+            agentTurnCount = maxOf(summary.agentTurnCount, turnSummaries.size),
+            fallbackTurns = maxOf(summary.fallbackTurns, turnSummaries.count { it.fallback }),
+            blockedTurns = maxOf(summary.blockedTurns, turnSummaries.count { it.blocked }),
+            avgInferenceLatencyMs = if (latencies.isNotEmpty()) latencies.average() else summary.avgInferenceLatencyMs,
+            illegalActionRate = if (illegalRates.isNotEmpty()) illegalRates.average() else summary.illegalActionRate,
+            maxRejectedActionsOnTurn = maxOf(summary.maxRejectedActionsOnTurn, turnSummaries.maxOfOrNull { it.rejectedActions } ?: 0),
+            interesting = true,
+            topConcerns = topConcerns,
+        )
+
+        writeMatchSummary(abortedSummary)
+        return abortedSummary
+    }
+
+    private fun batchLastActivityEpochMs(batchId: String): Long? {
+        return latestRegularFileMtime(batchDir(batchId))
+    }
+
+    private fun matchLastActivityEpochMs(batchId: String, matchId: String): Long? {
+        return latestRegularFileMtime(matchDir(batchId, matchId))
+    }
+
+    private fun latestRegularFileMtime(root: Path): Long? {
+        if (!root.exists()) return null
+        Files.walk(root).use { stream ->
+            val latest = stream
+                .filter { Files.isRegularFile(it) }
+                .mapToLong { Files.getLastModifiedTime(it).toMillis() }
+                .max()
+                .orElse(0L)
+            return latest.takeIf { it > 0L }
+        }
+    }
+
     private fun splitSequentialJsonObjects(raw: String): List<String> {
         val body = raw.trim()
         if (body.isEmpty()) return emptyList()
@@ -338,6 +452,8 @@ object AgentEvaluationAnalyzer {
         turnSummaries: List<AgentEvaluationTurnSummary>,
         finalSaveFileName: String?,
         failureMessage: String? = null,
+        statusOverride: String? = null,
+        winnerSideOverride: String? = null,
     ): AgentEvaluationMatchSummary {
         val fallbackTurns = turnSummaries.count { it.fallback }
         val blockedTurns = turnSummaries.count { it.blocked }
@@ -347,7 +463,7 @@ object AgentEvaluationAnalyzer {
             .map { it.illegalActionRate }
             .averageOrNull() ?: 0.0
         val winnerCivName = gameInfo.victoryData?.winningCiv
-        val winnerSide = when (winnerCivName) {
+        val winnerSide = winnerSideOverride ?: when (winnerCivName) {
             agentCivName -> "agent"
             legacyCivName -> "legacy"
             null -> "draw"
@@ -367,7 +483,7 @@ object AgentEvaluationAnalyzer {
             rolesSwapped = rolesSwapped,
             startedAtEpochMs = startedAtEpochMs,
             finishedAtEpochMs = finishedAtEpochMs,
-            status = if (failureMessage == null) "completed" else "failed",
+            status = statusOverride ?: if (failureMessage == null) "completed" else "failed",
             gameId = gameInfo.gameId,
             agentCivName = agentCivName,
             legacyCivName = legacyCivName,
@@ -402,9 +518,11 @@ object AgentEvaluationAnalyzer {
         mapType: String,
         mapSize: String,
         matches: List<AgentEvaluationMatchSummary>,
+        statusOverride: String? = null,
     ): AgentEvaluationBatchSummary {
         val completedMatches = matches.count { it.status == "completed" }
         val failedMatches = matches.count { it.status == "failed" }
+        val cancelledMatches = matches.count { it.status == "cancelled" }
         val agentWins = matches.count { it.winnerSide == "agent" }
         val legacyWins = matches.count { it.winnerSide == "legacy" }
         val draws = matches.count { it.winnerSide == "draw" }
@@ -415,11 +533,12 @@ object AgentEvaluationAnalyzer {
             configPath = configPath,
             startedAtEpochMs = startedAtEpochMs,
             finishedAtEpochMs = finishedAtEpochMs,
-            status = if (finishedAtEpochMs == null) "running" else "completed",
+            status = statusOverride ?: if (finishedAtEpochMs == null) "running" else "completed",
             requestedGames = requestedGames,
             plannedMatches = plannedMatches,
             completedMatches = completedMatches,
             failedMatches = failedMatches,
+            cancelledMatches = cancelledMatches,
             pairMatchesBySeed = pairMatchesBySeed,
             maxTurns = maxTurns,
             baseRuleset = baseRuleset,

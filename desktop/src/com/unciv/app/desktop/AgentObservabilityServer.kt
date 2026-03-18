@@ -23,6 +23,7 @@ object AgentObservabilityServer {
         return (System.getenv("UNCIV_AGENT_OBS_PORT") ?: "7071").toIntOrNull() ?: 7071
     }
 
+    @OptIn(kotlin.time.ExperimentalTime::class)
     private fun start(port: Int) {
         if (server != null) return
 
@@ -41,9 +42,79 @@ object AgentObservabilityServer {
                 "/api/history/batches" -> respond(
                     exchange,
                     200,
-                    AgentEvaluationJson.json.encodeToString(AgentEvaluationStore.listBatches()),
+                    AgentEvaluationJson.json.encodeToString(run {
+                        reconcileHistoryState()
+                        AgentEvaluationStore.listBatches()
+                    }),
                     "application/json; charset=utf-8",
                 )
+                "/api/history/runner/status" -> respond(
+                    exchange,
+                    200,
+                    AgentEvaluationJson.json.encodeToString(AgentBatchRunnerService.status()),
+                    "application/json; charset=utf-8",
+                )
+                "/api/history/runner/template" -> respond(
+                    exchange,
+                    200,
+                    AgentBatchRunnerService.templateConfigJson(),
+                    "application/json; charset=utf-8",
+                )
+                "/api/history/runner/start" -> {
+                    if (exchange.requestMethod.uppercase() != "POST") {
+                        respond(exchange, 405, """{"error":"Method not allowed"}""", "application/json; charset=utf-8")
+                    } else {
+                        val rawConfigJson = readBody(exchange)
+                        if (rawConfigJson.isBlank()) {
+                            respond(exchange, 400, """{"error":"Missing config body"}""", "application/json; charset=utf-8")
+                        } else {
+                            val response = runCatching { AgentBatchRunnerService.submit(rawConfigJson) }
+                            response.fold(
+                                onSuccess = { status ->
+                                    respond(
+                                        exchange,
+                                        200,
+                                        AgentEvaluationJson.json.encodeToString(status),
+                                        "application/json; charset=utf-8",
+                                    )
+                                },
+                                onFailure = { error ->
+                                    respond(
+                                        exchange,
+                                        if (error is IllegalStateException) 409 else 400,
+                                        """{"error":${AgentEvaluationJson.compactJson.encodeToString(error.message ?: "Failed to start batch")}}""",
+                                        "application/json; charset=utf-8",
+                                    )
+                                },
+                            )
+                        }
+                    }
+                }
+                "/api/history/runner/cancel" -> {
+                    if (exchange.requestMethod.uppercase() != "POST") {
+                        respond(exchange, 405, """{"error":"Method not allowed"}""", "application/json; charset=utf-8")
+                    } else {
+                        val response = runCatching { AgentBatchRunnerService.cancel() }
+                        response.fold(
+                            onSuccess = { status ->
+                                respond(
+                                    exchange,
+                                    200,
+                                    AgentEvaluationJson.json.encodeToString(status),
+                                    "application/json; charset=utf-8",
+                                )
+                            },
+                            onFailure = { error ->
+                                respond(
+                                    exchange,
+                                    if (error is IllegalStateException) 409 else 400,
+                                    """{"error":${AgentEvaluationJson.compactJson.encodeToString(error.message ?: "Failed to cancel batch")}}""",
+                                    "application/json; charset=utf-8",
+                                )
+                            },
+                        )
+                    }
+                }
                 "/api/history/matches" -> {
                     val batchId = queryParam(exchange, "batchId")
                     if (batchId.isNullOrBlank()) {
@@ -52,7 +123,10 @@ object AgentObservabilityServer {
                         respond(
                             exchange,
                             200,
-                            AgentEvaluationJson.json.encodeToString(AgentEvaluationStore.listMatches(batchId)),
+                            AgentEvaluationJson.json.encodeToString(run {
+                                reconcileHistoryState()
+                                AgentEvaluationStore.listMatches(batchId)
+                            }),
                             "application/json; charset=utf-8",
                         )
                     }
@@ -63,6 +137,7 @@ object AgentObservabilityServer {
                     if (batchId.isNullOrBlank() || matchId.isNullOrBlank()) {
                         respond(exchange, 400, """{"error":"Missing batchId or matchId"}""", "application/json; charset=utf-8")
                     } else {
+                        reconcileHistoryState()
                         val replay = AgentEvaluationStore.loadReplay(batchId, matchId)
                         if (replay == null) {
                             respond(exchange, 404, """{"error":"Replay not found"}""", "application/json; charset=utf-8")
@@ -85,6 +160,12 @@ object AgentObservabilityServer {
         Log.error("AI (agent) observability dashboard started on port %s", port)
     }
 
+    @OptIn(kotlin.time.ExperimentalTime::class)
+    private fun reconcileHistoryState() {
+        val activeBatchId = AgentBatchRunnerService.status().takeIf { it.running }?.currentBatchId
+        AgentEvaluationStore.reconcileStaleRunningEntries(activeBatchId = activeBatchId)
+    }
+
     private fun respond(exchange: HttpExchange, status: Int, body: String, contentType: String) {
         val bytes = body.toByteArray(StandardCharsets.UTF_8)
         exchange.responseHeaders.add("Content-Type", contentType)
@@ -99,6 +180,10 @@ object AgentObservabilityServer {
             ?.toIntOrNull()
             ?.coerceIn(1, 500)
             ?: 500
+    }
+
+    private fun readBody(exchange: HttpExchange): String {
+        return exchange.requestBody.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
     }
 
     private fun queryParam(exchange: HttpExchange, name: String): String? {

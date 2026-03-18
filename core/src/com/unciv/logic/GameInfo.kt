@@ -42,6 +42,7 @@ import yairm210.purity.annotations.Readonly
 import java.security.MessageDigest
 import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.CancellationException
 import java.util.UUID
 import java.util.*
 
@@ -342,6 +343,11 @@ class GameInfo : IsPartOfGameInfoSerialization, HasGameInfoSerializationVersion 
      *  @param shouldGainTime on a multiplayer game, if true, makes the player who's turn is ended recover time to play before risking to get forced to resign, 'false' by default 
      */
     fun nextTurn(progressBar: NextTurnProgress? = null, shouldGainTime: Boolean = false) {
+        fun throwIfInterrupted() {
+            if (Thread.currentThread().isInterrupted) {
+                throw CancellationException("Simulation cancelled")
+            }
+        }
 
         var player = currentPlayerCiv
         var playerIndex = civilizations.indexOf(player)
@@ -393,12 +399,15 @@ class GameInfo : IsPartOfGameInfoSerialization, HasGameInfoSerializationVersion 
             shouldAutoProcessHotseatPlayer() ||     // or a player is defeated in hotseat
             shouldAutoProcessOnlinePlayer())        // or player is online spectator
         {
+            throwIfInterrupted()
 
             // Starting preparations
             TurnManager(player).startTurn(progressBar)
+            throwIfInterrupted()
 
             // Automation done here
             TurnManager(player).automateTurn()
+            throwIfInterrupted()
 
             val worldScreen = UncivGame.Current.worldScreen
             // Do we need to break if player won?
@@ -414,10 +423,13 @@ class GameInfo : IsPartOfGameInfoSerialization, HasGameInfoSerializationVersion 
 
             // Clean up
             TurnManager(player).endTurn(progressBar)
+            throwIfInterrupted()
 
             // To the next player
             setNextPlayer()
         }
+
+        throwIfInterrupted()
 
         if (turns == DebugUtils.SIMULATE_UNTIL_TURN)
             DebugUtils.SIMULATE_UNTIL_TURN = 0

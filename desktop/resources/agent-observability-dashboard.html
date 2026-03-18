@@ -153,6 +153,7 @@
       gap: 10px;
       flex-wrap: wrap;
       justify-content: end;
+      align-items: center;
     }
 
     .btn {
@@ -169,8 +170,33 @@
       background: linear-gradient(180deg, rgba(28, 53, 64, 0.98), rgba(15, 32, 40, 0.98));
     }
 
+    .btn.active {
+      border-color: rgba(240, 197, 106, 0.34);
+      background: linear-gradient(180deg, rgba(240, 197, 106, 0.16), rgba(29, 39, 29, 0.92));
+      color: var(--ink);
+    }
+
+    .btn.primary {
+      border-color: rgba(240, 197, 106, 0.28);
+      background: linear-gradient(180deg, rgba(96, 79, 31, 0.98), rgba(55, 43, 17, 0.98));
+      color: var(--ink);
+    }
+
+    .btn.primary:hover {
+      border-color: rgba(240, 197, 106, 0.42);
+      background: linear-gradient(180deg, rgba(118, 96, 38, 1), rgba(67, 52, 21, 1));
+    }
+
     .btn.ghost {
       background: transparent;
+    }
+
+    .btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+      transform: none;
+      border-color: rgba(139, 172, 181, 0.14);
+      background: rgba(10, 24, 31, 0.42);
     }
 
     .checkbox {
@@ -247,6 +273,191 @@
       display: grid;
       grid-template-columns: repeat(3, minmax(180px, 1fr));
       gap: 12px;
+    }
+
+    .batch-launcher {
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 18px;
+      border: 1px solid rgba(139, 172, 181, 0.16);
+      background: rgba(8, 20, 27, 0.76);
+    }
+
+    .batch-launcher[hidden] {
+      display: none;
+    }
+
+    .batch-launcher-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: end;
+    }
+
+    .batch-launcher-title {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .batch-launcher-copy {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+      max-width: 72ch;
+    }
+
+    .batch-launcher-status {
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid rgba(139, 172, 181, 0.14);
+      background: rgba(6, 16, 22, 0.9);
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+
+    .batch-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(160px, 1fr));
+      gap: 10px;
+    }
+
+    .batch-summary-card {
+      padding: 12px 13px;
+      border-radius: 14px;
+      border: 1px solid rgba(139, 172, 181, 0.14);
+      background: rgba(6, 16, 22, 0.82);
+    }
+
+    .batch-summary-label {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .batch-summary-value {
+      margin-top: 8px;
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1.2;
+      color: var(--ink);
+    }
+
+    .batch-summary-note {
+      margin-top: 6px;
+      color: rgba(242, 236, 219, 0.68);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .batch-launcher-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .batch-launcher-toolbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .mode-switch {
+      display: inline-flex;
+      gap: 6px;
+      padding: 4px;
+      border-radius: 14px;
+      border: 1px solid rgba(139, 172, 181, 0.16);
+      background: rgba(6, 16, 22, 0.9);
+    }
+
+    .mode-btn {
+      padding: 9px 12px;
+      border: 0;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .mode-btn.active {
+      background: rgba(240, 197, 106, 0.12);
+      color: var(--ink);
+      border: 1px solid rgba(240, 197, 106, 0.24);
+    }
+
+    .batch-editor-pane[hidden] {
+      display: none;
+    }
+
+    .batch-form-layout {
+      display: grid;
+      gap: 14px;
+    }
+
+    .batch-form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(180px, 1fr));
+      gap: 12px;
+    }
+
+    .batch-form-grid .field.full {
+      grid-column: 1 / -1;
+    }
+
+    .batch-form-section {
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(139, 172, 181, 0.14);
+      background: rgba(6, 16, 22, 0.78);
+      display: grid;
+      gap: 12px;
+    }
+
+    .batch-form-section-title {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+
+    .batch-form-section-copy {
+      margin: -4px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .field-hint {
+      margin-top: -2px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .batch-check-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(180px, 1fr));
+      gap: 10px;
+    }
+
+    .checkbox.compact {
+      width: 100%;
+      justify-content: flex-start;
+      padding: 10px 12px;
+    }
+
+    .batch-help {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
     }
 
     .metric-grid {
@@ -940,13 +1151,22 @@
     }
 
     .field input,
-    .field select {
+    .field select,
+    .field textarea {
       width: 100%;
       padding: 11px 12px;
       border-radius: 14px;
       border: 1px solid rgba(139, 172, 181, 0.18);
       background: rgba(6, 16, 22, 0.92);
       color: var(--ink);
+    }
+
+    .field textarea {
+      min-height: 240px;
+      resize: vertical;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.45;
     }
 
     .dist-row {
@@ -1476,7 +1696,10 @@
       .toolbar-filters,
       .dual-grid,
       .artifact-grid,
-      .outcome-grid {
+      .outcome-grid,
+      .batch-form-grid,
+      .batch-check-grid,
+      .batch-summary-grid {
         grid-template-columns: 1fr;
       }
 
@@ -1532,6 +1755,7 @@
           <p class="toolbar-copy">Review whether each AI turn observed the world correctly, proposed a reasonable plan from that observation, and stayed clear of fallback, blocked runs, and illegal actions.</p>
         </div>
         <div class="control-row">
+          <button class="btn" id="toggleBatchLauncher" aria-expanded="false" aria-controls="batchRunnerPanel">Run new batch</button>
           <button class="btn" id="refresh">Refresh now</button>
           <label class="checkbox"><input id="autorefresh" type="checkbox" checked> Auto refresh 2s</label>
           <label class="checkbox"><input id="showDetails" type="checkbox"> Open debug blocks</label>
@@ -1570,6 +1794,137 @@
               <input id="textFilter" type="search" placeholder="Search turns, notes, errors, prompt...">
             </div>
           </div>
+          <section class="batch-launcher" id="batchRunnerPanel" hidden>
+            <div class="batch-launcher-head">
+              <div>
+                <div class="panel-kicker">Replay Workflow</div>
+                <h2 class="batch-launcher-title">Run New Batch</h2>
+                <p class="batch-launcher-copy">Launch a new persisted evaluation run from this page. Use the guided form for common settings, or switch to raw JSON when you want full control.</p>
+              </div>
+              <div class="panel-meta" id="batchRunnerMeta">Checking batch runner...</div>
+            </div>
+            <div class="batch-launcher-status" id="batchRunnerStatus">Load the replay server to launch and monitor new persisted evaluation batches from this page.</div>
+            <div class="batch-summary-grid" id="batchSummaryGrid"></div>
+            <div class="batch-launcher-toolbar">
+              <div class="mode-switch" role="tablist" aria-label="Batch editor mode">
+                <button class="mode-btn" id="batchModeForm" type="button">Guided form</button>
+                <button class="mode-btn" id="batchModeJson" type="button">Raw JSON</button>
+              </div>
+              <div class="batch-help" id="batchEditorHint">Guided form covers the common batch controls. Switch to JSON for full schema editing.</div>
+            </div>
+            <div class="batch-editor-pane" id="batchFormEditor">
+              <div class="batch-form-layout">
+                <section class="batch-form-section">
+                  <h3 class="batch-form-section-title">Batch Setup</h3>
+                  <p class="batch-form-section-copy">How many games to run and how aggressively to persist artifacts.</p>
+                  <div class="batch-form-grid">
+                    <div class="field">
+                      <label for="batchNameInput">Batch name</label>
+                      <input id="batchNameInput" type="text" placeholder="agent-vs-legacy-smoke">
+                    </div>
+                    <div class="field">
+                      <label for="batchGamesInput">Seeds / games</label>
+                      <input id="batchGamesInput" type="number" min="1" step="1">
+                      <div class="field-hint">Each seed can optionally run a swapped mirror match too.</div>
+                    </div>
+                    <div class="field">
+                      <label for="batchTurnsInput">Max turns</label>
+                      <input id="batchTurnsInput" type="number" min="1" step="1">
+                    </div>
+                    <div class="field">
+                      <label for="batchSeedInput">Starting seed</label>
+                      <input id="batchSeedInput" type="number" step="1">
+                    </div>
+                  </div>
+                  <div class="batch-check-grid">
+                    <label class="checkbox compact"><input id="batchPairMatchesInput" type="checkbox"> Run paired swapped matches</label>
+                    <label class="checkbox compact"><input id="batchSaveFinalGamesInput" type="checkbox"> Save final games</label>
+                    <label class="checkbox compact"><input id="batchSaveInterestingInput" type="checkbox"> Save only interesting games</label>
+                  </div>
+                </section>
+                <section class="batch-form-section">
+                  <h3 class="batch-form-section-title">Match Setup</h3>
+                  <p class="batch-form-section-copy">Choose the agent civ, legacy civ, and the usual gameplay setup.</p>
+                  <div class="batch-form-grid">
+                    <div class="field">
+                      <label for="batchAgentCivInput">Agent civ</label>
+                      <input id="batchAgentCivInput" type="text" placeholder="Germany">
+                    </div>
+                    <div class="field">
+                      <label for="batchLegacyCivInput">Legacy civ</label>
+                      <input id="batchLegacyCivInput" type="text" placeholder="Persia">
+                    </div>
+                    <div class="field">
+                      <label for="batchDifficultyInput">Difficulty</label>
+                      <input id="batchDifficultyInput" type="text" list="difficultyOptions" placeholder="King">
+                    </div>
+                    <div class="field">
+                      <label for="batchSpeedInput">Speed</label>
+                      <input id="batchSpeedInput" type="text" list="speedOptions" placeholder="Standard">
+                    </div>
+                    <div class="field">
+                      <label for="batchCityStatesInput">City states</label>
+                      <input id="batchCityStatesInput" type="number" min="0" step="1">
+                    </div>
+                    <div class="field">
+                      <label for="batchRulesetInput">Ruleset</label>
+                      <input id="batchRulesetInput" type="text" placeholder="Civ V - Gods & Kings">
+                    </div>
+                  </div>
+                  <div class="batch-check-grid">
+                    <label class="checkbox compact"><input id="batchNoBarbariansInput" type="checkbox"> Disable barbarians</label>
+                  </div>
+                </section>
+                <section class="batch-form-section">
+                  <h3 class="batch-form-section-title">Map Setup</h3>
+                  <p class="batch-form-section-copy">Tune the map family and size without editing raw JSON.</p>
+                  <div class="batch-form-grid">
+                    <div class="field">
+                      <label for="batchMapTypeInput">Map type</label>
+                      <input id="batchMapTypeInput" type="text" list="mapTypeOptions" placeholder="Pangaea">
+                    </div>
+                    <div class="field">
+                      <label for="batchMapShapeInput">Map shape</label>
+                      <input id="batchMapShapeInput" type="text" list="mapShapeOptions" placeholder="Hexagonal">
+                    </div>
+                    <div class="field">
+                      <label for="batchMapSizeNameInput">Map size name</label>
+                      <input id="batchMapSizeNameInput" type="text" list="mapSizeOptions" placeholder="Tiny">
+                    </div>
+                    <div class="field">
+                      <label for="batchMapRadiusInput">Radius</label>
+                      <input id="batchMapRadiusInput" type="number" min="1" step="1">
+                    </div>
+                    <div class="field">
+                      <label for="batchMapWidthInput">Width</label>
+                      <input id="batchMapWidthInput" type="number" min="1" step="1">
+                    </div>
+                    <div class="field">
+                      <label for="batchMapHeightInput">Height</label>
+                      <input id="batchMapHeightInput" type="number" min="1" step="1">
+                    </div>
+                  </div>
+                  <div class="batch-check-grid">
+                    <label class="checkbox compact"><input id="batchNoRuinsInput" type="checkbox"> Disable ruins</label>
+                    <label class="checkbox compact"><input id="batchNoNaturalWondersInput" type="checkbox"> Disable natural wonders</label>
+                    <label class="checkbox compact"><input id="batchStrategicBalanceInput" type="checkbox"> Strategic balance</label>
+                    <label class="checkbox compact"><input id="batchLegendaryStartInput" type="checkbox"> Legendary start</label>
+                  </div>
+                </section>
+              </div>
+            </div>
+            <div class="batch-editor-pane" id="batchJsonEditor">
+              <div class="field">
+                <label for="batchConfigInput">Batch config JSON</label>
+                <textarea id="batchConfigInput" spellcheck="false" placeholder="Loading default batch config..."></textarea>
+              </div>
+            </div>
+            <div class="batch-launcher-actions">
+              <button class="btn primary" id="startBatch">Launch batch</button>
+              <button class="btn ghost" id="cancelBatch">Cancel running batch</button>
+              <button class="btn ghost" id="resetBatchConfig">Restore template</button>
+            </div>
+          </section>
         </div>
         <div class="status-line" id="status">Connecting to the observability stream...</div>
       </div>
@@ -1641,16 +1996,96 @@
     </section>
   </div>
 
+  <datalist id="difficultyOptions">
+    <option value="Settler"></option>
+    <option value="Chieftain"></option>
+    <option value="Warlord"></option>
+    <option value="Prince"></option>
+    <option value="King"></option>
+    <option value="Emperor"></option>
+    <option value="Immortal"></option>
+    <option value="Deity"></option>
+  </datalist>
+
+  <datalist id="speedOptions">
+    <option value="Quick"></option>
+    <option value="Standard"></option>
+    <option value="Epic"></option>
+    <option value="Marathon"></option>
+  </datalist>
+
+  <datalist id="mapTypeOptions">
+    <option value="Pangaea"></option>
+    <option value="Continents"></option>
+    <option value="Archipelago"></option>
+    <option value="Fractal"></option>
+    <option value="Inland Sea"></option>
+    <option value="Lakes"></option>
+    <option value="Shuffle"></option>
+  </datalist>
+
+  <datalist id="mapShapeOptions">
+    <option value="Hexagonal"></option>
+    <option value="Rectangular"></option>
+  </datalist>
+
+  <datalist id="mapSizeOptions">
+    <option value="Duel"></option>
+    <option value="Tiny"></option>
+    <option value="Small"></option>
+    <option value="Medium"></option>
+    <option value="Large"></option>
+    <option value="Huge"></option>
+  </datalist>
+
   <script>
     const refreshBtn = document.getElementById('refresh');
     const autoEl = document.getElementById('autorefresh');
     const showDetailsEl = document.getElementById('showDetails');
+    const toggleBatchLauncherBtn = document.getElementById('toggleBatchLauncher');
     const sourceModeEl = document.getElementById('sourceMode');
     const historyBatchEl = document.getElementById('historyBatch');
     const historyMatchEl = document.getElementById('historyMatch');
     const civFilterEl = document.getElementById('civFilter');
     const typeFilterEl = document.getElementById('typeFilter');
     const textFilterEl = document.getElementById('textFilter');
+    const batchRunnerPanelEl = document.getElementById('batchRunnerPanel');
+    const batchRunnerMetaEl = document.getElementById('batchRunnerMeta');
+    const batchRunnerStatusEl = document.getElementById('batchRunnerStatus');
+    const batchSummaryGridEl = document.getElementById('batchSummaryGrid');
+    const batchEditorHintEl = document.getElementById('batchEditorHint');
+    const batchModeFormBtn = document.getElementById('batchModeForm');
+    const batchModeJsonBtn = document.getElementById('batchModeJson');
+    const batchFormEditorEl = document.getElementById('batchFormEditor');
+    const batchJsonEditorEl = document.getElementById('batchJsonEditor');
+    const batchConfigInputEl = document.getElementById('batchConfigInput');
+    const startBatchBtn = document.getElementById('startBatch');
+    const cancelBatchBtn = document.getElementById('cancelBatch');
+    const resetBatchConfigBtn = document.getElementById('resetBatchConfig');
+    const batchNameInputEl = document.getElementById('batchNameInput');
+    const batchGamesInputEl = document.getElementById('batchGamesInput');
+    const batchTurnsInputEl = document.getElementById('batchTurnsInput');
+    const batchSeedInputEl = document.getElementById('batchSeedInput');
+    const batchPairMatchesInputEl = document.getElementById('batchPairMatchesInput');
+    const batchSaveFinalGamesInputEl = document.getElementById('batchSaveFinalGamesInput');
+    const batchSaveInterestingInputEl = document.getElementById('batchSaveInterestingInput');
+    const batchAgentCivInputEl = document.getElementById('batchAgentCivInput');
+    const batchLegacyCivInputEl = document.getElementById('batchLegacyCivInput');
+    const batchDifficultyInputEl = document.getElementById('batchDifficultyInput');
+    const batchSpeedInputEl = document.getElementById('batchSpeedInput');
+    const batchCityStatesInputEl = document.getElementById('batchCityStatesInput');
+    const batchRulesetInputEl = document.getElementById('batchRulesetInput');
+    const batchNoBarbariansInputEl = document.getElementById('batchNoBarbariansInput');
+    const batchMapTypeInputEl = document.getElementById('batchMapTypeInput');
+    const batchMapShapeInputEl = document.getElementById('batchMapShapeInput');
+    const batchMapSizeNameInputEl = document.getElementById('batchMapSizeNameInput');
+    const batchMapRadiusInputEl = document.getElementById('batchMapRadiusInput');
+    const batchMapWidthInputEl = document.getElementById('batchMapWidthInput');
+    const batchMapHeightInputEl = document.getElementById('batchMapHeightInput');
+    const batchNoRuinsInputEl = document.getElementById('batchNoRuinsInput');
+    const batchNoNaturalWondersInputEl = document.getElementById('batchNoNaturalWondersInput');
+    const batchStrategicBalanceInputEl = document.getElementById('batchStrategicBalanceInput');
+    const batchLegendaryStartInputEl = document.getElementById('batchLegendaryStartInput');
     const statusEl = document.getElementById('status');
     const runRosterEl = document.getElementById('runRoster');
     const focusEl = document.getElementById('focusPanel');
@@ -1673,6 +2108,16 @@
       historyMatches: [],
       selectedBatchId: null,
       selectedMatchId: null,
+      pendingBatchId: null,
+      batchRunner: null,
+      batchLauncherOpen: false,
+      batchLauncherTouched: false,
+      batchEditorMode: 'form',
+      batchTemplate: '',
+      batchConfigText: '',
+      batchConfigError: null,
+      batchForm: null,
+      batchLaunchPending: false,
       civFilter: 'all',
       typeFilter: 'all',
       textFilter: '',
@@ -1783,8 +2228,210 @@
       return `${(rate * 100).toFixed(1)}%`;
     }
 
+    function defaultBatchForm() {
+      return {
+        name: 'agent-vs-legacy-smoke',
+        games: 1,
+        maxTurns: 40,
+        seedStart: 2000,
+        pairMatchesBySeed: true,
+        saveFinalGames: false,
+        saveOnlyInterestingGames: false,
+        agentCiv: 'Germany',
+        legacyCiv: 'Persia',
+        difficulty: 'King',
+        speed: 'Standard',
+        numberOfCityStates: 0,
+        baseRuleset: '',
+        noBarbarians: true,
+        mapType: 'Pangaea',
+        mapShape: 'Hexagonal',
+        mapSizeName: 'Tiny',
+        mapRadius: 10,
+        mapWidth: 23,
+        mapHeight: 15,
+        noRuins: true,
+        noNaturalWonders: true,
+        strategicBalance: true,
+        legendaryStart: true,
+      };
+    }
+
+    function numberOr(value, fallback) {
+      const num = Number(value);
+      return Number.isFinite(num) ? Math.round(num) : fallback;
+    }
+
+    function batchFormFromConfig(config) {
+      const form = defaultBatchForm();
+      const players = Array.isArray(config?.gameParameters?.players) ? config.gameParameters.players : [];
+      const agentPlayer = players.find(player => player?.playerType === 'AI_AGENT') || {};
+      const legacyPlayer = players.find(player => player?.playerType === 'AI') || {};
+      const mapSize = config?.mapParameters?.mapSize || {};
+
+      return {
+        name: String(config?.name ?? form.name),
+        games: numberOr(config?.games, form.games),
+        maxTurns: numberOr(config?.maxTurns ?? config?.gameParameters?.maxTurns, form.maxTurns),
+        seedStart: numberOr(config?.seedStart, form.seedStart),
+        pairMatchesBySeed: config?.pairMatchesBySeed ?? form.pairMatchesBySeed,
+        saveFinalGames: config?.saveFinalGames ?? form.saveFinalGames,
+        saveOnlyInterestingGames: config?.saveOnlyInterestingGames ?? form.saveOnlyInterestingGames,
+        agentCiv: String(agentPlayer?.chosenCiv ?? form.agentCiv),
+        legacyCiv: String(legacyPlayer?.chosenCiv ?? form.legacyCiv),
+        difficulty: String(config?.gameParameters?.difficulty ?? form.difficulty),
+        speed: String(config?.gameParameters?.speed ?? form.speed),
+        numberOfCityStates: numberOr(config?.gameParameters?.numberOfCityStates, form.numberOfCityStates),
+        baseRuleset: String(config?.gameParameters?.baseRuleset ?? form.baseRuleset),
+        noBarbarians: config?.gameParameters?.noBarbarians ?? form.noBarbarians,
+        mapType: String(config?.mapParameters?.type ?? form.mapType),
+        mapShape: String(config?.mapParameters?.shape ?? form.mapShape),
+        mapSizeName: String(mapSize?.name ?? form.mapSizeName),
+        mapRadius: numberOr(mapSize?.radius, form.mapRadius),
+        mapWidth: numberOr(mapSize?.width, form.mapWidth),
+        mapHeight: numberOr(mapSize?.height, form.mapHeight),
+        noRuins: config?.mapParameters?.noRuins ?? form.noRuins,
+        noNaturalWonders: config?.mapParameters?.noNaturalWonders ?? form.noNaturalWonders,
+        strategicBalance: config?.mapParameters?.strategicBalance ?? form.strategicBalance,
+        legendaryStart: config?.mapParameters?.legendaryStart ?? form.legendaryStart,
+      };
+    }
+
+    function batchConfigFromForm(form) {
+      const gameParameters = {
+        difficulty: form.difficulty,
+        speed: form.speed,
+        numberOfCityStates: numberOr(form.numberOfCityStates, 0),
+        noBarbarians: !!form.noBarbarians,
+        maxTurns: numberOr(form.maxTurns, 40),
+        players: [
+          { chosenCiv: form.agentCiv, playerType: 'AI_AGENT' },
+          { chosenCiv: form.legacyCiv, playerType: 'AI' },
+        ],
+      };
+
+      if (String(form.baseRuleset || '').trim()) {
+        gameParameters.baseRuleset = String(form.baseRuleset).trim();
+      }
+
+      return {
+        name: String(form.name || '').trim() || 'agent-vs-legacy-smoke',
+        games: numberOr(form.games, 1),
+        maxTurns: numberOr(form.maxTurns, 40),
+        seedStart: numberOr(form.seedStart, 1),
+        pairMatchesBySeed: !!form.pairMatchesBySeed,
+        saveFinalGames: !!form.saveFinalGames,
+        saveOnlyInterestingGames: !!form.saveOnlyInterestingGames,
+        gameParameters,
+        mapParameters: {
+          type: form.mapType,
+          shape: form.mapShape,
+          mapSize: {
+            name: form.mapSizeName,
+            radius: numberOr(form.mapRadius, 10),
+            width: numberOr(form.mapWidth, 23),
+            height: numberOr(form.mapHeight, 15),
+          },
+          noRuins: !!form.noRuins,
+          noNaturalWonders: !!form.noNaturalWonders,
+          strategicBalance: !!form.strategicBalance,
+          legendaryStart: !!form.legendaryStart,
+        },
+      };
+    }
+
+    function populateBatchFormInputs(form) {
+      batchNameInputEl.value = form.name;
+      batchGamesInputEl.value = form.games;
+      batchTurnsInputEl.value = form.maxTurns;
+      batchSeedInputEl.value = form.seedStart;
+      batchPairMatchesInputEl.checked = !!form.pairMatchesBySeed;
+      batchSaveFinalGamesInputEl.checked = !!form.saveFinalGames;
+      batchSaveInterestingInputEl.checked = !!form.saveOnlyInterestingGames;
+      batchAgentCivInputEl.value = form.agentCiv;
+      batchLegacyCivInputEl.value = form.legacyCiv;
+      batchDifficultyInputEl.value = form.difficulty;
+      batchSpeedInputEl.value = form.speed;
+      batchCityStatesInputEl.value = form.numberOfCityStates;
+      batchRulesetInputEl.value = form.baseRuleset;
+      batchNoBarbariansInputEl.checked = !!form.noBarbarians;
+      batchMapTypeInputEl.value = form.mapType;
+      batchMapShapeInputEl.value = form.mapShape;
+      batchMapSizeNameInputEl.value = form.mapSizeName;
+      batchMapRadiusInputEl.value = form.mapRadius;
+      batchMapWidthInputEl.value = form.mapWidth;
+      batchMapHeightInputEl.value = form.mapHeight;
+      batchNoRuinsInputEl.checked = !!form.noRuins;
+      batchNoNaturalWondersInputEl.checked = !!form.noNaturalWonders;
+      batchStrategicBalanceInputEl.checked = !!form.strategicBalance;
+      batchLegendaryStartInputEl.checked = !!form.legendaryStart;
+    }
+
+    function readBatchFormInputs() {
+      return {
+        name: batchNameInputEl.value.trim(),
+        games: numberOr(batchGamesInputEl.value, STATE.batchForm?.games ?? 1),
+        maxTurns: numberOr(batchTurnsInputEl.value, STATE.batchForm?.maxTurns ?? 40),
+        seedStart: numberOr(batchSeedInputEl.value, STATE.batchForm?.seedStart ?? 1),
+        pairMatchesBySeed: batchPairMatchesInputEl.checked,
+        saveFinalGames: batchSaveFinalGamesInputEl.checked,
+        saveOnlyInterestingGames: batchSaveInterestingInputEl.checked,
+        agentCiv: batchAgentCivInputEl.value.trim() || 'Germany',
+        legacyCiv: batchLegacyCivInputEl.value.trim() || 'Persia',
+        difficulty: batchDifficultyInputEl.value.trim() || 'King',
+        speed: batchSpeedInputEl.value.trim() || 'Standard',
+        numberOfCityStates: numberOr(batchCityStatesInputEl.value, 0),
+        baseRuleset: batchRulesetInputEl.value.trim(),
+        noBarbarians: batchNoBarbariansInputEl.checked,
+        mapType: batchMapTypeInputEl.value.trim() || 'Pangaea',
+        mapShape: batchMapShapeInputEl.value.trim() || 'Hexagonal',
+        mapSizeName: batchMapSizeNameInputEl.value.trim() || 'Tiny',
+        mapRadius: numberOr(batchMapRadiusInputEl.value, 10),
+        mapWidth: numberOr(batchMapWidthInputEl.value, 23),
+        mapHeight: numberOr(batchMapHeightInputEl.value, 15),
+        noRuins: batchNoRuinsInputEl.checked,
+        noNaturalWonders: batchNoNaturalWondersInputEl.checked,
+        strategicBalance: batchStrategicBalanceInputEl.checked,
+        legendaryStart: batchLegendaryStartInputEl.checked,
+      };
+    }
+
+    function syncBatchConfigFromForm() {
+      STATE.batchForm = readBatchFormInputs();
+      STATE.batchConfigText = JSON.stringify(batchConfigFromForm(STATE.batchForm), null, 2);
+      STATE.batchConfigError = null;
+      if (document.activeElement !== batchConfigInputEl) {
+        batchConfigInputEl.value = STATE.batchConfigText;
+      }
+    }
+
+    function applyBatchConfigText(text, syncForm = true) {
+      STATE.batchConfigText = String(text || '').trim();
+      if (!STATE.batchConfigText) {
+        STATE.batchConfigError = 'Config is empty.';
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(STATE.batchConfigText);
+        STATE.batchConfigError = null;
+        if (syncForm) {
+          STATE.batchForm = batchFormFromConfig(parsed);
+          populateBatchFormInputs(STATE.batchForm);
+        }
+      } catch (error) {
+        STATE.batchConfigError = error.message || 'Invalid JSON';
+      }
+    }
+
+    STATE.batchForm = defaultBatchForm();
+    populateBatchFormInputs(STATE.batchForm);
+    syncBatchConfigFromForm();
+
     function batchOptionLabel(batch) {
-      const status = batch.finishedAtEpochMs ? 'complete' : 'running';
+      const status = batch.status === 'completed'
+        ? 'complete'
+        : batch.status || (batch.finishedAtEpochMs ? 'complete' : 'running');
       return `${batch.name || batch.batchId} · ${batch.completedMatches}/${batch.plannedMatches} matches · ${status}`;
     }
 
@@ -1797,6 +2444,175 @@
             ? 'draw'
             : match.status;
       return `${match.label || match.matchId} · ${winner} · T${match.totalTurns || 0}`;
+    }
+
+    function batchRunnerSummary(runner) {
+      if (STATE.batchEditorMode === 'json' && STATE.batchConfigError) {
+        return `Raw JSON has a parse error: ${STATE.batchConfigError}\nFix the JSON or switch back to Guided form.`;
+      }
+      if (!runner) return 'Checking batch runner status...';
+      if (!runner.launchEnabled) {
+        return 'Batch launch is disabled in this server process. Start the replay server with --agentreplay to enable in-browser batch runs.';
+      }
+      if (runner.running && runner.cancelRequested) {
+        return `Cancel requested for ${runner.currentBatchName || runner.currentBatchId || 'batch'}.\nThe runner will stop as soon as the current in-flight turn or planner call yields control.\nArtifacts are being written to ${runner.storageDir}.`;
+      }
+      if (runner.running) {
+        return `Running ${runner.currentBatchName || runner.currentBatchId || 'batch'} since ${formatDateTime(runner.startedAtEpochMs)}.\nArtifacts are being written to ${runner.storageDir}.`;
+      }
+      if (runner.lastError) {
+        return `Last launch failed: ${runner.lastError}\nStorage dir: ${runner.storageDir}`;
+      }
+      if (runner.lastCompletedBatchId && runner.lastCompletedBatchStatus === 'cancelled') {
+        return `Idle. Last batch was cancelled: ${runner.lastCompletedBatchId}.\nStorage dir: ${runner.storageDir}`;
+      }
+      if (runner.lastCompletedBatchId) {
+        return `Idle. Last completed batch: ${runner.lastCompletedBatchId}.\nStorage dir: ${runner.storageDir}`;
+      }
+      return `Idle. New batch traces will be persisted under ${runner.storageDir}.`;
+    }
+
+    function activeBatchConfig() {
+      if (STATE.batchConfigText && !STATE.batchConfigError) {
+        try {
+          return JSON.parse(STATE.batchConfigText);
+        } catch (_) {
+          // fall through to form state
+        }
+      }
+      return batchConfigFromForm(STATE.batchForm || defaultBatchForm());
+    }
+
+    function plannedMatchCount(config) {
+      const seeds = Math.max(1, numberOr(config?.games, 1));
+      return seeds * (config?.pairMatchesBySeed ? 2 : 1);
+    }
+
+    function renderBatchSummary(config) {
+      if (STATE.batchEditorMode === 'json' && STATE.batchConfigError) {
+        return `
+          <div class="batch-summary-card">
+            <div class="batch-summary-label">Config state</div>
+            <div class="batch-summary-value">Needs review</div>
+            <div class="batch-summary-note">${esc(STATE.batchConfigError)}</div>
+          </div>
+        `;
+      }
+
+      const seeds = Math.max(1, numberOr(config?.games, 1));
+      const totalMatches = plannedMatchCount(config);
+      const players = Array.isArray(config?.gameParameters?.players) ? config.gameParameters.players : [];
+      const agentPlayer = players.find(player => player?.playerType === 'AI_AGENT');
+      const legacyPlayer = players.find(player => player?.playerType === 'AI');
+      const mapSize = config?.mapParameters?.mapSize || {};
+      const persistenceFlags = [
+        config?.saveFinalGames ? 'final saves on' : 'final saves off',
+        config?.saveOnlyInterestingGames ? 'interesting-only saves' : 'save every result',
+      ];
+
+      return [
+        {
+          label: 'Planned run',
+          value: `${totalMatches} matches`,
+          note: `${seeds} seed${seeds === 1 ? '' : 's'}${config?.pairMatchesBySeed ? ' with swapped mirror games' : ''}`,
+        },
+        {
+          label: 'Matchup',
+          value: `${agentPlayer?.chosenCiv || 'Agent'} vs ${legacyPlayer?.chosenCiv || 'Legacy'}`,
+          note: `${config?.gameParameters?.difficulty || 'Difficulty ?'} · ${config?.gameParameters?.speed || 'Speed ?'} · ${numberOr(config?.maxTurns ?? config?.gameParameters?.maxTurns, 0)} turn cap`,
+        },
+        {
+          label: 'Map',
+          value: `${config?.mapParameters?.type || 'Map ?'} · ${mapSize?.name || 'Size ?'}`,
+          note: `${config?.mapParameters?.shape || 'Shape ?'} · radius ${numberOr(mapSize?.radius, 0)} · ${numberOr(mapSize?.width, 0)}x${numberOr(mapSize?.height, 0)}`,
+        },
+        {
+          label: 'Persistence',
+          value: String(config?.name || 'unnamed-batch'),
+          note: persistenceFlags.join(' · '),
+        },
+      ].map(card => `
+        <div class="batch-summary-card">
+          <div class="batch-summary-label">${esc(card.label)}</div>
+          <div class="batch-summary-value">${esc(card.value)}</div>
+          <div class="batch-summary-note">${esc(card.note)}</div>
+        </div>
+      `).join('');
+    }
+
+    function renderBatchRunner() {
+      const runner = STATE.batchRunner;
+      const launchEnabled = !!runner?.launchEnabled;
+      const isBusy = !!runner?.running || STATE.batchLaunchPending;
+      const isJsonMode = STATE.batchEditorMode === 'json';
+      const cancelPending = !!runner?.running && !!runner?.cancelRequested;
+      const canLaunch = launchEnabled && !isBusy && !!STATE.batchConfigText.trim() && (!isJsonMode || !STATE.batchConfigError);
+      const configForSummary = activeBatchConfig();
+
+      toggleBatchLauncherBtn.textContent = STATE.batchLauncherOpen
+        ? 'Hide batch panel'
+        : (cancelPending ? 'Stopping batch...' : runner?.running ? 'Batch running' : 'Run new batch');
+      toggleBatchLauncherBtn.classList.toggle('active', STATE.batchLauncherOpen);
+      toggleBatchLauncherBtn.setAttribute('aria-expanded', STATE.batchLauncherOpen ? 'true' : 'false');
+      batchRunnerPanelEl.hidden = !STATE.batchLauncherOpen;
+      batchRunnerMetaEl.textContent = !runner
+        ? 'Checking...'
+        : launchEnabled
+          ? (cancelPending ? 'Stopping…' : runner.running ? 'Batch running' : 'Ready')
+          : 'Unavailable here';
+      batchRunnerStatusEl.textContent = batchRunnerSummary(runner);
+      batchSummaryGridEl.innerHTML = renderBatchSummary(configForSummary);
+      batchEditorHintEl.textContent = isJsonMode
+        ? 'Use raw JSON when you want the full batch schema. Launch stays disabled until the JSON parses cleanly.'
+        : 'Guided form covers the common batch controls. The JSON editor stays in sync so you can still inspect the exact payload before launch.';
+
+      batchModeFormBtn.classList.toggle('active', !isJsonMode);
+      batchModeJsonBtn.classList.toggle('active', isJsonMode);
+      batchModeFormBtn.setAttribute('aria-pressed', !isJsonMode ? 'true' : 'false');
+      batchModeJsonBtn.setAttribute('aria-pressed', isJsonMode ? 'true' : 'false');
+      batchFormEditorEl.hidden = isJsonMode;
+      batchJsonEditorEl.hidden = !isJsonMode;
+
+      if (document.activeElement !== batchConfigInputEl && batchConfigInputEl.value !== STATE.batchConfigText) {
+        batchConfigInputEl.value = STATE.batchConfigText;
+      }
+
+      batchConfigInputEl.disabled = !launchEnabled || isBusy || !isJsonMode;
+      [
+        batchNameInputEl,
+        batchGamesInputEl,
+        batchTurnsInputEl,
+        batchSeedInputEl,
+        batchPairMatchesInputEl,
+        batchSaveFinalGamesInputEl,
+        batchSaveInterestingInputEl,
+        batchAgentCivInputEl,
+        batchLegacyCivInputEl,
+        batchDifficultyInputEl,
+        batchSpeedInputEl,
+        batchCityStatesInputEl,
+        batchRulesetInputEl,
+        batchNoBarbariansInputEl,
+        batchMapTypeInputEl,
+        batchMapShapeInputEl,
+        batchMapSizeNameInputEl,
+        batchMapRadiusInputEl,
+        batchMapWidthInputEl,
+        batchMapHeightInputEl,
+        batchNoRuinsInputEl,
+        batchNoNaturalWondersInputEl,
+        batchStrategicBalanceInputEl,
+        batchLegendaryStartInputEl,
+      ].forEach(input => {
+        input.disabled = !launchEnabled || isBusy || isJsonMode;
+      });
+
+      startBatchBtn.disabled = !canLaunch;
+      startBatchBtn.textContent = runner?.running ? 'Batch running' : STATE.batchLaunchPending ? 'Launching...' : 'Launch batch';
+      cancelBatchBtn.hidden = !runner?.running;
+      cancelBatchBtn.disabled = !runner?.running || !!runner?.cancelRequested;
+      cancelBatchBtn.textContent = runner?.cancelRequested ? 'Cancel requested' : 'Cancel running batch';
+      resetBatchConfigBtn.disabled = !launchEnabled || isBusy || !STATE.batchTemplate;
     }
 
     function activeSnapshot() {
@@ -3084,6 +3900,7 @@
 
     function render() {
       sourceModeEl.value = STATE.sourceMode;
+      renderBatchRunner();
       buildSelectOptionsFromItems(
         historyBatchEl,
         STATE.historyBatches.map(batch => ({ value: batch.batchId, label: batchOptionLabel(batch) })),
@@ -3159,6 +3976,29 @@
       STATE.replay = null;
     }
 
+    async function loadBatchRunner() {
+      const response = await fetch('/api/history/runner/status', { cache: 'no-store' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      STATE.batchRunner = await response.json();
+
+      if (STATE.batchRunner?.currentBatchId) {
+        STATE.pendingBatchId = STATE.batchRunner.currentBatchId;
+      }
+
+      if (!STATE.batchLauncherTouched && (STATE.batchRunner?.running || STATE.batchRunner?.lastError)) {
+        STATE.batchLauncherOpen = true;
+      }
+
+      if (STATE.batchRunner?.launchEnabled && !STATE.batchTemplate) {
+        const templateResponse = await fetch('/api/history/runner/template', { cache: 'no-store' });
+        if (!templateResponse.ok) throw new Error(`HTTP ${templateResponse.status}`);
+        STATE.batchTemplate = (await templateResponse.text()).trim();
+        if (!STATE.batchConfigText) {
+          applyBatchConfigText(STATE.batchTemplate, true);
+        }
+      }
+    }
+
     async function loadReplayLists() {
       const batchesResponse = await fetch('/api/history/batches', { cache: 'no-store' });
       if (!batchesResponse.ok) throw new Error(`HTTP ${batchesResponse.status}`);
@@ -3170,6 +4010,10 @@
         STATE.selectedMatchId = null;
         STATE.replay = null;
         return;
+      }
+
+      if (STATE.pendingBatchId && STATE.historyBatches.some(batch => batch.batchId === STATE.pendingBatchId)) {
+        STATE.selectedBatchId = STATE.pendingBatchId;
       }
 
       if (!STATE.historyBatches.some(batch => batch.batchId === STATE.selectedBatchId)) {
@@ -3208,6 +4052,7 @@
 
     async function load() {
       try {
+        await loadBatchRunner();
         if (STATE.sourceMode === 'replay') {
           await loadReplayLists();
           await loadReplayMatch();
@@ -3219,6 +4064,118 @@
         statusEl.textContent = `Fetch failed: ${error.message}`;
       }
     }
+
+    toggleBatchLauncherBtn.addEventListener('click', () => {
+      STATE.batchLauncherTouched = true;
+      STATE.batchLauncherOpen = !STATE.batchLauncherOpen;
+      renderBatchRunner();
+    });
+
+    batchModeFormBtn.addEventListener('click', () => {
+      STATE.batchEditorMode = 'form';
+      if (STATE.batchConfigError) {
+        STATE.batchForm = STATE.batchForm || defaultBatchForm();
+        populateBatchFormInputs(STATE.batchForm);
+        syncBatchConfigFromForm();
+      }
+      renderBatchRunner();
+    });
+
+    batchModeJsonBtn.addEventListener('click', () => {
+      STATE.batchEditorMode = 'json';
+      renderBatchRunner();
+    });
+
+    batchFormEditorEl.addEventListener('input', () => {
+      syncBatchConfigFromForm();
+      renderBatchRunner();
+    });
+
+    batchFormEditorEl.addEventListener('change', () => {
+      syncBatchConfigFromForm();
+      renderBatchRunner();
+    });
+
+    batchConfigInputEl.addEventListener('input', () => {
+      applyBatchConfigText(batchConfigInputEl.value, true);
+      renderBatchRunner();
+    });
+
+    resetBatchConfigBtn.addEventListener('click', () => {
+      applyBatchConfigText(STATE.batchTemplate || '', true);
+      batchConfigInputEl.value = STATE.batchConfigText;
+      renderBatchRunner();
+    });
+
+    startBatchBtn.addEventListener('click', async () => {
+      if (STATE.batchEditorMode === 'form') {
+        syncBatchConfigFromForm();
+      } else {
+        applyBatchConfigText(batchConfigInputEl.value, true);
+      }
+
+      if (!STATE.batchConfigText.trim() || STATE.batchConfigError) return;
+
+      STATE.batchLaunchPending = true;
+      STATE.batchLauncherOpen = true;
+      renderBatchRunner();
+
+      try {
+        const response = await fetch('/api/history/runner/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: STATE.batchConfigText,
+        });
+        const rawText = await response.text();
+        const payload = rawText ? JSON.parse(rawText) : {};
+        if (!response.ok) {
+          throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+
+        STATE.batchRunner = payload;
+        STATE.pendingBatchId = payload.currentBatchId || STATE.pendingBatchId;
+        STATE.sourceMode = 'replay';
+        STATE.selectedRunKey = null;
+        sourceModeEl.value = 'replay';
+
+        if (STATE.pendingBatchId) {
+          STATE.selectedBatchId = STATE.pendingBatchId;
+          STATE.selectedMatchId = null;
+        }
+
+        await load();
+      } catch (error) {
+        batchRunnerStatusEl.textContent = `Failed to start batch: ${error.message}`;
+      } finally {
+        STATE.batchLaunchPending = false;
+        renderBatchRunner();
+      }
+    });
+
+    cancelBatchBtn.addEventListener('click', async () => {
+      if (!STATE.batchRunner?.running || STATE.batchRunner?.cancelRequested) return;
+
+      STATE.batchRunner = { ...STATE.batchRunner, cancelRequested: true };
+      renderBatchRunner();
+
+      try {
+        const response = await fetch('/api/history/runner/cancel', {
+          method: 'POST',
+        });
+        const rawText = await response.text();
+        const payload = rawText ? JSON.parse(rawText) : {};
+        if (!response.ok) {
+          throw new Error(payload.error || `HTTP ${response.status}`);
+        }
+
+        STATE.batchRunner = payload;
+        renderBatchRunner();
+      } catch (error) {
+        batchRunnerStatusEl.textContent = `Failed to cancel batch: ${error.message}`;
+        STATE.batchRunner = { ...STATE.batchRunner, cancelRequested: false };
+        renderBatchRunner();
+      }
+    });
 
     refreshBtn.addEventListener('click', load);
 
