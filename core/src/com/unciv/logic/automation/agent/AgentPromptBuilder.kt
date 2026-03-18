@@ -9,8 +9,10 @@ object AgentPromptBuilder {
         explicitNulls = false
     }
 
+    fun observationJson(observation: AgentObservation): String = json.encodeToString(observation)
+
     fun build(observation: AgentObservation): String {
-        val observationJson = json.encodeToString(observation)
+        val observationJson = observationJson(observation)
         return """
             You are an AI strategy planner for a turn-based 4X game.
             Produce JSON only, with no markdown or prose.

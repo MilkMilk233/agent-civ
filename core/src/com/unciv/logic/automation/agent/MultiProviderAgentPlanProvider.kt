@@ -60,10 +60,10 @@ class MultiProviderAgentPlanProvider(
         )
 
         val planText = when {
-            isGatewayBaseUrl(baseUrl) -> requestOpenAiCompatible(prompt)
-            provider == LlmProvider.Google -> requestGoogleDirect(prompt)
-            provider == LlmProvider.Anthropic -> requestAnthropicDirect(prompt)
-            else -> requestOpenAiCompatible(prompt)
+            isGatewayBaseUrl(baseUrl) -> requestOpenAiCompatible(prompt, civInfo.civName, civInfo.gameInfo.turns)
+            provider == LlmProvider.Google -> requestGoogleDirect(prompt, civInfo.civName, civInfo.gameInfo.turns)
+            provider == LlmProvider.Anthropic -> requestAnthropicDirect(prompt, civInfo.civName, civInfo.gameInfo.turns)
+            else -> requestOpenAiCompatible(prompt, civInfo.civName, civInfo.gameInfo.turns)
         } ?: return@runBlocking null
 
         AgentObservability.record(
@@ -111,7 +111,7 @@ class MultiProviderAgentPlanProvider(
         }
     }
 
-    private suspend fun requestOpenAiCompatible(prompt: String): String? {
+    private suspend fun requestOpenAiCompatible(prompt: String, civName: String, turn: Int): String? {
         val url = "${baseUrl.normalizedBase()}/v1/chat/completions"
         val payload = buildJsonObject {
             put("model", JsonPrimitive(model))
@@ -125,7 +125,7 @@ class MultiProviderAgentPlanProvider(
             })
         }
 
-        val responseJson = postJson(url, payload) ?: return null
+        val responseJson = postJson(url, payload, civName = civName, turn = turn) ?: return null
         val contentElement = responseJson["choices"]
             ?.jsonArray
             ?.firstOrNull()
@@ -138,7 +138,7 @@ class MultiProviderAgentPlanProvider(
         return contentElement.toContentString().trim().ifEmpty { null }
     }
 
-    private suspend fun requestAnthropicDirect(prompt: String): String? {
+    private suspend fun requestAnthropicDirect(prompt: String, civName: String, turn: Int): String? {
         val url = "${baseUrl.normalizedBase()}/v1/messages"
         val payload = buildJsonObject {
             put("model", JsonPrimitive(model))
@@ -162,6 +162,8 @@ class MultiProviderAgentPlanProvider(
             payload,
             extraHeaders = mapOf("x-api-key" to apiKey, "anthropic-version" to "2023-06-01"),
             useBearerToken = false,
+            civName = civName,
+            turn = turn,
         ) ?: return null
 
         return responseJson["content"]
@@ -175,7 +177,7 @@ class MultiProviderAgentPlanProvider(
             ?.ifEmpty { null }
     }
 
-    private suspend fun requestGoogleDirect(prompt: String): String? {
+    private suspend fun requestGoogleDirect(prompt: String, civName: String, turn: Int): String? {
         val url = "${baseUrl.normalizedBase()}/v1beta/models/$model:generateContent?key=$apiKey"
         val payload = buildJsonObject {
             put("contents", buildJsonArray {
@@ -193,7 +195,7 @@ class MultiProviderAgentPlanProvider(
             })
         }
 
-        val responseJson = postJson(url, payload, useBearerToken = false) ?: return null
+        val responseJson = postJson(url, payload, useBearerToken = false, civName = civName, turn = turn) ?: return null
         return responseJson["candidates"]
             ?.jsonArray
             ?.firstOrNull()
@@ -216,6 +218,8 @@ class MultiProviderAgentPlanProvider(
         payload: JsonElement,
         extraHeaders: Map<String, String> = emptyMap(),
         useBearerToken: Boolean = true,
+        civName: String? = null,
+        turn: Int? = null,
     ) = try {
         val response = client.post(url) {
             header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
@@ -229,6 +233,8 @@ class MultiProviderAgentPlanProvider(
             AgentObservability.record(
                 type = "llm_http_error",
                 message = "Provider returned non-200 status",
+                civName = civName,
+                turn = turn,
                 details = mapOf(
                     "status" to response.status.toString(),
                     "url" to url,
@@ -246,6 +252,8 @@ class MultiProviderAgentPlanProvider(
         AgentObservability.record(
             type = "llm_request_error",
             message = "Provider request failed",
+            civName = civName,
+            turn = turn,
             details = mapOf(
                 "url" to url,
                 "provider" to provider.name,

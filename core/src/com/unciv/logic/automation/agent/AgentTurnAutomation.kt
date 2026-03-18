@@ -15,6 +15,7 @@ object AgentTurnAutomation {
         }
 
         val observation = AgentObservationBuilder.build(civInfo)
+        val observationJson = AgentPromptBuilder.observationJson(observation)
         AgentObservability.record(
             type = "turn_start",
             message = "Built observation for AI agent turn",
@@ -27,6 +28,11 @@ object AgentTurnAutomation {
                 "visibleTiles" to observation.visibleTiles.toString(),
                 "gold" to observation.gold.toString(),
                 "sciencePerTurn" to observation.sciencePerTurn.toString(),
+                "culturePerTurn" to observation.culturePerTurn.toString(),
+                "faithPerTurn" to observation.faithPerTurn.toString(),
+                "happiness" to observation.happiness.toString(),
+                "isAtWar" to observation.isAtWar.toString(),
+                "observationJson" to observationJson,
             ),
         )
         val plan = AgentPlanProviderFactory.provider.buildPlan(observation, civInfo)

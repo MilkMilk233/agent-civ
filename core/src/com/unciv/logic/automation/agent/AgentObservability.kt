@@ -7,7 +7,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 object AgentObservability {
     private const val maxEvents = 500
-    private const val maxDetailValueLength = 4000
+    private const val maxDetailValueLength = 20000
     private const val maxMessageLength = 2000
 
     private val lock = Any()

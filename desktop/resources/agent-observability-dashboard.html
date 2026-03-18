@@ -1,0 +1,3114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Unciv Agent War Room</title>
+  <style>
+    :root {
+      --bg: #08131a;
+      --bg-deep: #0d1f28;
+      --panel: rgba(8, 21, 29, 0.84);
+      --panel-strong: rgba(10, 26, 35, 0.94);
+      --panel-soft: rgba(16, 34, 45, 0.78);
+      --line: rgba(162, 190, 194, 0.18);
+      --line-strong: rgba(196, 179, 124, 0.34);
+      --ink: #f2ecdb;
+      --muted: #9cafb7;
+      --gold: #f0c56a;
+      --teal: #6dd2bf;
+      --sky: #8cb4ff;
+      --amber: #ffb45d;
+      --coral: #f07969;
+      --shadow: 0 10px 26px rgba(0, 0, 0, 0.18);
+      --radius: 20px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      color-scheme: dark;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      font-family: "Trebuchet MS", "Lucida Grande", "Lucida Sans Unicode", sans-serif;
+      background: linear-gradient(180deg, #0d1c25, #08131a);
+      position: relative;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: none;
+      pointer-events: none;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+      color: inherit;
+    }
+
+    .page {
+      width: min(1820px, calc(100vw - 40px));
+      margin: 0 auto;
+      padding: 18px 0 28px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .panel {
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 30%),
+        var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(12px);
+    }
+
+    .hero {
+      padding: 24px;
+      overflow: hidden;
+      position: relative;
+      background:
+        radial-gradient(circle at top right, rgba(240, 197, 106, 0.14), transparent 25%),
+        radial-gradient(circle at bottom left, rgba(109, 210, 191, 0.14), transparent 25%),
+        linear-gradient(135deg, rgba(11, 30, 40, 0.96), rgba(7, 18, 25, 0.96));
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(120deg, transparent 30%, rgba(255, 255, 255, 0.04) 50%, transparent 70%);
+      transform: translateX(-35%);
+      animation: shimmer 18s linear infinite;
+      pointer-events: none;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.18fr) minmax(360px, 0.82fr);
+      gap: 24px;
+      align-items: center;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(240, 197, 106, 0.28);
+      background: rgba(240, 197, 106, 0.08);
+      color: var(--gold);
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    .hero-title,
+    .focus-title,
+    .panel-title {
+      margin: 0;
+      font-family: "Palatino Linotype", "Book Antiqua", Georgia, serif;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+
+    .hero-title {
+      margin-top: 14px;
+      font-size: clamp(30px, 3.6vw, 56px);
+      line-height: 1.02;
+      max-width: 12ch;
+    }
+
+    .hero-copy {
+      margin: 14px 0 0;
+      max-width: 68ch;
+      color: rgba(242, 236, 219, 0.84);
+      font-size: 15px;
+      line-height: 1.55;
+    }
+
+    .hero-side {
+      display: grid;
+      gap: 16px;
+      justify-items: end;
+    }
+
+    .control-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: end;
+    }
+
+    .btn {
+      padding: 11px 14px;
+      border-radius: 14px;
+      border: 1px solid rgba(139, 172, 181, 0.24);
+      background: linear-gradient(180deg, rgba(20, 44, 54, 0.96), rgba(12, 25, 32, 0.96));
+      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+      border-color: rgba(240, 197, 106, 0.38);
+      background: linear-gradient(180deg, rgba(28, 53, 64, 0.98), rgba(15, 32, 40, 0.98));
+    }
+
+    .btn.ghost {
+      background: transparent;
+    }
+
+    .checkbox {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 11px 14px;
+      border-radius: 14px;
+      border: 1px solid rgba(139, 172, 181, 0.18);
+      background: rgba(10, 24, 31, 0.6);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .checkbox input {
+      accent-color: var(--gold);
+    }
+
+    .status-line {
+      width: min(420px, 100%);
+      padding: 14px 16px;
+      border-radius: 18px;
+      border: 1px solid rgba(139, 172, 181, 0.16);
+      background: rgba(8, 19, 25, 0.72);
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+      text-align: left;
+    }
+
+    .toolbar {
+      padding: 16px 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .toolbar-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .toolbar-title {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+
+    .toolbar-copy {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+      max-width: 72ch;
+    }
+
+    .toolbar-bottom {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
+      gap: 14px;
+      align-items: end;
+    }
+
+    .toolbar-filters {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(180px, 1fr));
+      gap: 12px;
+    }
+
+    .metric-grid {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(180px, 1fr));
+      gap: 14px;
+    }
+
+    .metric-card {
+      padding: 16px 18px;
+      min-height: 120px;
+    }
+
+    .metric-k {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    .metric-v {
+      margin-top: 12px;
+      font-size: 28px;
+      line-height: 1;
+      font-weight: 700;
+      color: var(--gold);
+      word-break: break-word;
+    }
+
+    .metric-note {
+      margin-top: 10px;
+      color: rgba(242, 236, 219, 0.72);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .shell-grid {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: minmax(290px, 340px) minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .main-stack {
+      display: grid;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .dual-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 18px;
+      min-width: 0;
+    }
+
+    .sticky {
+      position: sticky;
+      top: 18px;
+    }
+
+    .rail,
+    .intelligence {
+      padding: 18px;
+      max-height: calc(100vh - 36px);
+      overflow: auto;
+    }
+
+    .focus-panel {
+      padding: 22px;
+      min-width: 0;
+    }
+
+    .section-panel,
+    .rail,
+    .intelligence,
+    .timeline-list,
+    .artifact-grid,
+    .artifact-card,
+    .event-card,
+    .detail-item,
+    .expandable,
+    .json-row,
+    .json-value,
+    .detail-plain,
+    .expandable-preview,
+    pre {
+      min-width: 0;
+    }
+
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: end;
+      margin-bottom: 14px;
+    }
+
+    .panel-title {
+      font-size: 24px;
+    }
+
+    .panel-kicker {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .panel-meta {
+      color: var(--muted);
+      font-size: 12px;
+      text-align: right;
+      line-height: 1.4;
+    }
+
+    .section-panel {
+      padding: 18px;
+    }
+
+    .roster-list,
+    .incident-list,
+    .dist-list,
+    .timeline-list,
+    .stage-grid,
+    .artifact-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .run-card,
+    .incident-card {
+      width: 100%;
+      text-align: left;
+      padding: 15px;
+      border-radius: 18px;
+      border: 1px solid rgba(139, 172, 181, 0.16);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 34%),
+        rgba(8, 20, 27, 0.9);
+      transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+    }
+
+    .run-card:hover,
+    .incident-card:hover {
+      transform: translateY(-1px);
+      border-color: rgba(240, 197, 106, 0.28);
+      box-shadow: 0 18px 32px rgba(0, 0, 0, 0.2);
+    }
+
+    .run-card.active,
+    .incident-card.active {
+      border-color: rgba(240, 197, 106, 0.5);
+      background:
+        linear-gradient(180deg, rgba(240, 197, 106, 0.08), transparent 35%),
+        rgba(12, 25, 32, 0.96);
+    }
+
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .card-title {
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .card-subtitle {
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .card-summary {
+      margin-top: 12px;
+      color: rgba(242, 236, 219, 0.8);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .card-meta {
+      margin-top: 12px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .meta-chip,
+    .summary-chip,
+    .json-badge,
+    .action-chip {
+      border-radius: 999px;
+      border: 1px solid rgba(139, 172, 181, 0.18);
+      background: rgba(16, 35, 45, 0.88);
+      color: rgba(242, 236, 219, 0.84);
+      padding: 5px 10px;
+      font-size: 11px;
+      line-height: 1.2;
+    }
+
+    .summary-chip {
+      border-color: rgba(240, 197, 106, 0.24);
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 11px;
+      border-radius: 999px;
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+
+    .status-healthy {
+      color: var(--teal);
+      border-color: rgba(109, 210, 191, 0.34);
+      background: rgba(109, 210, 191, 0.08);
+    }
+
+    .status-warning {
+      color: var(--amber);
+      border-color: rgba(255, 180, 93, 0.34);
+      background: rgba(255, 180, 93, 0.1);
+    }
+
+    .status-critical {
+      color: var(--coral);
+      border-color: rgba(240, 121, 105, 0.34);
+      background: rgba(240, 121, 105, 0.09);
+    }
+
+    .status-live {
+      color: var(--sky);
+      border-color: rgba(140, 180, 255, 0.36);
+      background: rgba(140, 180, 255, 0.08);
+    }
+
+    .status-idle {
+      color: var(--muted);
+      border-color: rgba(156, 175, 183, 0.28);
+      background: rgba(156, 175, 183, 0.08);
+    }
+
+    .focus-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .focus-title {
+      margin-top: 10px;
+      font-size: clamp(30px, 4vw, 44px);
+      line-height: 1.02;
+    }
+
+    .focus-summary {
+      margin: 14px 0 0;
+      max-width: 70ch;
+      color: rgba(242, 236, 219, 0.84);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    .focus-side {
+      display: grid;
+      gap: 10px;
+      justify-items: end;
+      min-width: 170px;
+    }
+
+    .focus-side-note {
+      color: var(--muted);
+      font-size: 12px;
+      text-align: right;
+      line-height: 1.45;
+    }
+
+    .callout {
+      margin-top: 18px;
+      padding: 16px 18px;
+      border-radius: 18px;
+      border: 1px solid rgba(139, 172, 181, 0.14);
+      background: var(--panel-soft);
+    }
+
+    .callout.callout-healthy {
+      border-color: rgba(109, 210, 191, 0.26);
+      background: linear-gradient(180deg, rgba(109, 210, 191, 0.08), rgba(10, 24, 31, 0.78));
+    }
+
+    .callout.callout-warning {
+      border-color: rgba(255, 180, 93, 0.26);
+      background: linear-gradient(180deg, rgba(255, 180, 93, 0.08), rgba(10, 24, 31, 0.78));
+    }
+
+    .callout.callout-critical {
+      border-color: rgba(240, 121, 105, 0.3);
+      background: linear-gradient(180deg, rgba(240, 121, 105, 0.08), rgba(10, 24, 31, 0.78));
+    }
+
+    .callout-label {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    .callout-text {
+      margin-top: 8px;
+      font-size: 16px;
+      line-height: 1.55;
+      color: var(--ink);
+    }
+
+    .summary-strip,
+    .snapshot-grid {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+
+    .snapshot-grid {
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    }
+
+    .mini-card {
+      padding: 14px;
+      border-radius: 18px;
+      border: 1px solid rgba(139, 172, 181, 0.14);
+      background: rgba(8, 20, 27, 0.9);
+    }
+
+    .mini-k {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .mini-v {
+      margin-top: 8px;
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 1.1;
+      color: var(--ink);
+    }
+
+    .mini-note {
+      margin-top: 8px;
+      color: rgba(242, 236, 219, 0.64);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .subsection-label {
+      margin-top: 20px;
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    .stage-grid {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+
+    .stage-card {
+      padding: 16px;
+      border-radius: 18px;
+      border: 1px solid rgba(139, 172, 181, 0.14);
+      background: rgba(9, 22, 29, 0.88);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .stage-card::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto auto 0;
+      width: 100%;
+      height: 4px;
+      background: rgba(156, 175, 183, 0.2);
+    }
+
+    .stage-card.stage-healthy::before {
+      background: var(--teal);
+    }
+
+    .stage-card.stage-warning::before {
+      background: var(--amber);
+    }
+
+    .stage-card.stage-critical::before {
+      background: var(--coral);
+    }
+
+    .stage-card.stage-live::before {
+      background: var(--sky);
+    }
+
+    .stage-step {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    .stage-title {
+      margin-top: 8px;
+      font-size: 17px;
+      font-weight: 700;
+    }
+
+    .stage-meta {
+      margin-top: 10px;
+      color: rgba(242, 236, 219, 0.78);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .stage-foot {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .note-banner {
+      margin-bottom: 14px;
+      padding: 14px 16px;
+      border-radius: 16px;
+      border: 1px solid rgba(240, 197, 106, 0.24);
+      background: rgba(240, 197, 106, 0.08);
+      color: rgba(242, 236, 219, 0.88);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .note-banner strong {
+      color: var(--gold);
+    }
+
+    .action-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .action-card {
+      border-radius: 16px;
+      border: 1px solid rgba(139, 172, 181, 0.14);
+      background: rgba(8, 21, 29, 0.9);
+      padding: 13px;
+    }
+
+    .action-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .action-summary {
+      margin-top: 9px;
+      color: rgba(242, 236, 219, 0.88);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .action-kind {
+      color: var(--sky);
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+
+    .action-index {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .action-fields,
+    .json-list {
+      margin-top: 10px;
+      display: flex;
+      gap: 7px;
+      flex-wrap: wrap;
+    }
+
+    .json-kv {
+      display: grid;
+      gap: 8px;
+    }
+
+    .json-row {
+      display: grid;
+      grid-template-columns: minmax(78px, 132px) minmax(0, 1fr);
+      gap: 10px;
+      padding-top: 6px;
+      border-top: 1px dashed rgba(139, 172, 181, 0.16);
+      align-items: start;
+    }
+
+    .json-row:first-child {
+      padding-top: 0;
+      border-top: 0;
+    }
+
+    .json-key {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      overflow-wrap: anywhere;
+    }
+
+    .json-value {
+      color: rgba(242, 236, 219, 0.9);
+      font-size: 13px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+
+    .artifact-grid {
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+      align-items: start;
+    }
+
+    .artifact-card {
+      padding: 15px;
+      border-radius: 18px;
+      border: 1px solid rgba(139, 172, 181, 0.14);
+      background: rgba(8, 20, 27, 0.9);
+    }
+
+    .artifact-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: baseline;
+      margin-bottom: 12px;
+    }
+
+    .artifact-title {
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .artifact-meta {
+      color: var(--muted);
+      font-size: 12px;
+      text-align: right;
+    }
+
+    .detail-grid {
+      display: grid;
+      gap: 10px;
+    }
+
+    .detail-item {
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(139, 172, 181, 0.14);
+      background: rgba(10, 24, 32, 0.86);
+    }
+
+    .detail-key {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      margin-bottom: 7px;
+    }
+
+    .detail-plain {
+      color: rgba(242, 236, 219, 0.88);
+      font-size: 13px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    pre {
+      margin: 0;
+      width: 100%;
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(139, 172, 181, 0.14);
+      background: rgba(3, 11, 16, 0.82);
+      color: rgba(242, 236, 219, 0.88);
+      font-family: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      overflow-y: auto;
+      max-height: 260px;
+      max-width: 100%;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      overflow-x: hidden;
+    }
+
+    .expandable {
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(139, 172, 181, 0.14);
+      background: rgba(3, 11, 16, 0.52);
+      max-width: 100%;
+      overflow: hidden;
+    }
+
+    .expandable-preview {
+      color: rgba(242, 236, 219, 0.84);
+      font-size: 13px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .lane-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+    }
+
+    .lane-item {
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(139, 172, 181, 0.14);
+      background: rgba(10, 24, 32, 0.86);
+      min-width: 0;
+    }
+
+    .expandable-full {
+      display: none;
+      max-width: 100%;
+      overflow: hidden;
+    }
+
+    .expandable[data-expanded="1"] .expandable-preview {
+      display: none;
+    }
+
+    .expandable[data-expanded="1"] .expandable-full {
+      display: block;
+    }
+
+    .expand-btn {
+      justify-self: start;
+      padding: 7px 11px;
+      border-radius: 999px;
+      border: 1px solid rgba(139, 172, 181, 0.18);
+      background: rgba(14, 32, 42, 0.92);
+      color: var(--sky);
+      font-size: 12px;
+    }
+
+    .filters {
+      display: grid;
+      gap: 12px;
+    }
+
+    .field {
+      display: grid;
+      gap: 7px;
+    }
+
+    .field label {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .field input,
+    .field select {
+      width: 100%;
+      padding: 11px 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(139, 172, 181, 0.18);
+      background: rgba(6, 16, 22, 0.92);
+      color: var(--ink);
+    }
+
+    .dist-row {
+      width: 100%;
+      text-align: left;
+      padding: 13px;
+      border-radius: 16px;
+      border: 1px solid rgba(139, 172, 181, 0.14);
+      background: rgba(8, 20, 27, 0.9);
+    }
+
+    .dist-row.active {
+      border-color: rgba(140, 180, 255, 0.34);
+      background: rgba(140, 180, 255, 0.08);
+    }
+
+    .dist-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 10px;
+      font-size: 13px;
+    }
+
+    .dist-count {
+      color: var(--sky);
+      font-weight: 700;
+    }
+
+    .dist-bar {
+      height: 7px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.06);
+      overflow: hidden;
+    }
+
+    .dist-bar span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--sky), var(--gold));
+    }
+
+    .timeline-list {
+      position: relative;
+    }
+
+    .timeline-list::before {
+      content: "";
+      position: absolute;
+      left: 18px;
+      top: 12px;
+      bottom: 12px;
+      width: 1px;
+      background: rgba(139, 172, 181, 0.18);
+    }
+
+    .event-card {
+      position: relative;
+      margin-left: 34px;
+      padding: 15px;
+      border-radius: 18px;
+      border: 1px solid rgba(139, 172, 181, 0.14);
+      background: rgba(8, 20, 27, 0.9);
+    }
+
+    .event-card::before {
+      content: "";
+      position: absolute;
+      left: -24px;
+      top: 18px;
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      border: 2px solid rgba(8, 20, 27, 0.94);
+      background: rgba(156, 175, 183, 0.7);
+      box-shadow: 0 0 0 4px rgba(8, 20, 27, 0.9);
+    }
+
+    .event-card.event-healthy::before {
+      background: var(--teal);
+    }
+
+    .event-card.event-warning::before {
+      background: var(--amber);
+    }
+
+    .event-card.event-critical::before {
+      background: var(--coral);
+    }
+
+    .event-card.event-live::before {
+      background: var(--sky);
+    }
+
+    .event-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: baseline;
+      flex-wrap: wrap;
+    }
+
+    .event-type {
+      color: var(--ink);
+      font-size: 13px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+
+    .event-meta {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .event-message {
+      margin-top: 9px;
+      color: rgba(242, 236, 219, 0.88);
+      font-size: 14px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+    }
+
+    .overview-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: start;
+      flex-wrap: wrap;
+    }
+
+    .overview-title {
+      margin: 0;
+      font-size: 34px;
+      line-height: 1.05;
+      font-weight: 700;
+    }
+
+    .overview-sub {
+      margin: 10px 0 0;
+      color: rgba(242, 236, 219, 0.84);
+      font-size: 15px;
+      line-height: 1.55;
+      max-width: 74ch;
+    }
+
+    .overview-side {
+      display: grid;
+      gap: 10px;
+      justify-items: end;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      text-align: right;
+    }
+
+    .context-row {
+      margin-top: 14px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .context-chip {
+      border-radius: 999px;
+      border: 1px solid rgba(139, 172, 181, 0.16);
+      background: rgba(10, 24, 32, 0.72);
+      color: rgba(242, 236, 219, 0.82);
+      padding: 6px 10px;
+      font-size: 12px;
+      line-height: 1.2;
+    }
+
+    .outcome-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .outcome-card {
+      padding: 13px;
+      border-radius: 16px;
+      border: 1px solid rgba(139, 172, 181, 0.14);
+      background: rgba(8, 20, 27, 0.9);
+    }
+
+    .outcome-label {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .outcome-value {
+      margin-top: 8px;
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 1.1;
+    }
+
+    .outcome-note {
+      margin-top: 6px;
+      color: rgba(242, 236, 219, 0.68);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .issue-list,
+    .event-list,
+    .debug-stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .issue-card {
+      padding: 13px;
+      border-radius: 16px;
+      border: 1px solid rgba(139, 172, 181, 0.14);
+      background: rgba(8, 20, 27, 0.9);
+    }
+
+    .issue-card.issue-healthy {
+      border-color: rgba(109, 210, 191, 0.24);
+      background: rgba(109, 210, 191, 0.08);
+    }
+
+    .issue-card.issue-warning {
+      border-color: rgba(255, 180, 93, 0.24);
+      background: rgba(255, 180, 93, 0.08);
+    }
+
+    .issue-card.issue-critical {
+      border-color: rgba(240, 121, 105, 0.24);
+      background: rgba(240, 121, 105, 0.08);
+    }
+
+    .issue-title {
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .issue-text {
+      margin-top: 8px;
+      color: rgba(242, 236, 219, 0.9);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .event-row {
+      padding: 13px;
+      border-radius: 16px;
+      border: 1px solid rgba(139, 172, 181, 0.14);
+      background: rgba(8, 20, 27, 0.9);
+    }
+
+    .event-row-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: baseline;
+      flex-wrap: wrap;
+    }
+
+    .event-row-type {
+      color: var(--ink);
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+
+    .event-row-time {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .event-row-message {
+      margin-top: 6px;
+      color: rgba(242, 236, 219, 0.88);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .event-row-note {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+
+    .debug-details {
+      border-radius: 16px;
+      border: 1px solid rgba(139, 172, 181, 0.14);
+      background: rgba(8, 20, 27, 0.9);
+      overflow: hidden;
+    }
+
+    .debug-details summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      padding: 12px 14px;
+    }
+
+    .debug-details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .debug-title {
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .debug-meta {
+      color: var(--muted);
+      font-size: 12px;
+      text-align: right;
+    }
+
+    .debug-details[open] summary {
+      border-bottom: 1px solid rgba(139, 172, 181, 0.14);
+    }
+
+    .debug-body {
+      padding: 14px;
+      max-width: 100%;
+      overflow: hidden;
+    }
+
+    .health-grid,
+    .observation-grid,
+    .plan-meta-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+
+    .health-card,
+    .obs-stat,
+    .plan-meta-card {
+      padding: 13px;
+      border-radius: 16px;
+      border: 1px solid rgba(139, 172, 181, 0.14);
+      background: rgba(8, 20, 27, 0.9);
+    }
+
+    .health-label,
+    .obs-label,
+    .plan-meta-label {
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .health-value,
+    .obs-value,
+    .plan-meta-value {
+      margin-top: 8px;
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 1.1;
+    }
+
+    .health-note,
+    .obs-note,
+    .plan-meta-note {
+      margin-top: 6px;
+      color: rgba(242, 236, 219, 0.68);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .info-section {
+      margin-top: 18px;
+    }
+
+    .section-subtitle {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .check-list,
+    .entity-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .entity-columns {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+
+    .check-card,
+    .entity-card {
+      padding: 13px;
+      border-radius: 16px;
+      border: 1px solid rgba(139, 172, 181, 0.14);
+      background: rgba(8, 20, 27, 0.9);
+    }
+
+    .check-card.check-ok {
+      border-color: rgba(109, 210, 191, 0.24);
+      background: rgba(109, 210, 191, 0.08);
+    }
+
+    .check-card.check-warning {
+      border-color: rgba(255, 180, 93, 0.24);
+      background: rgba(255, 180, 93, 0.08);
+    }
+
+    .check-card.check-critical {
+      border-color: rgba(240, 121, 105, 0.24);
+      background: rgba(240, 121, 105, 0.08);
+    }
+
+    .check-title,
+    .entity-title {
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.4;
+    }
+
+    .check-text,
+    .entity-text {
+      margin-top: 6px;
+      color: rgba(242, 236, 219, 0.84);
+      font-size: 13px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .entity-chip-row,
+    .metric-chip-row {
+      margin-top: 8px;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .metric-chip {
+      border-radius: 999px;
+      border: 1px solid rgba(139, 172, 181, 0.16);
+      background: rgba(10, 24, 32, 0.72);
+      color: rgba(242, 236, 219, 0.82);
+      padding: 5px 9px;
+      font-size: 12px;
+      line-height: 1.2;
+    }
+
+    .action-check {
+      margin-top: 10px;
+      padding: 9px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      line-height: 1.45;
+      border: 1px solid rgba(139, 172, 181, 0.14);
+      background: rgba(8, 20, 27, 0.82);
+    }
+
+    .action-check.action-check-warning {
+      border-color: rgba(255, 180, 93, 0.24);
+      background: rgba(255, 180, 93, 0.08);
+    }
+
+    .action-check.action-check-critical {
+      border-color: rgba(240, 121, 105, 0.24);
+      background: rgba(240, 121, 105, 0.08);
+    }
+
+    .empty {
+      padding: 24px 18px;
+      border-radius: 18px;
+      border: 1px dashed rgba(139, 172, 181, 0.22);
+      background: rgba(8, 20, 27, 0.68);
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+      text-align: center;
+    }
+
+    .panel-section-spacer {
+      margin-top: 22px;
+    }
+
+    .fade-in {
+      animation: riseIn 180ms ease-out;
+    }
+
+    @keyframes shimmer {
+      from {
+        transform: translateX(-35%);
+      }
+      to {
+        transform: translateX(120%);
+      }
+    }
+
+    @keyframes riseIn {
+      from {
+        opacity: 0;
+        transform: translateY(6px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @media (max-width: 1480px) {
+      .toolbar-bottom,
+      .toolbar-filters,
+      .dual-grid,
+      .artifact-grid,
+      .outcome-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .status-line {
+        width: 100%;
+      }
+    }
+
+    @media (max-width: 1180px) {
+      .summary-strip,
+      .shell-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .page {
+        width: min(100vw, calc(100vw - 20px));
+        padding: 10px 0 18px;
+      }
+
+      .sticky,
+      .rail {
+        position: static;
+        max-height: none;
+      }
+
+      .toolbar,
+      .section-panel,
+      .focus-panel,
+      .rail {
+        padding: 16px;
+      }
+
+      .overview-header,
+      .toolbar-top {
+        align-items: start;
+      }
+
+      .overview-side {
+        justify-items: start;
+        text-align: left;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="toolbar panel">
+      <div class="toolbar-top">
+        <div>
+          <h1 class="toolbar-title">Agent Turn Monitor</h1>
+          <p class="toolbar-copy">Review whether each AI turn observed the world correctly, proposed a reasonable plan from that observation, and stayed clear of fallback, blocked runs, and illegal actions.</p>
+        </div>
+        <div class="control-row">
+          <button class="btn" id="refresh">Refresh now</button>
+          <label class="checkbox"><input id="autorefresh" type="checkbox" checked> Auto refresh 2s</label>
+          <label class="checkbox"><input id="showDetails" type="checkbox"> Open debug blocks</label>
+        </div>
+      </div>
+      <div class="toolbar-bottom">
+        <div class="toolbar-filters filters">
+          <div class="field">
+            <label for="civFilter">Civilization</label>
+            <select id="civFilter"></select>
+          </div>
+          <div class="field">
+            <label for="typeFilter">Event Type</label>
+            <select id="typeFilter"></select>
+          </div>
+          <div class="field">
+            <label for="textFilter">Search</label>
+            <input id="textFilter" type="search" placeholder="Search turns, notes, errors, prompt...">
+          </div>
+        </div>
+        <div class="status-line" id="status">Connecting to the observability stream...</div>
+      </div>
+    </header>
+
+    <section class="shell-grid">
+      <aside class="panel rail sticky">
+        <div class="panel-head">
+          <div>
+            <div class="panel-kicker">Recent turns</div>
+            <h2 class="panel-title">Watchlist</h2>
+          </div>
+          <div class="panel-meta" id="rosterMeta">0 turns</div>
+        </div>
+        <div class="roster-list fade-in" id="runRoster"></div>
+      </aside>
+
+      <main class="main-stack">
+        <section class="panel focus-panel fade-in" id="focusPanel"></section>
+
+        <section class="dual-grid">
+          <article class="panel section-panel">
+            <div class="panel-head">
+              <div>
+                <div class="panel-kicker">What the agent saw</div>
+                <h2 class="panel-title">Observation</h2>
+              </div>
+              <div class="panel-meta" id="stagesMeta">No observation captured</div>
+            </div>
+            <div class="fade-in" id="stageGrid"></div>
+          </article>
+
+          <article class="panel section-panel">
+            <div class="panel-head">
+              <div>
+                <div class="panel-kicker">What the model proposed</div>
+                <h2 class="panel-title">Action Plan</h2>
+              </div>
+              <div class="panel-meta" id="actionsMeta">No plan captured</div>
+            </div>
+            <div class="fade-in" id="actionPlan"></div>
+          </article>
+        </section>
+
+        <section class="dual-grid">
+          <article class="panel section-panel">
+            <div class="panel-head">
+              <div>
+                <div class="panel-kicker">Ordered turn log</div>
+                <h2 class="panel-title">Recent Events</h2>
+              </div>
+              <div class="panel-meta" id="timelineMeta">No events yet</div>
+            </div>
+            <div class="fade-in event-list" id="timeline"></div>
+          </article>
+
+          <article class="panel section-panel">
+            <div class="panel-head">
+              <div>
+                <div class="panel-kicker">Use only when needed</div>
+                <h2 class="panel-title">Debug Details</h2>
+              </div>
+              <div class="panel-meta" id="artifactsMeta">Prompt, response, and parsed output</div>
+            </div>
+            <div class="fade-in debug-stack" id="artifacts"></div>
+          </article>
+        </section>
+      </main>
+    </section>
+  </div>
+
+  <script>
+    const refreshBtn = document.getElementById('refresh');
+    const autoEl = document.getElementById('autorefresh');
+    const showDetailsEl = document.getElementById('showDetails');
+    const civFilterEl = document.getElementById('civFilter');
+    const typeFilterEl = document.getElementById('typeFilter');
+    const textFilterEl = document.getElementById('textFilter');
+    const statusEl = document.getElementById('status');
+    const runRosterEl = document.getElementById('runRoster');
+    const focusEl = document.getElementById('focusPanel');
+    const stageGridEl = document.getElementById('stageGrid');
+    const actionPlanEl = document.getElementById('actionPlan');
+    const artifactsEl = document.getElementById('artifacts');
+    const timelineEl = document.getElementById('timeline');
+    const rosterMetaEl = document.getElementById('rosterMeta');
+    const stagesMetaEl = document.getElementById('stagesMeta');
+    const actionsMetaEl = document.getElementById('actionsMeta');
+    const artifactsMetaEl = document.getElementById('artifactsMeta');
+    const timelineMetaEl = document.getElementById('timelineMeta');
+
+    const STATE = {
+      snapshot: null,
+      selectedRunKey: null,
+      civFilter: 'all',
+      typeFilter: 'all',
+      textFilter: '',
+    };
+
+    function esc(value) {
+      return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;');
+    }
+
+    function normalizeDetails(details) {
+      try {
+        return JSON.stringify(details || {}, null, 2);
+      } catch (_) {
+        return '{}';
+      }
+    }
+
+    function mapCount(items, keyGetter) {
+      const out = new Map();
+      for (const item of items) {
+        const key = keyGetter(item);
+        out.set(key, (out.get(key) || 0) + 1);
+      }
+      return out;
+    }
+
+    function sortedEntriesByCount(mapObj) {
+      return [...mapObj.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])));
+    }
+
+    function isOversizeText(text) {
+      const str = String(text || '');
+      return str.length > 420 || str.split('\n').length > 10;
+    }
+
+    function tryParseJsonString(text) {
+      if (typeof text !== 'string') return null;
+      const trimmed = text.trim();
+      if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) return null;
+      try {
+        return JSON.parse(trimmed);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function toWholeNumber(value) {
+      if (value === null || value === undefined || value === '') return null;
+      const num = Number(value);
+      return Number.isFinite(num) ? num : null;
+    }
+
+    function toBoolean(value) {
+      if (value === null || value === undefined) return null;
+      if (typeof value === 'boolean') return value;
+      const normalized = String(value).trim().toLowerCase();
+      if (normalized === 'true') return true;
+      if (normalized === 'false') return false;
+      return null;
+    }
+
+    function formatTime(epochMs) {
+      if (!epochMs) return '-';
+      return new Date(epochMs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+    }
+
+    function formatDateTime(epochMs) {
+      if (!epochMs) return '-';
+      return new Date(epochMs).toLocaleString([], {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+    }
+
+    function formatAgo(epochMs) {
+      if (!epochMs) return '-';
+      const delta = Math.max(0, Date.now() - epochMs);
+      if (delta < 1000) return 'just now';
+      if (delta < 60000) return `${Math.round(delta / 1000)}s ago`;
+      if (delta < 3600000) return `${Math.round(delta / 60000)}m ago`;
+      if (delta < 86400000) return `${Math.round(delta / 3600000)}h ago`;
+      return `${Math.round(delta / 86400000)}d ago`;
+    }
+
+    function formatDuration(ms) {
+      if (ms === null || ms === undefined || !Number.isFinite(ms)) return '-';
+      if (ms < 1000) return `${Math.round(ms)}ms`;
+      if (ms < 10000) return `${(ms / 1000).toFixed(1)}s`;
+      if (ms < 60000) return `${Math.round(ms / 1000)}s`;
+      if (ms < 3600000) return `${Math.round(ms / 60000)}m`;
+      return `${Math.round(ms / 3600000)}h`;
+    }
+
+    function clampText(text, maxChars) {
+      const str = String(text || '');
+      return str.length > maxChars ? `${str.slice(0, maxChars)}...` : str;
+    }
+
+    function renderExpandableSection(previewHtml, fullHtml, label, expandByDefault) {
+      const expandedAttr = expandByDefault ? '1' : '0';
+      const buttonLabel = expandByDefault ? 'Show less' : 'Show more';
+      return `
+        <div class="expandable" data-expanded="${expandedAttr}">
+          <div class="expandable-preview">${previewHtml}</div>
+          <button class="expand-btn" data-role="expand-toggle" data-show="${esc(buttonLabel)}" data-hide="Show less">${esc(buttonLabel)} · ${esc(label)}</button>
+          <div class="expandable-full">${fullHtml}</div>
+        </div>
+      `;
+    }
+
+    function renderMaybeExpandableText(text, expandLargeByDefault) {
+      const str = String(text || '');
+      if (!isOversizeText(str)) {
+        return `<div class="detail-plain">${esc(str)}</div>`;
+      }
+
+      const preview = clampText(str, 280);
+      return renderExpandableSection(
+        esc(preview),
+        `<pre>${esc(str)}</pre>`,
+        `${str.length} chars`,
+        expandLargeByDefault,
+      );
+    }
+
+    function asActionList(value) {
+      if (!value) return null;
+
+      if (Array.isArray(value)) {
+        const actions = value.filter(item => item && typeof item === 'object');
+        if (!actions.length) return null;
+        const looksLikeActions = actions.some(action => (
+          'type' in action ||
+          'actionType' in action ||
+          'unitId' in action ||
+          'destinationX' in action ||
+          'destinationY' in action ||
+          'constructionName' in action ||
+          'cityX' in action ||
+          'cityY' in action
+        ));
+        return looksLikeActions ? actions : null;
+      }
+
+      if (typeof value === 'object' && Array.isArray(value.actions)) {
+        return asActionList(value.actions);
+      }
+
+      return null;
+    }
+
+    function summarizeAction(action) {
+      const type = action.type || action.actionType || action.kind || 'action';
+      switch (type) {
+        case 'unit_move':
+          return `Move unit ${action.unitId ?? '?'} to (${action.destinationX ?? '?'}, ${action.destinationY ?? '?'})`;
+        case 'unit_action':
+          return `Use ${action.actionType || 'action'} with unit ${action.unitId ?? '?'}`;
+        case 'city_choose_construction':
+          return `Set city (${action.cityX ?? '?'}, ${action.cityY ?? '?'}) to build ${action.constructionName || '?'}`;
+        case 'end_turn':
+          return 'End the turn';
+        default:
+          return `Execute ${type}`;
+      }
+    }
+
+    function renderActionCard(action, index, actionCheck) {
+      const actionType = action.type || action.actionType || action.kind || 'action';
+      const actionSummary = summarizeAction(action);
+      const keyFields = [
+        ['priority', action.priority],
+        ['unitId', action.unitId],
+        ['destination', action.destinationX !== undefined && action.destinationY !== undefined ? `${action.destinationX},${action.destinationY}` : undefined],
+        ['city', action.cityX !== undefined && action.cityY !== undefined ? `${action.cityX},${action.cityY}` : undefined],
+        ['construction', action.constructionName],
+      ].filter(([, value]) => value !== undefined && value !== null && String(value).length > 0);
+
+      const remaining = Object.entries(action)
+        .filter(([key]) => !['type', 'actionType', 'kind', 'priority', 'unitId', 'destinationX', 'destinationY', 'cityX', 'cityY', 'constructionName'].includes(key));
+
+      const chips = keyFields.map(([key, value]) => `<span class="action-chip">${esc(key)}=${esc(String(value))}</span>`).join('');
+      const extra = remaining.length
+        ? `<div class="json-kv">${remaining.map(([key, value]) => `
+            <div class="json-row">
+              <div class="json-key">${esc(key)}</div>
+              <div class="json-value">${renderJsonValue(value, false, 1)}</div>
+            </div>
+          `).join('')}</div>`
+        : '';
+      const checkTone = normalizeTone(actionCheck && actionCheck.tone);
+      const actionIssue = actionCheck && checkTone !== 'ok'
+        ? `<div class="action-check action-check-${checkTone}">${esc(actionCheck.text)}</div>`
+        : '';
+
+      return `
+        <div class="action-card">
+          <div class="action-head">
+            <span class="action-kind">${esc(String(actionType))}</span>
+            <span class="action-index">#${index + 1}</span>
+          </div>
+          <div class="action-summary">${esc(actionSummary)}</div>
+          ${chips ? `<div class="action-fields">${chips}</div>` : ''}
+          ${actionIssue}
+          ${extra}
+        </div>
+      `;
+    }
+
+    function renderActionList(actions, expandLargeByDefault, actionChecks = []) {
+      const cards = actions.map((action, index) => renderActionCard(action, index, actionChecks[index]));
+      if (actions.length <= 8) return `<div class="action-list">${cards.join('')}</div>`;
+
+      const preview = `<div class="action-list">${cards.slice(0, 4).join('')}</div>`;
+      const full = `<div class="action-list">${cards.join('')}</div>`;
+      return renderExpandableSection(preview, full, `${actions.length} actions`, expandLargeByDefault);
+    }
+
+    function renderJsonValue(value, expandLargeByDefault, depth = 0) {
+      if (value === null) return '<span class="json-value">null</span>';
+      if (typeof value === 'number' || typeof value === 'boolean') return `<span class="json-value">${value}</span>`;
+
+      if (typeof value === 'string') {
+        const nestedParsed = tryParseJsonString(value);
+        if (nestedParsed !== null && depth < 2) return renderJsonValue(nestedParsed, expandLargeByDefault, depth + 1);
+        return renderMaybeExpandableText(value, expandLargeByDefault);
+      }
+
+      const parsedActions = asActionList(value);
+      if (parsedActions) return renderActionList(parsedActions, expandLargeByDefault);
+
+      if (Array.isArray(value)) {
+        if (!value.length) return '<span class="json-value">[]</span>';
+        const primitiveOnly = value.every(item => ['string', 'number', 'boolean'].includes(typeof item) || item === null);
+        if (primitiveOnly && value.length <= 10 && value.every(item => String(item).length < 40)) {
+          return `<div class="json-list">${value.map(item => `<span class="json-badge">${esc(String(item))}</span>`).join('')}</div>`;
+        }
+        return renderMaybeExpandableText(JSON.stringify(value, null, 2), expandLargeByDefault);
+      }
+
+      const entries = Object.entries(value);
+      if (!entries.length) return '<span class="json-value">{}</span>';
+      if (depth >= 2 || entries.length > 10) {
+        return renderMaybeExpandableText(JSON.stringify(value, null, 2), expandLargeByDefault);
+      }
+
+      return `
+        <div class="json-kv">
+          ${entries.map(([key, item]) => `
+            <div class="json-row">
+              <div class="json-key">${esc(key)}</div>
+              <div class="json-value">${renderJsonValue(item, expandLargeByDefault, depth + 1)}</div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    function renderDetailsMap(details, expandLargeByDefault) {
+      const obj = details && typeof details === 'object' ? details : {};
+      const entries = Object.entries(obj);
+      if (!entries.length) return '';
+
+      return `
+        <div class="detail-grid">
+          ${entries.map(([key, value]) => {
+            const textValue = String(value ?? '');
+            const parsed = tryParseJsonString(textValue);
+            const body = parsed !== null
+              ? renderJsonValue(parsed, expandLargeByDefault)
+              : renderMaybeExpandableText(textValue, expandLargeByDefault);
+            return `
+              <div class="detail-item">
+                <div class="detail-key">${esc(key)}</div>
+                ${body}
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    function buildSelectOptions(selectEl, values, currentValue, allLabel) {
+      const options = [
+        `<option value="all">${esc(allLabel)}</option>`,
+        ...values.map(value => `<option value="${esc(value)}">${esc(value)}</option>`),
+      ];
+      selectEl.innerHTML = options.join('');
+      selectEl.value = values.includes(currentValue) ? currentValue : 'all';
+    }
+
+    function detailValue(event, key) {
+      if (!event || !event.details || typeof event.details !== 'object') return null;
+      return event.details[key] ?? null;
+    }
+
+    function numberFromDetail(event, key) {
+      return toWholeNumber(detailValue(event, key));
+    }
+
+    function extractObservationJsonFromPrompt(prompt) {
+      if (typeof prompt !== 'string') return null;
+      const marker = 'Observation JSON:';
+      const markerIndex = prompt.indexOf(marker);
+      if (markerIndex < 0) return null;
+      return prompt.slice(markerIndex + marker.length).trim();
+    }
+
+    function parseObservationData(turnStartEvent, prompt) {
+      const observationJson = detailValue(turnStartEvent, 'observationJson') || extractObservationJsonFromPrompt(prompt);
+      const parsed = observationJson ? tryParseJsonString(observationJson) : null;
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    }
+
+    function listOrEmpty(value) {
+      return Array.isArray(value) ? value : [];
+    }
+
+    function coordKey(x, y) {
+      return `${x},${y}`;
+    }
+
+    function toPercent(rate) {
+      if (rate === null || rate === undefined || !Number.isFinite(rate)) return '-';
+      return `${Math.round(rate * 100)}%`;
+    }
+
+    function average(numbers) {
+      if (!numbers.length) return null;
+      return numbers.reduce((sum, value) => sum + value, 0) / numbers.length;
+    }
+
+    function normalizeTone(tone) {
+      const value = String(tone || '').toLowerCase();
+      if (value === 'critical') return 'critical';
+      if (value === 'warning') return 'warning';
+      return 'ok';
+    }
+
+    function issueToneClass(tone) {
+      const normalized = normalizeTone(tone);
+      return normalized === 'critical' ? 'critical' : normalized === 'warning' ? 'warning' : 'healthy';
+    }
+
+    function trimList(values, limit) {
+      const items = listOrEmpty(values).filter(item => item !== null && item !== undefined && String(item).length);
+      if (items.length <= limit) return items;
+      return [...items.slice(0, limit), `+${items.length - limit} more`];
+    }
+
+    function summarizeCheckSet(checks, okLabel) {
+      const criticalCount = checks.filter(check => normalizeTone(check.tone) === 'critical').length;
+      const warningCount = checks.filter(check => normalizeTone(check.tone) === 'warning').length;
+      const issueCount = criticalCount + warningCount;
+
+      if (criticalCount) {
+        return {
+          tone: 'critical',
+          label: `${criticalCount} critical`,
+          issueCount,
+          note: warningCount ? `${warningCount} additional warnings` : `${issueCount} checks need review`,
+        };
+      }
+
+      if (warningCount) {
+        return {
+          tone: 'warning',
+          label: `${warningCount} warnings`,
+          issueCount,
+          note: `${issueCount} checks need review`,
+        };
+      }
+
+      return {
+        tone: 'ok',
+        label: okLabel,
+        issueCount: 0,
+        note: checks.length ? `${checks.length} checks passed` : 'No issues detected',
+      };
+    }
+
+    function computeIllegalActionRate(runLike) {
+      const planned = runLike.plannedActions ?? runLike.actions?.length ?? ((runLike.executedActions ?? 0) + (runLike.rejectedActions ?? 0));
+      if (!planned) return 0;
+      return (runLike.rejectedActions ?? 0) / planned;
+    }
+
+    function buildObservationChecks(observationData) {
+      if (!observationData) {
+        return [
+          { tone: 'critical', title: 'Observation missing', text: 'No structured observation snapshot was captured for this turn.' },
+        ];
+      }
+
+      const checks = [];
+      const cities = listOrEmpty(observationData.cities);
+      const units = listOrEmpty(observationData.units);
+      const knownCivs = listOrEmpty(observationData.knownCivs);
+      const visibleTiles = toWholeNumber(observationData.visibleTiles);
+      const happiness = toWholeNumber(observationData.happiness);
+
+      if (!cities.length) {
+        checks.push({ tone: 'critical', title: 'No cities observed', text: 'The agent saw zero cities in the structured observation.' });
+      } else {
+        checks.push({ tone: 'ok', title: `${cities.length} cities observed`, text: cities.slice(0, 3).map(city => city.name).join(', ') || 'City list captured.' });
+      }
+
+      if (!units.length) {
+        checks.push({ tone: 'warning', title: 'No units observed', text: 'The agent saw zero units in the structured observation.' });
+      }
+
+      if (knownCivs.length === 0) {
+        checks.push({ tone: 'warning', title: 'No diplomacy context', text: 'No known civilizations were captured in the observation.' });
+      }
+
+      if (!Number.isFinite(visibleTiles) || visibleTiles <= 0) {
+        checks.push({ tone: 'critical', title: 'No map visibility captured', text: 'The structured observation reported zero visible tiles.' });
+      } else {
+        checks.push({ tone: 'ok', title: `${visibleTiles} visible tiles`, text: 'Map visibility was captured for this turn.' });
+      }
+
+      if (Number.isFinite(happiness) && happiness < 0) {
+        checks.push({ tone: 'warning', title: 'Negative happiness', text: `Observation reports happiness ${happiness}.` });
+      }
+
+      const citiesWithoutChoices = cities.filter(city => !listOrEmpty(city.availableConstructions).length);
+      if (citiesWithoutChoices.length) {
+        checks.push({
+          tone: 'warning',
+          title: 'Cities without construction options',
+          text: citiesWithoutChoices.slice(0, 3).map(city => city.name).join(', '),
+        });
+      }
+
+      const unitsWithMovementButNoReach = units.filter(unit => unit.hasMovement && listOrEmpty(unit.reachableTiles).length === 0);
+      if (unitsWithMovementButNoReach.length) {
+        checks.push({
+          tone: 'warning',
+          title: 'Units can move but have no reachable tiles',
+          text: unitsWithMovementButNoReach.slice(0, 4).map(unit => `${unit.name} #${unit.id}`).join(', '),
+        });
+      }
+
+      const unitsWithMovementButNoOptions = units.filter(unit => unit.hasMovement && !listOrEmpty(unit.unitActions).length && !listOrEmpty(unit.reachableTiles).length);
+      if (unitsWithMovementButNoOptions.length) {
+        checks.push({
+          tone: 'warning',
+          title: 'Movable units without actions',
+          text: unitsWithMovementButNoOptions.slice(0, 4).map(unit => `${unit.name} #${unit.id}`).join(', '),
+        });
+      }
+
+      if (observationData.isAtWar === true && !knownCivs.some(civ => civ.isAtWar)) {
+        checks.push({
+          tone: 'warning',
+          title: 'War flag lacks counterpart',
+          text: 'The civ is marked at war, but no known civilization is flagged as an active war opponent.',
+        });
+      }
+
+      return checks.length ? checks : [
+        { tone: 'ok', title: 'Observation looks populated', text: 'Cities, units, and diplomacy context were captured for this turn.' },
+      ];
+    }
+
+    function validatePlanAgainstObservation(run) {
+      const issues = [];
+
+      if (run.requestErrorEvent) {
+        issues.push({ tone: 'critical', title: 'Planner request failed', text: detailValue(run.requestErrorEvent, 'error') || 'The planner request failed before a response arrived.' });
+      }
+
+      if (run.httpErrorEvent) {
+        issues.push({ tone: 'critical', title: 'Planner HTTP error', text: `Planner returned ${detailValue(run.httpErrorEvent, 'status') || 'a non-200 status'}.` });
+      }
+
+      if (run.parseErrorEvent) {
+        issues.push({ tone: 'critical', title: 'Structured parse failed', text: detailValue(run.parseErrorEvent, 'error') || 'The model replied, but the structured plan could not be decoded.' });
+      }
+
+      if (run.planMissingEvent) {
+        issues.push({ tone: 'warning', title: 'No usable plan', text: 'This turn fell back because no structured plan was produced.' });
+      }
+
+      if (run.fallbackEvent) {
+        issues.push({ tone: 'warning', title: 'Fallback after execution', text: 'Legacy AI took over after the decoded plan was partially or fully executed.' });
+      }
+
+      if (run.handoffToLegacyAI === true) {
+        issues.push({ tone: 'warning', title: 'Model requested handoff', text: 'The decoded plan explicitly asked to hand control back to legacy AI.' });
+      }
+
+      if ((run.rejectedActions ?? 0) > 0) {
+        issues.push({
+          tone: 'warning',
+          title: 'Rejected actions recorded',
+          text: `${run.rejectedActions} of ${run.plannedActions ?? run.actions.length ?? 0} proposed actions were rejected by the engine.`,
+        });
+      }
+
+      if (run.actions.length > 25) {
+        issues.push({ tone: 'warning', title: 'Plan is unusually long', text: `${run.actions.length} actions were decoded, which is above the prompt guidance of 25.` });
+      }
+
+      if (!run.observationData) {
+        return {
+          issues: [
+            ...issues,
+            { tone: 'warning', title: 'No observation snapshot', text: 'Plan cannot be validated against structured observation data.' },
+          ],
+          actionChecks: [],
+        };
+      }
+
+      const units = new Map(listOrEmpty(run.observationData.units).map(unit => [Number(unit.id), unit]));
+      const cities = new Map(listOrEmpty(run.observationData.cities).map(city => [coordKey(city.x, city.y), city]));
+      const actionChecks = run.actions.map((action, index) => {
+        const type = action.type || action.actionType || action.kind || 'action';
+        let tone = 'ok';
+        let text = summarizeAction(action);
+
+        if (type === 'unit_move') {
+          const unit = units.get(Number(action.unitId));
+          if (!unit) {
+            tone = 'critical';
+            text = `Action ${index + 1} references missing unit ${action.unitId}.`;
+          } else if (unit.hasMovement === false) {
+            tone = 'warning';
+            text = `Action ${index + 1} moves unit ${action.unitId}, but the observation says it has no movement left.`;
+          } else if (!listOrEmpty(unit.reachableTiles).some(tile => coordKey(tile.x, tile.y) === coordKey(action.destinationX, action.destinationY))) {
+            tone = 'warning';
+            text = `Action ${index + 1} moves unit ${action.unitId} to (${action.destinationX}, ${action.destinationY}), which is not in its reachable tiles.`;
+          }
+        } else if (type === 'unit_action') {
+          const unit = units.get(Number(action.unitId));
+          if (!unit) {
+            tone = 'critical';
+            text = `Action ${index + 1} references missing unit ${action.unitId}.`;
+          } else if (!listOrEmpty(unit.unitActions).includes(action.actionType)) {
+            tone = 'warning';
+            text = `Action ${index + 1} uses ${action.actionType}, but the observation does not list that as an available action for unit ${action.unitId}.`;
+          }
+        } else if (type === 'city_choose_construction') {
+          const city = cities.get(coordKey(action.cityX, action.cityY));
+          if (!city) {
+            tone = 'critical';
+            text = `Action ${index + 1} references missing city (${action.cityX}, ${action.cityY}).`;
+          } else if (!listOrEmpty(city.availableConstructions).includes(action.constructionName)) {
+            tone = 'warning';
+            text = `Action ${index + 1} sets ${city.name} to ${action.constructionName}, but that option is not in the observation.`;
+          }
+        }
+
+        return { tone, title: `Action ${index + 1}`, text };
+      });
+
+      issues.push(...actionChecks.filter(check => check.tone !== 'ok'));
+
+      if (!run.actions.length && !run.handoffToLegacyAI && !run.planMissingEvent && !run.parseErrorEvent && !run.requestErrorEvent && !run.httpErrorEvent) {
+        issues.push({ tone: 'warning', title: 'No actions proposed', text: 'The model returned no concrete actions for this turn.' });
+      }
+
+      if (!issues.length) {
+        issues.push({ tone: 'ok', title: 'Plan matches observation', text: 'Decoded actions reference units, cities, and options that exist in the captured observation.' });
+      }
+
+      return { issues, actionChecks };
+    }
+
+    function buildPortfolioMetrics(runs) {
+      const completedRuns = runs.filter(run => run.planAppliedEvent || run.fallbackEvent || run.planMissingEvent || run.parseErrorEvent || run.requestErrorEvent || run.httpErrorEvent);
+      const latencyValues = runs.map(run => run.llmLatencyMs).filter(value => Number.isFinite(value));
+      const illegalRuns = runs
+        .filter(run => (run.plannedActions ?? run.actions.length ?? 0) > 0)
+        .map(run => run.illegalActionRate);
+      const fallbackCount = completedRuns.filter(run => run.fallbackEvent || run.planMissingEvent).length;
+      const blockedCount = completedRuns.filter(run => run.parseErrorEvent || run.requestErrorEvent || run.httpErrorEvent).length;
+
+      return {
+        visibleRuns: runs.length,
+        completedRuns: completedRuns.length,
+        avgLatencyMs: average(latencyValues),
+        latencySamples: latencyValues.length,
+        illegalActionRate: average(illegalRuns) ?? 0,
+        illegalSamples: illegalRuns.length,
+        fallbackCount,
+        blockedCount,
+        fallbackRate: completedRuns.length ? fallbackCount / completedRuns.length : 0,
+        blockedRate: completedRuns.length ? blockedCount / completedRuns.length : 0,
+      };
+    }
+
+    function eventTextBlob(event) {
+      return [
+        event.type || '',
+        event.message || '',
+        event.civName || '',
+        normalizeDetails(event.details),
+      ].join(' ').toLowerCase();
+    }
+
+    function eventTone(type) {
+      const normalized = String(type || '').toLowerCase();
+      if (normalized.includes('error') || normalized === 'llm_parse_error') return 'critical';
+      if (normalized.includes('fallback') || normalized.includes('missing')) return 'warning';
+      if (normalized.includes('applied') || normalized.includes('parsed')) return 'healthy';
+      if (normalized.includes('request') || normalized.includes('response')) return 'live';
+      return 'idle';
+    }
+
+    function diffMs(startEvent, endEvent) {
+      if (!startEvent || !endEvent) return null;
+      const start = startEvent.epochMs || 0;
+      const end = endEvent.epochMs || 0;
+      if (!start || !end || end < start) return null;
+      return end - start;
+    }
+
+    function lastEventOfType(events, type) {
+      for (let index = events.length - 1; index >= 0; index -= 1) {
+        if ((events[index].type || '') === type) return events[index];
+      }
+      return null;
+    }
+
+    function firstEventOfType(events, type) {
+      return events.find(event => (event.type || '') === type) || null;
+    }
+
+    function runLabel(run) {
+      if (!run) return 'No turn selected';
+      if (run.turn === null || run.turn === undefined) return `${run.civName} · Turn n/a`;
+      return `${run.civName} · Turn ${run.turn}`;
+    }
+
+    function buildRunSummary(run) {
+      const subject = run.turn === null || run.turn === undefined
+        ? `${run.civName}`
+        : `${run.civName} turn ${run.turn}`;
+
+      if (run.planAppliedEvent) {
+        const executed = run.executedActions ?? 0;
+        const rejected = run.rejectedActions ?? 0;
+        const planned = run.plannedActions ?? run.actions.length;
+        return `${subject} produced a usable plan with ${planned} proposed actions and finished without legacy fallback. Execution landed at ${executed} applied and ${rejected} rejected actions.`;
+      }
+
+      if (run.fallbackEvent) {
+        const executed = run.executedActions ?? 0;
+        const rejected = run.rejectedActions ?? 0;
+        return `${subject} reached execution, but control went back to legacy AI after ${executed} applied and ${rejected} rejected actions.`;
+      }
+
+      if (run.planMissingEvent) {
+        return `${subject} never produced a usable structured plan, so the turn handed back to legacy AI.`;
+      }
+
+      if (run.parseErrorEvent) {
+        return `${subject} got a model response, but the structured plan could not be decoded into the expected schema.`;
+      }
+
+      if (run.requestErrorEvent || run.httpErrorEvent) {
+        return `${subject} failed before the planner returned a usable response.`;
+      }
+
+      if (run.responseEvent) {
+        return `${subject} has a raw model response and is waiting for parse or execution.`;
+      }
+
+      if (run.requestEvent) {
+        return `${subject} has sent a prompt to the planner and is waiting for a reply.`;
+      }
+
+      return `${subject} has observation data and is waiting for the next planner step.`;
+    }
+
+    function buildRunBriefing(run) {
+      const parts = [];
+      const subject = run.turn === null || run.turn === undefined
+        ? run.civName
+        : `${run.civName} on turn ${run.turn}`;
+
+      const observationFacts = [];
+      if (run.observation.cities !== null) observationFacts.push(`${run.observation.cities} cities`);
+      if (run.observation.units !== null) observationFacts.push(`${run.observation.units} units`);
+      if (run.observation.gold !== null) observationFacts.push(`${run.observation.gold} gold`);
+
+      if (observationFacts.length) {
+        parts.push(`${subject} entered planning with ${observationFacts.join(', ')}.`);
+      } else {
+        parts.push(`${subject} is the current watch target.`);
+      }
+
+      if (run.provider || run.model) {
+        parts.push(`Planner path: ${[run.provider, run.model].filter(Boolean).join(' / ')}.`);
+      }
+
+      if (run.notes) {
+        parts.push(`Planner note: ${clampText(run.notes, 160)}`);
+      }
+
+      if (!run.notes && run.latestEvent && run.latestEvent.message) {
+        parts.push(`Latest signal: ${clampText(run.latestEvent.message, 140)}`);
+      }
+
+      return parts.join(' ');
+    }
+
+    function decorateRun(run) {
+      const events = run.events.slice().sort((a, b) => (a.epochMs || 0) - (b.epochMs || 0) || (a.id || 0) - (b.id || 0));
+      const typeCounts = mapCount(events, event => event.type || 'unknown');
+      const latestEvent = events[events.length - 1] || null;
+
+      const turnStartEvent = firstEventOfType(events, 'turn_start');
+      const requestEvent = firstEventOfType(events, 'llm_request');
+      const responseEvent = lastEventOfType(events, 'llm_response');
+      const planParsedEvent = lastEventOfType(events, 'llm_plan_parsed');
+      const parseErrorEvent = lastEventOfType(events, 'llm_parse_error');
+      const requestErrorEvent = lastEventOfType(events, 'llm_request_error');
+      const httpErrorEvent = lastEventOfType(events, 'llm_http_error');
+      const planAppliedEvent = lastEventOfType(events, 'plan_applied');
+      const fallbackEvent = lastEventOfType(events, 'fallback_legacy');
+      const planMissingEvent = lastEventOfType(events, 'plan_missing');
+      const outcomeEvent = planAppliedEvent || fallbackEvent || planMissingEvent || parseErrorEvent || requestErrorEvent || httpErrorEvent || latestEvent;
+
+      const provider = detailValue(requestEvent, 'provider')
+        || detailValue(responseEvent, 'provider')
+        || detailValue(parseErrorEvent, 'provider')
+        || detailValue(requestErrorEvent, 'provider')
+        || detailValue(httpErrorEvent, 'provider')
+        || null;
+
+      const model = detailValue(requestEvent, 'model')
+        || detailValue(responseEvent, 'model')
+        || detailValue(requestErrorEvent, 'model')
+        || detailValue(httpErrorEvent, 'model')
+        || null;
+
+      const baseUrl = detailValue(requestEvent, 'baseUrl') || detailValue(requestErrorEvent, 'url') || detailValue(httpErrorEvent, 'url') || null;
+      const prompt = detailValue(requestEvent, 'prompt') || null;
+      const rawResponse = detailValue(responseEvent, 'rawResponse') || detailValue(parseErrorEvent, 'rawResponse') || null;
+      const parsedPlanJson = detailValue(planParsedEvent, 'parsedPlan') || null;
+
+      const parsedPlan = (
+        tryParseJsonString(parsedPlanJson)
+        || tryParseJsonString(rawResponse)
+      );
+
+      const actions = Array.isArray(parsedPlan && parsedPlan.actions) ? parsedPlan.actions : [];
+      const notes = detailValue(planParsedEvent, 'notes') || (parsedPlan && parsedPlan.notes) || null;
+      const handoffToLegacyAI = toBoolean(detailValue(planParsedEvent, 'handoffToLegacyAI'))
+        ?? (parsedPlan && typeof parsedPlan === 'object' ? toBoolean(parsedPlan.handoffToLegacyAI) : null);
+
+      const plannedActions = numberFromDetail(planAppliedEvent, 'plannedActions')
+        ?? numberFromDetail(fallbackEvent, 'plannedActions')
+        ?? numberFromDetail(planParsedEvent, 'actions')
+        ?? (actions.length || null);
+
+      const executedActions = numberFromDetail(planAppliedEvent, 'executedActions')
+        ?? numberFromDetail(fallbackEvent, 'executedActions');
+
+      const rejectedActions = numberFromDetail(planAppliedEvent, 'rejectedActions')
+        ?? numberFromDetail(fallbackEvent, 'rejectedActions');
+
+      const llmLatencyMs = diffMs(requestEvent, responseEvent || requestErrorEvent || httpErrorEvent);
+      const totalRuntimeMs = diffMs(turnStartEvent, outcomeEvent);
+
+      let status = 'idle';
+      let statusLabel = 'Observing';
+      if (requestErrorEvent || httpErrorEvent || parseErrorEvent) {
+        status = 'critical';
+        statusLabel = 'Blocked';
+      } else if (fallbackEvent || planMissingEvent || handoffToLegacyAI) {
+        status = 'warning';
+        statusLabel = 'Fallback';
+      } else if (planAppliedEvent) {
+        status = 'healthy';
+        statusLabel = 'Applied';
+      } else if (requestEvent || responseEvent || planParsedEvent) {
+        status = 'live';
+        statusLabel = 'Live';
+      }
+
+      const observationData = parseObservationData(turnStartEvent, prompt);
+      const observation = {
+        cities: numberFromDetail(turnStartEvent, 'cities') ?? listOrEmpty(observationData && observationData.cities).length,
+        units: numberFromDetail(turnStartEvent, 'units') ?? listOrEmpty(observationData && observationData.units).length,
+        knownCivs: numberFromDetail(turnStartEvent, 'knownCivs') ?? listOrEmpty(observationData && observationData.knownCivs).length,
+        visibleTiles: numberFromDetail(turnStartEvent, 'visibleTiles') ?? toWholeNumber(observationData && observationData.visibleTiles),
+        gold: numberFromDetail(turnStartEvent, 'gold') ?? toWholeNumber(observationData && observationData.gold),
+        sciencePerTurn: numberFromDetail(turnStartEvent, 'sciencePerTurn') ?? toWholeNumber(observationData && observationData.sciencePerTurn),
+        culturePerTurn: numberFromDetail(turnStartEvent, 'culturePerTurn') ?? toWholeNumber(observationData && observationData.culturePerTurn),
+        faithPerTurn: numberFromDetail(turnStartEvent, 'faithPerTurn') ?? toWholeNumber(observationData && observationData.faithPerTurn),
+        happiness: numberFromDetail(turnStartEvent, 'happiness') ?? toWholeNumber(observationData && observationData.happiness),
+        isAtWar: toBoolean(detailValue(turnStartEvent, 'isAtWar')) ?? toBoolean(observationData && observationData.isAtWar),
+      };
+      const illegalActionRate = computeIllegalActionRate({ plannedActions, actions, executedActions, rejectedActions });
+      const observationChecks = buildObservationChecks(observationData);
+      const planValidation = validatePlanAgainstObservation({
+        observationData,
+        actions,
+        handoffToLegacyAI,
+        plannedActions,
+        executedActions,
+        rejectedActions,
+        fallbackEvent,
+        planMissingEvent,
+        parseErrorEvent,
+        requestErrorEvent,
+        httpErrorEvent,
+      });
+      const observationSummary = summarizeCheckSet(observationChecks, 'Looks sane');
+      const planSummary = summarizeCheckSet(planValidation.issues, actions.length ? 'Looks sane' : 'Waiting');
+      const topConcern = [...planValidation.issues, ...observationChecks].find(check => normalizeTone(check.tone) !== 'ok') || null;
+
+      const searchBlob = [
+        run.civName,
+        run.turn ?? '',
+        provider || '',
+        model || '',
+        baseUrl || '',
+        notes || '',
+        prompt || '',
+        rawResponse || '',
+        parsedPlanJson || '',
+        normalizeDetails(observationData || {}),
+        ...events.map(eventTextBlob),
+      ].join(' ').toLowerCase();
+
+      const decorated = {
+        ...run,
+        events,
+        typeCounts,
+        latestEvent,
+        turnStartEvent,
+        requestEvent,
+        responseEvent,
+        planParsedEvent,
+        parseErrorEvent,
+        requestErrorEvent,
+        httpErrorEvent,
+        planAppliedEvent,
+        fallbackEvent,
+        planMissingEvent,
+        outcomeEvent,
+        provider,
+        model,
+        baseUrl,
+        prompt,
+        rawResponse,
+        parsedPlanJson,
+        parsedPlan,
+        actions,
+        notes,
+        handoffToLegacyAI,
+        plannedActions,
+        executedActions,
+        rejectedActions,
+        llmLatencyMs,
+        totalRuntimeMs,
+        status,
+        statusLabel,
+        observation,
+        observationData,
+        observationChecks,
+        observationSummary,
+        planIssues: planValidation.issues,
+        actionChecks: planValidation.actionChecks,
+        planSummary,
+        topConcern,
+        illegalActionRate,
+        searchBlob,
+        eventCount: events.length,
+        firstEpochMs: events[0] ? events[0].epochMs : null,
+        lastEpochMs: latestEvent ? latestEvent.epochMs : null,
+      };
+
+      decorated.summary = buildRunSummary(decorated);
+      decorated.briefing = buildRunBriefing(decorated);
+      return decorated;
+    }
+
+    function buildRuns(events) {
+      const groups = new Map();
+      const sortedEvents = (events || []).slice().sort((a, b) => (a.epochMs || 0) - (b.epochMs || 0) || (a.id || 0) - (b.id || 0));
+
+      for (const event of sortedEvents) {
+        const civName = event.civName || 'System';
+        const turn = event.turn ?? null;
+        const key = `${civName}::${turn === null ? 'n/a' : turn}`;
+        if (!groups.has(key)) groups.set(key, { key, civName, turn, events: [] });
+        groups.get(key).events.push(event);
+      }
+
+      return [...groups.values()]
+        .map(decorateRun)
+        .sort((a, b) => (b.lastEpochMs || 0) - (a.lastEpochMs || 0) || String(a.civName).localeCompare(String(b.civName)));
+    }
+
+    function runMatchesFilters(run, includeType = true) {
+      if (STATE.civFilter !== 'all' && run.civName !== STATE.civFilter) return false;
+      if (includeType && STATE.typeFilter !== 'all' && !run.typeCounts.has(STATE.typeFilter)) return false;
+      if (STATE.textFilter && !run.searchBlob.includes(STATE.textFilter)) return false;
+      return true;
+    }
+
+    function eventMatchesFilters(event) {
+      if (STATE.typeFilter !== 'all' && (event.type || 'unknown') !== STATE.typeFilter) return false;
+      if (STATE.textFilter && !eventTextBlob(event).includes(STATE.textFilter)) return false;
+      return true;
+    }
+
+    function renderRunRoster(runs, selectedRunKey) {
+      rosterMetaEl.textContent = `${runs.length} turns`;
+
+      if (!runs.length) {
+        runRosterEl.innerHTML = '<div class="empty">No civ-turns match the current filters.</div>';
+        return;
+      }
+
+      runRosterEl.innerHTML = runs.map(run => `
+        <button class="run-card ${run.key === selectedRunKey ? 'active' : ''}" data-run-key="${esc(run.key)}">
+          <div class="card-top">
+            <div>
+              <div class="card-title">${esc(run.civName)}</div>
+              <div class="card-subtitle">${esc(run.turn === null || run.turn === undefined ? 'Turn n/a' : `Turn ${run.turn}`)} · ${esc(formatAgo(run.lastEpochMs))}</div>
+            </div>
+            <span class="status-pill status-${run.status}">${esc(run.statusLabel)}</span>
+          </div>
+          <div class="card-summary">${esc(clampText(run.topConcern ? `${run.topConcern.title}: ${run.topConcern.text}` : (run.notes || run.summary), 120))}</div>
+          <div class="card-meta">
+            <span class="meta-chip">${esc(run.provider || 'planner pending')}</span>
+            <span class="meta-chip">${esc(run.observationSummary.issueCount ? `${run.observationSummary.issueCount} obs flags` : 'obs ok')}</span>
+            <span class="meta-chip">${esc(run.planSummary.issueCount ? `${run.planSummary.issueCount} plan flags` : (run.planParsedEvent || run.actions.length ? 'plan ok' : 'plan pending'))}</span>
+            <span class="meta-chip">${esc(run.llmLatencyMs ? formatDuration(run.llmLatencyMs) : 'latency -')}</span>
+          </div>
+        </button>
+      `).join('');
+    }
+
+    function renderMiniCard(label, value, note) {
+      return `
+        <div class="mini-card">
+          <div class="mini-k">${esc(label)}</div>
+          <div class="mini-v">${esc(value)}</div>
+          <div class="mini-note">${esc(note)}</div>
+        </div>
+      `;
+    }
+
+    function renderHealthCard(label, value, note) {
+      return `
+        <div class="health-card">
+          <div class="health-label">${esc(label)}</div>
+          <div class="health-value">${esc(value)}</div>
+          <div class="health-note">${esc(note)}</div>
+        </div>
+      `;
+    }
+
+    function renderObservationStat(label, value, note) {
+      return `
+        <div class="obs-stat">
+          <div class="obs-label">${esc(label)}</div>
+          <div class="obs-value">${esc(value)}</div>
+          <div class="obs-note">${esc(note)}</div>
+        </div>
+      `;
+    }
+
+    function renderPlanMetaCard(label, value, note) {
+      return `
+        <div class="plan-meta-card">
+          <div class="plan-meta-label">${esc(label)}</div>
+          <div class="plan-meta-value">${esc(value)}</div>
+          <div class="plan-meta-note">${esc(note)}</div>
+        </div>
+      `;
+    }
+
+    function renderCheckCard(check) {
+      return `
+        <div class="check-card ${check ? `check-${normalizeTone(check.tone)}` : ''}">
+          <div class="check-title">${esc(check?.title || 'Check')}</div>
+          <div class="check-text">${esc(check?.text || '')}</div>
+        </div>
+      `;
+    }
+
+    function renderEntityCard(title, text, chips = []) {
+      return `
+        <div class="entity-card">
+          <div class="entity-title">${esc(title)}</div>
+          <div class="entity-text">${esc(text)}</div>
+          ${chips.length ? `<div class="entity-chip-row">${chips.map(chip => `<span class="metric-chip">${esc(chip)}</span>`).join('')}</div>` : ''}
+        </div>
+      `;
+    }
+
+    function renderFocus(run, visibleRuns) {
+      if (!run) {
+        focusEl.innerHTML = '<div class="empty">Pick a recent civ-turn from the watchlist to review what the agent observed, what it planned, and whether anything failed.</div>';
+        return;
+      }
+
+      const portfolio = buildPortfolioMetrics(visibleRuns || [run]);
+      const completedTurnsLabel = portfolio.completedRuns ? `${portfolio.completedRuns} completed turns` : 'No completed turns yet';
+      const summaryCards = [
+        renderMiniCard('Observation', run.observationSummary.issueCount ? `${run.observationSummary.issueCount} flags` : 'Looks sane', run.observationSummary.note),
+        renderMiniCard('Plan', run.planSummary.issueCount ? `${run.planSummary.issueCount} flags` : (run.actions.length ? 'Looks sane' : 'Waiting'), run.planSummary.note),
+        renderMiniCard('Inference latency', formatDuration(run.llmLatencyMs), 'Planner request to response'),
+        renderMiniCard('Illegal action rate', toPercent(run.illegalActionRate), `${run.rejectedActions ?? 0} rejected of ${run.plannedActions ?? run.actions.length ?? 0} planned`),
+        renderMiniCard('Turn runtime', formatDuration(run.totalRuntimeMs), 'Turn start to outcome signal'),
+      ];
+      const portfolioCards = [
+        renderHealthCard('Visible turns', String(portfolio.visibleRuns || 0), 'Turns in the current filtered window'),
+        renderHealthCard('Avg latency', formatDuration(portfolio.avgLatencyMs), `${portfolio.latencySamples} turns reported latency`),
+        renderHealthCard('Fallback rate', toPercent(portfolio.fallbackRate), portfolio.completedRuns ? `${portfolio.fallbackCount}/${portfolio.completedRuns} completed turns fell back` : completedTurnsLabel),
+        renderHealthCard('Blocked rate', toPercent(portfolio.blockedRate), portfolio.completedRuns ? `${portfolio.blockedCount}/${portfolio.completedRuns} completed turns blocked` : completedTurnsLabel),
+        renderHealthCard('Avg illegal rate', toPercent(portfolio.illegalActionRate), `${portfolio.illegalSamples} turns had planned actions`),
+      ];
+
+      const contextChips = [
+        run.provider ? `Provider: ${run.provider}` : null,
+        run.model ? `Model: ${run.model}` : null,
+        run.observation.isAtWar === null ? null : (run.observation.isAtWar ? 'At war' : 'Not at war'),
+        run.observation.cities !== null ? `${run.observation.cities} cities` : null,
+        run.observation.units !== null ? `${run.observation.units} units` : null,
+        run.observation.gold !== null ? `${run.observation.gold} gold` : null,
+        run.observation.visibleTiles !== null ? `${run.observation.visibleTiles} visible tiles` : null,
+      ].filter(Boolean);
+      const topIssue = run.topConcern && normalizeTone(run.topConcern.tone) !== 'ok'
+        ? `
+          <div class="panel-section-spacer issue-list">
+            <div class="issue-card issue-${issueToneClass(run.topConcern.tone)}">
+              <div class="issue-title">${esc(run.topConcern.title)}</div>
+              <div class="issue-text">${esc(run.topConcern.text)}</div>
+            </div>
+          </div>
+        `
+        : '';
+
+      focusEl.innerHTML = `
+        <div class="overview-header">
+          <div>
+            <div class="panel-kicker">Selected turn</div>
+            <h2 class="overview-title">${esc(runLabel(run))}</h2>
+            <p class="overview-sub">${esc(run.summary)}</p>
+          </div>
+          <div class="overview-side">
+            <span class="status-pill status-${run.status}">${esc(run.statusLabel)}</span>
+            <div>
+              ${esc(run.latestEvent ? run.latestEvent.type : 'No events yet')}<br>
+              ${esc(formatDateTime(run.lastEpochMs))}
+            </div>
+          </div>
+        </div>
+
+        <div class="summary-strip">${summaryCards.join('')}</div>
+        ${topIssue}
+        <div class="info-section">
+          <div class="section-subtitle">Current window metrics</div>
+          <div class="health-grid">${portfolioCards.join('')}</div>
+        </div>
+
+        ${run.notes ? `<div class="note-banner"><strong>Planner note:</strong> ${esc(run.notes)}</div>` : ''}
+        ${contextChips.length ? `<div class="context-row">${contextChips.map(chip => `<span class="context-chip">${esc(chip)}</span>`).join('')}</div>` : ''}
+      `;
+    }
+
+    function renderStageCard(step, title, state, meta, foot) {
+      return `
+        <div class="stage-card stage-${state}">
+          <div class="stage-step">${esc(step)}</div>
+          <div class="stage-title">${esc(title)}</div>
+          <div class="stage-meta">${esc(meta)}</div>
+          <div class="stage-foot">${esc(foot)}</div>
+        </div>
+      `;
+    }
+
+    function renderStages(run) {
+      if (!run) {
+        stagesMetaEl.textContent = 'No turn selected';
+        stageGridEl.innerHTML = '<div class="empty">Observation quality checks and the captured turn snapshot will appear here once a turn is selected.</div>';
+        return;
+      }
+
+      const observationData = run.observationData || {};
+      const cities = listOrEmpty(observationData.cities);
+      const units = listOrEmpty(observationData.units);
+      const knownCivs = listOrEmpty(observationData.knownCivs);
+      const showAll = showDetailsEl.checked;
+      const visibleCities = cities.slice(0, showAll ? cities.length : 4);
+      const visibleUnits = units.slice(0, showAll ? units.length : 5);
+      const visibleCivs = knownCivs.slice(0, showAll ? knownCivs.length : 6);
+      const observationStats = [
+        renderObservationStat('Cities', run.observation.cities ?? '-', 'Settlements captured in the snapshot'),
+        renderObservationStat('Units', run.observation.units ?? '-', 'Movable units captured in the snapshot'),
+        renderObservationStat('Known civs', run.observation.knownCivs ?? '-', 'Diplomatic context available to the planner'),
+        renderObservationStat('Visible tiles', run.observation.visibleTiles ?? '-', 'Map visibility available to the planner'),
+        renderObservationStat('Gold', run.observation.gold ?? '-', 'Treasury at plan time'),
+        renderObservationStat('Science / turn', run.observation.sciencePerTurn ?? '-', 'Science yield in the snapshot'),
+        renderObservationStat('Culture / turn', run.observation.culturePerTurn ?? '-', 'Culture yield in the snapshot'),
+        renderObservationStat('Faith / turn', run.observation.faithPerTurn ?? '-', 'Faith yield in the snapshot'),
+        renderObservationStat('Happiness', run.observation.happiness ?? '-', 'Empire happiness at plan time'),
+        renderObservationStat('War state', run.observation.isAtWar === null ? '-' : (run.observation.isAtWar ? 'At war' : 'Peace'), 'Top-level war flag in the snapshot'),
+      ];
+      const cityCards = visibleCities.map(city => renderEntityCard(
+        city.name || `City (${city.x}, ${city.y})`,
+        `Pop ${city.population ?? '?'} · Health ${city.health ?? '?'} · Building ${city.currentConstruction || 'none'}`,
+        [`(${city.x}, ${city.y})`, ...trimList(city.availableConstructions, 4)],
+      ));
+      const unitCards = visibleUnits.map(unit => renderEntityCard(
+        `${unit.name || 'Unit'} #${unit.id ?? '?'}`,
+        `At (${unit.x ?? '?'}, ${unit.y ?? '?'}) · ${unit.health ?? '?'} hp · ${unit.movementPoints || 'movement ?'} · ${unit.hasMovement ? 'can move' : 'no movement'}`,
+        [`reachable ${listOrEmpty(unit.reachableTiles).length}`, ...trimList(unit.unitActions, 4)],
+      ));
+      const diplomacyCards = visibleCivs.map(civ => renderEntityCard(
+        civ.civName || 'Unknown civ',
+        civ.diplomaticStatus || 'Unknown status',
+        [civ.isAtWar ? 'at war' : 'peace', civ.isCityState ? 'city-state' : 'major civ'],
+      ));
+
+      stagesMetaEl.textContent = `${run.observationSummary.issueCount ? `${run.observationSummary.issueCount} flags` : 'Looks sane'} · ${formatDateTime(run.turnStartEvent ? run.turnStartEvent.epochMs : run.lastEpochMs)}`;
+      stageGridEl.innerHTML = `
+        <div class="observation-grid">${observationStats.join('')}</div>
+        <div class="info-section">
+          <div class="section-subtitle">Observation checks</div>
+          <div class="check-list">${run.observationChecks.map(renderCheckCard).join('')}</div>
+        </div>
+        <div class="info-section">
+          <div class="section-subtitle">Captured cities${cities.length > visibleCities.length ? ` · showing ${visibleCities.length}/${cities.length}` : ''}</div>
+          ${cityCards.length ? `<div class="entity-list">${cityCards.join('')}</div>` : '<div class="empty">No city list was captured in the structured observation.</div>'}
+        </div>
+        <div class="info-section">
+          <div class="section-subtitle">Captured units${units.length > visibleUnits.length ? ` · showing ${visibleUnits.length}/${units.length}` : ''}</div>
+          ${unitCards.length ? `<div class="entity-list">${unitCards.join('')}</div>` : '<div class="empty">No unit list was captured in the structured observation.</div>'}
+        </div>
+        <div class="info-section">
+          <div class="section-subtitle">Diplomacy${knownCivs.length > visibleCivs.length ? ` · showing ${visibleCivs.length}/${knownCivs.length}` : ''}</div>
+          ${diplomacyCards.length ? `<div class="entity-columns">${diplomacyCards.join('')}</div>` : '<div class="empty">No known civilizations were captured in the structured observation.</div>'}
+        </div>
+      `;
+    }
+
+    function renderActionPanel(run) {
+      if (!run) {
+        actionsMetaEl.textContent = 'No plan captured';
+        actionPlanEl.innerHTML = '<div class="empty">Structured actions will appear here for the selected turn.</div>';
+        return;
+      }
+
+      const note = run.notes
+        ? `<div class="note-banner"><strong>Planner note:</strong> ${esc(run.notes)}</div>`
+        : '';
+      const metaCards = [
+        renderPlanMetaCard('Decoded actions', String(run.actions.length), run.planParsedEvent ? 'Structured JSON decoded successfully' : 'No structured plan decoded'),
+        renderPlanMetaCard('Executed / rejected', `${run.executedActions ?? 0} / ${run.rejectedActions ?? 0}`, 'Engine outcome for this turn'),
+        renderPlanMetaCard('Illegal action rate', toPercent(run.illegalActionRate), `${run.rejectedActions ?? 0} rejected of ${run.plannedActions ?? run.actions.length ?? 0} planned`),
+        renderPlanMetaCard('Inference latency', formatDuration(run.llmLatencyMs), 'Planner request to response'),
+        renderPlanMetaCard('Fallback', run.fallbackEvent || run.planMissingEvent || run.handoffToLegacyAI ? 'Yes' : 'No', run.fallbackEvent ? 'Legacy AI took over' : (run.handoffToLegacyAI ? 'Planner asked for handoff' : 'Stayed on agent plan')),
+      ];
+
+      actionsMetaEl.textContent = run.planSummary.issueCount
+        ? `${run.planSummary.issueCount} flags · ${run.actions.length} actions`
+        : run.actions.length
+          ? `${run.actions.length} actions · looks sane`
+          : 'No structured plan decoded';
+
+      const actionList = run.actions.length
+        ? renderActionList(run.actions, showDetailsEl.checked, run.actionChecks)
+        : '<div class="empty">The planner returned no concrete actions for this turn.</div>';
+
+      actionPlanEl.innerHTML = `
+        ${note}
+        <div class="plan-meta-grid">${metaCards.join('')}</div>
+        <div class="info-section">
+          <div class="section-subtitle">Plan validation</div>
+          <div class="check-list">${run.planIssues.map(renderCheckCard).join('')}</div>
+        </div>
+        <div class="info-section">
+          <div class="section-subtitle">Decoded actions</div>
+          ${actionList}
+        </div>
+      `;
+    }
+
+    function renderArtifactCard(title, meta, bodyHtml) {
+      return `
+        <div class="artifact-card">
+          <div class="artifact-head">
+            <div class="artifact-title">${esc(title)}</div>
+            <div class="artifact-meta">${esc(meta)}</div>
+          </div>
+          ${bodyHtml}
+        </div>
+      `;
+    }
+
+    function renderLaneGrid(run) {
+      const endpoint = run.baseUrl || 'unknown';
+      return `
+        <div class="lane-grid">
+          <div class="lane-item">
+            <div class="detail-key">Provider</div>
+            <div class="detail-plain">${esc(run.provider || 'unknown')}</div>
+          </div>
+          <div class="lane-item">
+            <div class="detail-key">Model</div>
+            <div class="detail-plain">${esc(run.model || 'unknown')}</div>
+          </div>
+          <div class="lane-item">
+            <div class="detail-key">Endpoint</div>
+            ${renderMaybeExpandableText(endpoint, false)}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderDebugSection(title, meta, bodyHtml, openByDefault) {
+      return `
+        <details class="debug-details"${openByDefault ? ' open' : ''}>
+          <summary>
+            <span class="debug-title">${esc(title)}</span>
+            <span class="debug-meta">${esc(meta)}</span>
+          </summary>
+          <div class="debug-body">${bodyHtml}</div>
+        </details>
+      `;
+    }
+
+    function renderArtifacts(run) {
+      if (!run) {
+        artifactsMetaEl.textContent = 'Observation, prompt, response, and parsed output';
+        artifactsEl.innerHTML = '<div class="empty">Select a turn to inspect raw observation, prompt, and response details only when you need them.</div>';
+        return;
+      }
+
+      const sections = [];
+      const openByDefault = showDetailsEl.checked;
+
+      sections.push(renderDebugSection(
+        'Planner lane',
+        [run.provider || 'unknown provider', run.model || 'unknown model'].join(' / '),
+        renderLaneGrid(run),
+        openByDefault,
+      ));
+
+      if (run.observationData) {
+        sections.push(renderDebugSection(
+          'Captured observation JSON',
+          `${run.observation.cities ?? 0} cities · ${run.observation.units ?? 0} units`,
+          renderJsonValue(run.observationData, openByDefault),
+          openByDefault,
+        ));
+      }
+
+      if (run.prompt) {
+        sections.push(renderDebugSection(
+          'Prompt sent',
+          `${run.prompt.length} chars`,
+          renderMaybeExpandableText(run.prompt, openByDefault),
+          openByDefault,
+        ));
+      }
+
+      if (run.rawResponse) {
+        sections.push(renderDebugSection(
+          'Raw model response',
+          `${run.rawResponse.length} chars`,
+          renderMaybeExpandableText(run.rawResponse, openByDefault),
+          openByDefault,
+        ));
+      }
+
+      if (run.parsedPlan) {
+        sections.push(renderDebugSection(
+          'Parsed plan JSON',
+          `${run.actions.length} actions`,
+          renderJsonValue(run.parsedPlan, openByDefault),
+          openByDefault,
+        ));
+      }
+
+      if (run.parseErrorEvent && detailValue(run.parseErrorEvent, 'error')) {
+        sections.push(renderDebugSection(
+          'Parse failure',
+          'Decode error',
+          renderMaybeExpandableText(detailValue(run.parseErrorEvent, 'error'), openByDefault),
+          true,
+        ));
+      }
+
+      artifactsMetaEl.textContent = `${sections.length} sections`;
+      artifactsEl.innerHTML = sections.length
+        ? sections.join('')
+        : '<div class="empty">No observation, prompt, response, or parsed output were captured for this turn.</div>';
+    }
+
+    function buildEventNote(event) {
+      if (!event || !event.details) return '';
+      if (event.type === 'llm_plan_parsed') {
+        const actions = detailValue(event, 'actions');
+        const notes = detailValue(event, 'notes');
+        return [actions ? `${actions} actions` : '', notes || ''].filter(Boolean).join(' · ');
+      }
+      if (event.type === 'plan_applied' || event.type === 'fallback_legacy') {
+        const planned = detailValue(event, 'plannedActions');
+        const executed = detailValue(event, 'executedActions');
+        const rejected = detailValue(event, 'rejectedActions');
+        return [`planned ${planned ?? '-'}`, `executed ${executed ?? '-'}`, `rejected ${rejected ?? '-'}`].join(' · ');
+      }
+      if (event.type === 'llm_request_error') {
+        return detailValue(event, 'error') || '';
+      }
+      if (event.type === 'llm_http_error') {
+        return detailValue(event, 'status') ? `status ${detailValue(event, 'status')}` : '';
+      }
+      if (event.type === 'llm_parse_error') {
+        return detailValue(event, 'error') || '';
+      }
+      if (event.type === 'turn_start') {
+        const cities = detailValue(event, 'cities');
+        const units = detailValue(event, 'units');
+        return [`cities ${cities ?? '-'}`, `units ${units ?? '-'}`].join(' · ');
+      }
+      return '';
+    }
+
+    function renderTimeline(run) {
+      if (!run) {
+        timelineMetaEl.textContent = 'No events yet';
+        timelineEl.innerHTML = '<div class="empty">The selected turn log will appear here.</div>';
+        return;
+      }
+
+      const filteredEvents = run.events.filter(eventMatchesFilters);
+      timelineMetaEl.textContent = `${filteredEvents.length}/${run.events.length} events shown`;
+
+      if (!filteredEvents.length) {
+        timelineEl.innerHTML = '<div class="empty">No events in this turn match the current type or search filters.</div>';
+        return;
+      }
+
+      timelineEl.innerHTML = filteredEvents.map(event => {
+        const note = buildEventNote(event);
+        return `
+          <article class="event-row">
+            <div class="event-row-top">
+              <div class="event-row-type">${esc(event.type || 'unknown')}</div>
+              <div class="event-row-time">#${event.id || '-'} · ${esc(formatDateTime(event.epochMs))}</div>
+            </div>
+            <div class="event-row-message">${esc(event.message || '')}</div>
+            ${note ? `<div class="event-row-note">${esc(note)}</div>` : ''}
+          </article>
+        `;
+      }).join('');
+    }
+
+    function render() {
+      const snapshot = STATE.snapshot || { recentEvents: [], totalBufferedEvents: 0, generatedAtEpochMs: Date.now() };
+      const allRuns = buildRuns(snapshot.recentEvents || []);
+      const civValues = [...new Set(allRuns.map(run => run.civName))].sort((a, b) => a.localeCompare(b));
+
+      const distributionRuns = allRuns.filter(run => runMatchesFilters(run, false));
+      const typeValues = sortedEntriesByCount((() => {
+        const counts = new Map();
+        for (const run of distributionRuns) {
+          for (const event of run.events) {
+            if (STATE.textFilter && !eventTextBlob(event).includes(STATE.textFilter)) continue;
+            counts.set(event.type || 'unknown', (counts.get(event.type || 'unknown') || 0) + 1);
+          }
+        }
+        return counts;
+      })()).map(([type]) => type);
+
+      buildSelectOptions(civFilterEl, civValues, STATE.civFilter, 'All civilizations');
+      buildSelectOptions(typeFilterEl, typeValues, STATE.typeFilter, 'All event types');
+
+      const visibleRuns = allRuns.filter(run => runMatchesFilters(run, true));
+      let selectedRun = visibleRuns.find(run => run.key === STATE.selectedRunKey) || null;
+
+      if (!selectedRun) {
+        selectedRun = visibleRuns[0] || null;
+        STATE.selectedRunKey = selectedRun ? selectedRun.key : null;
+      }
+
+      renderRunRoster(visibleRuns, STATE.selectedRunKey);
+      renderFocus(selectedRun, visibleRuns);
+      renderStages(selectedRun);
+      renderActionPanel(selectedRun);
+      renderArtifacts(selectedRun);
+      renderTimeline(selectedRun);
+
+      const shownEvents = selectedRun ? selectedRun.events.filter(eventMatchesFilters).length : 0;
+      const totalFetched = snapshot.recentEvents ? snapshot.recentEvents.length : 0;
+      statusEl.textContent = selectedRun
+        ? `Showing ${runLabel(selectedRun)}. ${shownEvents}/${selectedRun.events.length} events match the current filters. ${totalFetched} events fetched from the server.`
+        : `No turns match the current filters. ${totalFetched} events fetched from the server.`;
+    }
+
+    async function load() {
+      try {
+        const response = await fetch('/api/snapshot?limit=500', { cache: 'no-store' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        STATE.snapshot = await response.json();
+        render();
+      } catch (error) {
+        statusEl.textContent = `Fetch failed: ${error.message}`;
+      }
+    }
+
+    refreshBtn.addEventListener('click', load);
+
+    civFilterEl.addEventListener('change', () => {
+      STATE.civFilter = civFilterEl.value;
+      render();
+    });
+
+    typeFilterEl.addEventListener('change', () => {
+      STATE.typeFilter = typeFilterEl.value;
+      render();
+    });
+
+    textFilterEl.addEventListener('input', () => {
+      STATE.textFilter = textFilterEl.value.trim().toLowerCase();
+      render();
+    });
+
+    showDetailsEl.addEventListener('change', render);
+
+    document.body.addEventListener('click', (event) => {
+      const expandBtn = event.target.closest('[data-role="expand-toggle"]');
+      if (expandBtn) {
+        const container = expandBtn.closest('.expandable');
+        if (!container) return;
+        const expanded = container.getAttribute('data-expanded') === '1';
+        container.setAttribute('data-expanded', expanded ? '0' : '1');
+        expandBtn.textContent = expanded ? (expandBtn.dataset.show || 'Show more') : (expandBtn.dataset.hide || 'Show less');
+        return;
+      }
+
+      const runButton = event.target.closest('[data-run-key]');
+      if (runButton) {
+        STATE.selectedRunKey = runButton.dataset.runKey || null;
+        render();
+        return;
+      }
+
+      const typeButton = event.target.closest('[data-type-filter]');
+      if (typeButton) {
+        const nextType = typeButton.dataset.typeFilter || 'all';
+        STATE.typeFilter = STATE.typeFilter === nextType ? 'all' : nextType;
+        typeFilterEl.value = STATE.typeFilter;
+        render();
+      }
+    });
+
+    setInterval(() => {
+      if (autoEl.checked) load();
+    }, 2000);
+
+    load();
+  </script>
+</body>
+</html>
