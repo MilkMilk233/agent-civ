@@ -193,7 +193,7 @@ class PlayerPickerTable(
         val nationTable = getNationTable(player)
         playerTable.add(nationTable).left()
 
-        val playerTypeTextButton = player.playerType.name.toTextButton()
+        val playerTypeTextButton = getPlayerTypeLabel(player.playerType).toTextButton()
         playerTable.add(playerTypeTextButton).width(100f).pad(5f).right()
         fun updatePlayerTypeButtonEnabled() {
             // This could be written much shorter with logical operators - I think this is readable
@@ -235,6 +235,13 @@ class PlayerPickerTable(
             playerTable.addPlayerTableMultiplayerControls(player)
 
         return playerTable
+    }
+
+    private fun getPlayerTypeLabel(playerType: PlayerType): String {
+        return when (playerType) {
+            PlayerType.AI -> "AI (legacy)"
+            PlayerType.Human -> "Human"
+        }
     }
 
     private fun Table.addPlayerTableMultiplayerControls(player: Player) {
