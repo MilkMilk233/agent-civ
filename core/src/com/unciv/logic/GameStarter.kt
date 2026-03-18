@@ -284,7 +284,7 @@ object GameStarter {
             } else if (desiredNumberOfPlayers < newGameParameters.players.size) {
                 val extraPlayers = newGameParameters.players.size - desiredNumberOfPlayers
                 selectedAIToSkip = newGameParameters.players
-                    .filter { it.playerType === PlayerType.AI }
+                    .filter { it.playerType !== PlayerType.Human }
                     .shuffled()
                     .sortedByDescending { it.chosenCiv == Constants.random }
                     .subList(0, extraPlayers)
@@ -298,7 +298,7 @@ object GameStarter {
             newGameParameters.players.asSequence()
                 .filterNot { it in selectedAIToSkip }
                 .sortedWith(compareBy<Player> { it.chosenCiv == Constants.random } // Nonrandom before random
-                    .thenBy { it.playerType == PlayerType.AI }) // Human before AI
+                    .thenBy { it.playerType != PlayerType.Human }) // Human before non-human players
                 // ...another for the extra random ones
                 + (0 until extraRandomAIPlayers).asSequence().map { Player() }
             ).mapNotNull {

@@ -249,7 +249,7 @@ class GameOptionsTable(
                 if (newRandomNumberOfPlayers) {
                     // remove all random AI from player picker
                     gameParameters.players = gameParameters.players.asSequence()
-                        .filterNot { it.playerType == PlayerType.AI && it.chosenCiv == Constants.random }
+                        .filterNot { it.playerType != PlayerType.Human && it.chosenCiv == Constants.random }
                         .toCollection(ArrayList(gameParameters.players.size))
                     updatePlayerPickerTable("")
                 } else {

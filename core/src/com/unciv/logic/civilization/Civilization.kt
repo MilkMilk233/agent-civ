@@ -375,10 +375,10 @@ class Civilization : IsPartOfGameInfoSerialization {
         if (firstCityIfNoCapital) cities.firstOrNull() else null
 
     @Readonly fun isHuman() = playerType == PlayerType.Human
-    @Readonly fun isAI() = playerType == PlayerType.AI
+    @Readonly fun isAI() = playerType == PlayerType.AI || playerType == PlayerType.AI_AGENT
     @Readonly
     fun isAIOrAutoPlaying(): Boolean {
-        if (playerType == PlayerType.AI) return true
+        if (isAI()) return true
         if (gameInfo.isSimulation()) return true
         val worldScreen = UncivGame.Current.worldScreen ?: return false
         return worldScreen.viewingCiv == this && worldScreen.autoPlay.isAutoPlaying()
@@ -760,6 +760,7 @@ class Civilization : IsPartOfGameInfoSerialization {
             when {
                 !online && !severalHumans -> ""  // offline single player will know everybody else is AI
                 playerType == PlayerType.AI -> " (${"AI".tr()})"
+                playerType == PlayerType.AI_AGENT -> " (${"AI (agent)".tr()})"
                 online -> " (${"Human".tr()} - ${"Multiplayer".tr()})"
                 else -> " (${"Human".tr()} - ${"Hotseat".tr()})"
             }
@@ -1056,7 +1057,7 @@ class Civilization : IsPartOfGameInfoSerialization {
      *  @param notificationIcons Zero or more icons to decorate the notification with - see [NotificationIcon]
      */
     fun addNotification(text: String, actions: Iterable<NotificationAction>?, category: NotificationCategory, vararg notificationIcons: String) {
-        if (playerType == PlayerType.AI) return // no point in lengthening the saved game info if no one will read it
+        if (isAI()) return // no point in lengthening the saved game info if no one will read it
         notifications.add(Notification(text, notificationIcons, actions, category))
     }
     // endregion

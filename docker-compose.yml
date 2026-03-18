@@ -5,4 +5,13 @@ services:
     ports:
       - "6901:6901"
       - "5901:5901"
+      - "7071:7071"
+    environment:
+      UNCIV_LLM_PROVIDER: ${UNCIV_LLM_PROVIDER:-openai}
+      UNCIV_LLM_BASE_URL: ${UNCIV_LLM_BASE_URL:-https://ai-gateway.andrew.cmu.edu}
+      UNCIV_LLM_MODEL: ${UNCIV_LLM_MODEL:-}
+      UNCIV_LLM_API_KEY: ${UNCIV_LLM_API_KEY}
+      UNCIV_AGENT_OBS_ENABLED: ${UNCIV_AGENT_OBS_ENABLED:-true}
+      UNCIV_AGENT_OBS_PORT: ${UNCIV_AGENT_OBS_PORT:-7071}
+      JAVA_TOOL_OPTIONS: ${JAVA_TOOL_OPTIONS:-}
     command: /home/headless/Desktop/Unciv.sh

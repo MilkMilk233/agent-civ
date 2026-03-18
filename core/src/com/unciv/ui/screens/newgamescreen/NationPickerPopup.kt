@@ -260,7 +260,7 @@ internal class NationPickerPopup(
                 yield(NationIterationElement(random))
             }
             val spectator = previousScreen.ruleset.nations[Constants.spectator]
-            if (spectator != null && player.playerType != PlayerType.AI)  // only humans can spectate, sorry robots
+            if (spectator != null && player.playerType == PlayerType.Human)  // only humans can spectate, sorry robots
                 yield(NationIterationElement(spectator))
         }
         // Then what PlayerPickerTable says we should display - see its doc

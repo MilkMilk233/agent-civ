@@ -61,7 +61,7 @@ object UnitActionsFromUniques {
             UniqueTarget.UnitActionModifier
         ) == true }
         val foundAction = {
-            if (unit.civ.playerType != PlayerType.AI)
+            if (!unit.civ.isAI())
                 UncivGame.Current.settings.addCompletedTutorialTask("Found city")
             // Get the city to be able to change it into puppet, for modding.
             val city = unit.civ.addCity(tile.position, unit)
@@ -75,7 +75,7 @@ object UnitActionsFromUniques {
             }
         }
 
-        if (unit.civ.playerType == PlayerType.AI)
+        if (unit.civ.isAI())
             return UnitAction(UnitActionType.FoundCity, useFrequency, action = foundAction)
 
         val title =

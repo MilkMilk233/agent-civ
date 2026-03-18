@@ -10,6 +10,7 @@ import com.unciv.UncivGame
 import com.unciv.logic.IdChecker
 import com.unciv.logic.civilization.PlayerType
 import com.unciv.logic.civilization.PlayerType.AI
+import com.unciv.logic.civilization.PlayerType.AI_AGENT
 import com.unciv.logic.civilization.PlayerType.Human
 import com.unciv.logic.multiplayer.FriendList
 import com.unciv.models.metadata.GameParameters
@@ -55,6 +56,8 @@ class PlayerPickerTable(
     var gameParameters: GameParameters,
     blockWidth: Float = 0f
 ): Table() {
+    private val selectablePlayerTypes = listOf(Human, AI, AI_AGENT)
+
     val playerListTable = Table()
     val civBlocksWidth = if (blockWidth <= 10f) previousScreen.stage.width / 3 - 5f else blockWidth
     private var randomNumberLabel: WrappableLabel? = null
@@ -194,12 +197,12 @@ class PlayerPickerTable(
         playerTable.add(nationTable).left()
 
         val playerTypeTextButton = getPlayerTypeLabel(player.playerType).toTextButton()
-        playerTable.add(playerTypeTextButton).width(100f).pad(5f).right()
+        playerTable.add(playerTypeTextButton).width(130f).pad(5f).right()
         fun updatePlayerTypeButtonEnabled() {
             // This could be written much shorter with logical operators - I think this is readable
             playerTypeTextButton.isEnabled = when {
-                // Can always change AI to Human
-                player.playerType == PlayerType.AI -> true
+                // Can always change non-human players to Human
+                player.playerType != PlayerType.Human -> true
                 // we cannot change Spectator player to AI type, robots not allowed to spectate :(
                 player.chosenCiv == Constants.spectator -> false
                 // In randomNumberOfPlayers mode, don't let the user choose random AI's
@@ -212,12 +215,14 @@ class PlayerPickerTable(
         nationTable.onClick {
             if (locked) return@onClick
             val noRandom = noRandom ||
-                    gameParameters.randomNumberOfPlayers && player.playerType == PlayerType.AI
+                    gameParameters.randomNumberOfPlayers && player.playerType != PlayerType.Human
             popupNationPicker(player, noRandom)
             updatePlayerTypeButtonEnabled()
         }
         playerTypeTextButton.onClick {
-            player.playerType = if (player.playerType == AI) Human else AI
+            val currentIndex = selectablePlayerTypes.indexOf(player.playerType)
+            val nextIndex = (currentIndex + 1).mod(selectablePlayerTypes.size)
+            player.playerType = selectablePlayerTypes[nextIndex]
             update()
         }
 
@@ -240,6 +245,7 @@ class PlayerPickerTable(
     private fun getPlayerTypeLabel(playerType: PlayerType): String {
         return when (playerType) {
             PlayerType.AI -> "AI (legacy)"
+            PlayerType.AI_AGENT -> "AI (agent)"
             PlayerType.Human -> "Human"
         }
     }

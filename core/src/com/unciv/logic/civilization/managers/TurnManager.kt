@@ -1,6 +1,7 @@
 package com.unciv.logic.civilization.managers
 
 import com.unciv.UncivGame
+import com.unciv.logic.automation.agent.AgentTurnAutomation
 import com.unciv.logic.VictoryData
 import com.unciv.logic.automation.civilization.NextTurnAutomation
 import com.unciv.logic.city.managers.CityTurnManager
@@ -43,7 +44,7 @@ class TurnManager(val civInfo: Civilization) {
         civInfo.updateStatsForNextTurn() // for things that change when turn passes e.g. golden age, city state influence
 
         // Do this after updateStatsForNextTurn but before cities.startTurn
-        if (civInfo.playerType == PlayerType.AI && civInfo.gameInfo.ruleset.modOptions.hasUnique(UniqueType.ConvertGoldToScience))
+        if (civInfo.isAI() && civInfo.gameInfo.ruleset.modOptions.hasUnique(UniqueType.ConvertGoldToScience))
             NextTurnAutomation.automateGoldToSciencePercentage(civInfo)
 
         // Generate great people at the start of the turn,
@@ -350,7 +351,11 @@ class TurnManager(val civInfo: Civilization) {
             return
 
         // Do stuff
-        NextTurnAutomation.automateCivMoves(civInfo)
+        when (civInfo.playerType) {
+            PlayerType.AI -> NextTurnAutomation.automateCivMoves(civInfo)
+            PlayerType.AI_AGENT -> AgentTurnAutomation.automateCivMoves(civInfo)
+            PlayerType.Human -> return
+        }
 
         // Update barbarian camps
         if (civInfo.isBarbarian && !civInfo.gameInfo.gameParameters.noBarbarians)

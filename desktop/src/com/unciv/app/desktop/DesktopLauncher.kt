@@ -90,6 +90,9 @@ internal object DesktopLauncher {
         // Setup Desktop logging
         Log.backend = DesktopLogBackend()
 
+        // Start optional local observability dashboard for AI-agent diagnostics.
+        AgentObservabilityServer.startFromEnvironment()
+
         // Setup Desktop display
         Display.platform = DesktopDisplay()
 

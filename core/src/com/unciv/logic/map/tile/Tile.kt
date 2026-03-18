@@ -361,7 +361,7 @@ class Tile : IsPartOfGameInfoSerialization {
      */
     @Readonly
     fun getShownImprovement(viewingCiv: Civilization?): String? =
-        if (viewingCiv == null || viewingCiv.playerType == PlayerType.AI || viewingCiv.isSpectator()) improvement
+        if (viewingCiv == null || viewingCiv.isAI() || viewingCiv.isSpectator()) improvement
         else viewingCiv.getLastSeenImprovement(position)
 
     /** Returns true if this tile has fallout or an equivalent terrain feature */

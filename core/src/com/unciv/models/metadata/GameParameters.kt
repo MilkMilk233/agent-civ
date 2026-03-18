@@ -97,6 +97,7 @@ class GameParameters : IsPartOfGameInfoSerialization { // Default values are the
             yield("$difficulty $speed $startingEra")
             yield("${players.count { it.playerType == PlayerType.Human }} ${PlayerType.Human}")
             yield("${players.count { it.playerType == PlayerType.AI }} ${PlayerType.AI}")
+            yield("${players.count { it.playerType == PlayerType.AI_AGENT }} ${PlayerType.AI_AGENT}")
             if (randomNumberOfPlayers) yield("Random number of Players: $minNumberOfPlayers..$maxNumberOfPlayers")
             if (randomNumberOfCityStates) yield("Random number of City-States: $minNumberOfCityStates..$maxNumberOfCityStates")
             else yield("$numberOfCityStates CS")
