@@ -156,7 +156,10 @@ object AgentMemoryManager {
         val focus = linkedSetOf<String>()
         observation.priorityFacts.take(2).forEach { focus += it.headline }
         observation.opportunities.take(1).forEach { focus += it.headline }
-        plan?.notes?.trim()?.takeIf { it.isNotEmpty() }?.let { focus += it.take(120) }
+        plan?.notes
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() && shouldPersistStrategicFocusNote(it) }
+            ?.let { focus += it.take(120) }
 
         return StrategicPostureMemory(
             mode = mode,
@@ -283,6 +286,7 @@ object AgentMemoryManager {
             val targetX = lastMove?.destinationX ?: unit?.x
             val targetY = lastMove?.destinationY ?: unit?.y
             val assignment = classifyAssignment(unit, lastAction?.actionType, targetX, targetY, turn)
+            if (!shouldPersistUnitAssignment(unit, lastAction?.actionType, assignment)) continue
             assignments += assignment.copy(unitId = unitId, unitName = unit?.name ?: assignment.unitName)
         }
 
@@ -300,6 +304,7 @@ object AgentMemoryManager {
         val lower = normalized.lowercase()
         val role = when {
             normalized.isBlank() -> "reposition"
+            lower == "skip" -> "transient_wait"
             lower == "foundcity" -> "settle_city_site"
             "build" in lower || "repair" in lower || "remove" in lower || "create" in lower -> "improve_tile"
             "automate" in lower -> "automation_change"
@@ -319,6 +324,52 @@ object AgentMemoryManager {
             detail = normalized.ifBlank { if (targetX != null && targetY != null) "Move to ($targetX, $targetY)" else null },
             staleAfterTurn = turn + unitAssignmentHorizonTurns,
         )
+    }
+
+    private fun shouldPersistStrategicFocusNote(note: String): Boolean {
+        val lower = note.lowercase()
+        val lowSignalMarkers = listOf(
+            "do nothing",
+            "no action",
+            "no manual actions",
+            "next turn",
+            "skip this turn",
+            "sleep",
+            "keep worker",
+            "hold worker",
+            "hold position",
+            "preserve",
+            "automate",
+        )
+        return lowSignalMarkers.none { it in lower }
+    }
+
+    private fun shouldPersistUnitAssignment(
+        unit: ActionableUnitObservation?,
+        actionType: String?,
+        assignment: UnitAssignmentMemory,
+    ): Boolean {
+        val normalized = actionType?.trim().orEmpty()
+        val lower = normalized.lowercase()
+
+        if (assignment.role == "transient_wait") return false
+        if (lower == "automate" || lower == "stopautomation") return false
+        if (lower == "sleep") {
+            return (unit?.nearbyHostileUnits ?: 0) > 0 ||
+                (unit?.nearbyHostileCities ?: 0) > 0 ||
+                (unit?.health ?: 100) < 100
+        }
+
+        if (assignment.role == "hold_position" &&
+            (unit?.role == "worker" || unit?.role == "settler" || unit?.role == "great_person") &&
+            (unit?.nearbyHostileUnits ?: 0) == 0 &&
+            (unit?.nearbyHostileCities ?: 0) == 0 &&
+            (unit?.health ?: 100) >= 100
+        ) {
+            return false
+        }
+
+        return true
     }
 
     private fun cityKey(x: Int, y: Int): String = "$x,$y"

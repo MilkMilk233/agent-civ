@@ -6,6 +6,7 @@ import com.unciv.logic.city.City
 import com.unciv.logic.civilization.Civilization
 import com.unciv.logic.map.mapunit.MapUnit
 import com.unciv.logic.map.tile.Tile
+import com.unciv.models.UnitAction
 import com.unciv.models.ruleset.PerpetualConstruction
 import com.unciv.models.ruleset.tile.ResourceType
 import com.unciv.models.ruleset.unique.GameContext
@@ -64,6 +65,11 @@ object AgentObservationBuilder {
         val selectedUnitCandidates = selectUnitCandidates(unitCandidates)
         val selectedUnits = selectedUnitCandidates.map { candidate ->
             val unit = candidate.unit
+            val availableActions = collectAvailableUnitActions(unit)
+            val unitActionTypes = availableActions
+                .map { it.type.name }
+                .distinct()
+                .sorted()
             ActionableUnitObservation(
                 id = unit.id,
                 x = unit.getTile().position.x,
@@ -76,7 +82,12 @@ object AgentObservationBuilder {
                 strength = candidate.strength,
                 rangedStrength = candidate.rangedStrength,
                 range = candidate.range,
-                unitActions = collectUnitActions(unit),
+                unitActions = unitActionTypes,
+                legalActionCandidates = buildLegalActionCandidates(
+                    unit = unit,
+                    role = candidate.role,
+                    availableActions = availableActions,
+                ),
                 reachableTiles = buildReachableTiles(unit),
                 nearbyHostileUnits = candidate.nearbyHostileUnits,
                 nearbyHostileCities = candidate.nearbyHostileCities,
@@ -691,14 +702,72 @@ object AgentObservationBuilder {
             .toList()
     }
 
-    private fun collectUnitActions(unit: MapUnit): List<String> {
+    private fun collectAvailableUnitActions(unit: MapUnit): List<UnitAction> {
         return UnitActions.getUnitActions(unit)
             .asSequence()
             .filter { it.action != null }
-            .map { it.type.name }
-            .distinct()
-            .sorted()
             .toList()
+    }
+
+    private fun buildLegalActionCandidates(
+        unit: MapUnit,
+        role: String,
+        availableActions: List<UnitAction>,
+    ): List<LegalActionCandidateObservation> {
+        if (role != "worker") return emptyList()
+
+        val actionTypes = availableActions.map { it.type.name }.toSet()
+        val preferredCurrentAction = preferredCurrentWorkerAction(availableActions)
+        val hasAutomate = "Automate" in actionTypes
+        val isAutomated = unit.isAutomated() || "StopAutomation" in actionTypes
+
+        return findWorkerJobs(unit)
+            .mapNotNull { job ->
+                val isCurrentTile = unit.getTile().position.x == job.tileX && unit.getTile().position.y == job.tileY
+                when {
+                    isCurrentTile && preferredCurrentAction != null -> LegalActionCandidateObservation(
+                        actionType = preferredCurrentAction.type.name,
+                        title = preferredCurrentAction.title,
+                        targetX = job.tileX,
+                        targetY = job.tileY,
+                        rationale = job.description,
+                    )
+                    hasAutomate -> LegalActionCandidateObservation(
+                        actionType = "Automate",
+                        title = "Automate",
+                        moveDestinationX = job.tileX.takeIf { !isCurrentTile },
+                        moveDestinationY = job.tileY.takeIf { !isCurrentTile },
+                        targetX = job.tileX,
+                        targetY = job.tileY,
+                        rationale = if (isCurrentTile) {
+                            "Use Automate on the current tile so the worker can handle: ${job.description}"
+                        } else {
+                            "Move to (${job.tileX}, ${job.tileY}) then use Automate so the worker can handle: ${job.description}"
+                        },
+                    )
+                    isAutomated && isCurrentTile -> null
+                    else -> null
+                }
+            }
+            .distinctBy {
+                listOf(
+                    it.actionType,
+                    it.title,
+                    it.moveDestinationX,
+                    it.moveDestinationY,
+                    it.targetX,
+                    it.targetY,
+                ).joinToString("|")
+            }
+            .take(4)
+    }
+
+    private fun preferredCurrentWorkerAction(availableActions: List<UnitAction>): UnitAction? {
+        val preferredTypes = listOf("Repair", "CreateImprovement", "ConstructImprovement", "ConnectRoad")
+        return preferredTypes
+            .asSequence()
+            .mapNotNull { preferred -> availableActions.firstOrNull { it.type.name == preferred } }
+            .firstOrNull()
     }
 
     private fun buildReachableTiles(unit: MapUnit): List<TileRef> {
@@ -780,7 +849,9 @@ object AgentObservationBuilder {
             val repairName = tile.getImprovementToRepair()?.name ?: "tile infrastructure"
             return WorkerJob(
                 priority = 90,
-                description = "Repair $repairName at (${tile.position.x}, ${tile.position.y}).",
+                tileX = tile.position.x,
+                tileY = tile.position.y,
+                description = "$repairName at (${tile.position.x}, ${tile.position.y}) is pillaged and needs repair.",
             )
         }
 
@@ -798,7 +869,9 @@ object AgentObservationBuilder {
                     }
                     return WorkerJob(
                         priority = priority,
-                        description = "Improve ${resource.name} at (${tile.position.x}, ${tile.position.y}) with $improvementName.",
+                        tileX = tile.position.x,
+                        tileY = tile.position.y,
+                        description = "${resource.name} at (${tile.position.x}, ${tile.position.y}) is a strong worker target (${improvementName}).",
                     )
                 }
             }
@@ -807,7 +880,9 @@ object AgentObservationBuilder {
         if (tile.isWorked() && !tile.isCityCenter() && tile.getUnpillagedTileImprovement() == null) {
             return WorkerJob(
                 priority = 35,
-                description = "Improve the worked tile at (${tile.position.x}, ${tile.position.y}).",
+                tileX = tile.position.x,
+                tileY = tile.position.y,
+                description = "The worked tile at (${tile.position.x}, ${tile.position.y}) is unimproved and worth worker attention.",
             )
         }
 
@@ -896,6 +971,8 @@ object AgentObservationBuilder {
 
     private data class WorkerJob(
         val priority: Int,
+        val tileX: Int,
+        val tileY: Int,
         val description: String,
     )
 

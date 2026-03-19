@@ -50,6 +50,9 @@ object AgentPromptBuilder {
             - Use Memory JSON to preserve continuity: keep strategicPosture consistent when still relevant, continue cityIntents and unitAssignments when the observation still supports them, and avoid repeating recentFailures.
             - Focus first on empireSummary, priorityFacts, citiesNeedingAttention, actionableUnits, visibleThreatsAndTargets, and opportunities.
             - Treat omittedSummary as a sign that quieter state exists, but only act through the entities explicitly listed in the observation.
+            - If an actionable unit includes legalActionCandidates, copy the candidate actionType exactly.
+            - If a legalActionCandidate includes moveDestinationX/moveDestinationY, emit a unit_move to that tile before the unit_action.
+            - For workers especially, do not invent action names like BuildFarm, BuildQuarry, ImproveWorkedTile, or similar paraphrases. Use only exact actionType values already present in unitActions or legalActionCandidates.
             - Use only unit IDs, cities, action types, tiles, and constructions present in the observation.
             - Do not invent entities.
             - Prefer short, legal plans (0-25 commands).

@@ -85,11 +85,23 @@ data class ActionableUnitObservation(
     val rangedStrength: Int? = null,
     val range: Int? = null,
     val unitActions: List<String>,
+    val legalActionCandidates: List<LegalActionCandidateObservation> = emptyList(),
     val reachableTiles: List<TileRef>,
     val nearbyHostileUnits: Int,
     val nearbyHostileCities: Int,
     val reasons: List<String>,
     val localFacts: List<String>,
+)
+
+@Serializable
+data class LegalActionCandidateObservation(
+    val actionType: String,
+    val title: String,
+    val moveDestinationX: Int? = null,
+    val moveDestinationY: Int? = null,
+    val targetX: Int? = null,
+    val targetY: Int? = null,
+    val rationale: String? = null,
 )
 
 @Serializable
