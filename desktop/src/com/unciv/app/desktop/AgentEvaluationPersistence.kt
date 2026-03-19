@@ -229,11 +229,12 @@ object AgentEvaluationStore {
     fun loadEvents(batchId: String, matchId: String): List<AgentObservabilityEvent> {
         val path = matchDir(batchId, matchId).resolve(eventsFile)
         if (!path.exists()) return emptyList()
-        val raw = Files.readString(path, StandardCharsets.UTF_8)
-        return splitSequentialJsonObjects(raw)
+        return Files.readAllLines(path, StandardCharsets.UTF_8)
             .asSequence()
-            .mapNotNull { jsonBody ->
-                runCatching { AgentEvaluationJson.json.decodeFromString<AgentObservabilityEvent>(jsonBody) }.getOrNull()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .mapNotNull { line ->
+                runCatching { AgentEvaluationJson.json.decodeFromString<AgentObservabilityEvent>(line) }.getOrNull()
             }
             .toList()
     }
@@ -371,42 +372,6 @@ object AgentEvaluationStore {
                 .orElse(0L)
             return latest.takeIf { it > 0L }
         }
-    }
-
-    private fun splitSequentialJsonObjects(raw: String): List<String> {
-        val body = raw.trim()
-        if (body.isEmpty()) return emptyList()
-
-        val objects = mutableListOf<String>()
-        var depth = 0
-        var startIndex = -1
-        var inString = false
-        var escaping = false
-
-        for ((index, char) in body.withIndex()) {
-            if (escaping) {
-                escaping = false
-                continue
-            }
-
-            when (char) {
-                '\\' -> if (inString) escaping = true
-                '"' -> inString = !inString
-                '{' -> if (!inString) {
-                    if (depth == 0) startIndex = index
-                    depth++
-                }
-                '}' -> if (!inString) {
-                    depth--
-                    if (depth == 0 && startIndex >= 0) {
-                        objects += body.substring(startIndex, index + 1)
-                        startIndex = -1
-                    }
-                }
-            }
-        }
-
-        return objects
     }
 }
 

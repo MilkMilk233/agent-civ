@@ -3046,32 +3046,14 @@
       return toWholeNumber(detailValue(event, key));
     }
 
-    function extractSectionFromPrompt(prompt, startMarker, endMarker = null) {
-      if (typeof prompt !== 'string') return null;
-      const markerIndex = prompt.indexOf(startMarker);
-      if (markerIndex < 0) return null;
-      const startIndex = markerIndex + startMarker.length;
-      if (!endMarker) return prompt.slice(startIndex).trim();
-      const endIndex = prompt.indexOf(endMarker, startIndex);
-      return (endIndex >= 0 ? prompt.slice(startIndex, endIndex) : prompt.slice(startIndex)).trim();
-    }
-
-    function extractMemoryJsonFromPrompt(prompt) {
-      return extractSectionFromPrompt(prompt, 'Memory JSON:', 'Observation JSON:');
-    }
-
-    function extractObservationJsonFromPrompt(prompt) {
-      return extractSectionFromPrompt(prompt, 'Observation JSON:');
-    }
-
-    function parseObservationData(turnStartEvent, prompt) {
-      const observationJson = detailValue(turnStartEvent, 'observationJson') || extractObservationJsonFromPrompt(prompt);
+    function parseObservationData(turnStartEvent) {
+      const observationJson = detailValue(turnStartEvent, 'observationJson');
       const parsed = observationJson ? tryParseJsonString(observationJson) : null;
       return parsed && typeof parsed === 'object' ? parsed : null;
     }
 
-    function parseMemoryData(turnStartEvent, prompt) {
-      const memoryJson = detailValue(turnStartEvent, 'memoryJson') || extractMemoryJsonFromPrompt(prompt);
+    function parseMemoryData(turnStartEvent) {
+      const memoryJson = detailValue(turnStartEvent, 'memoryJson');
       const parsed = memoryJson ? tryParseJsonString(memoryJson) : null;
       return parsed && typeof parsed === 'object' ? parsed : null;
     }
@@ -3645,8 +3627,8 @@
         statusLabel = 'Live';
       }
 
-      const observationData = parseObservationData(turnStartEvent, prompt);
-      const memoryData = parseMemoryData(turnStartEvent, prompt);
+      const observationData = parseObservationData(turnStartEvent);
+      const memoryData = parseMemoryData(turnStartEvent);
       const empireSummary = observationEmpireSummary(observationData);
       const memoryPosture = memoryStrategicPosture(memoryData);
       const observation = {

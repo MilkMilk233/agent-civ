@@ -25,7 +25,6 @@ object AgentTurnAutomation {
             civName = civInfo.civName,
             turn = civInfo.gameInfo.turns,
             details = mapOf(
-                "observationVersion" to "2",
                 "cities" to observation.empireSummary.cityCount.toString(),
                 "units" to observation.empireSummary.unitCount.toString(),
                 "knownCivs" to observation.empireSummary.knownCivs.toString(),
