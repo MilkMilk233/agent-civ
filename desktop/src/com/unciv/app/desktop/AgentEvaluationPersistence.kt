@@ -462,12 +462,22 @@ object AgentEvaluationAnalyzer {
             .filter { it.plannedActions > 0 }
             .map { it.illegalActionRate }
             .averageOrNull() ?: 0.0
-        val winnerCivName = gameInfo.victoryData?.winningCiv
-        val winnerSide = winnerSideOverride ?: when (winnerCivName) {
-            agentCivName -> "agent"
-            legacyCivName -> "legacy"
-            null -> "draw"
-            else -> "other"
+        val winnerVictoryData = gameInfo.victoryData
+        val winnerCivId = winnerVictoryData?.winningCiv
+        val winnerCiv = runCatching { winnerVictoryData?.winningCivObject }.getOrNull() ?: winnerCivId?.let { winningId ->
+            gameInfo.civilizations.firstOrNull { it.civID == winningId }
+        }
+        val winnerCivName = winnerCiv?.civName ?: winnerCivId
+        val winnerSide = winnerSideOverride ?: when (winnerCiv?.playerType) {
+            PlayerType.AI_AGENT -> "agent"
+            PlayerType.AI -> "legacy"
+            PlayerType.Human -> "other"
+            null -> when {
+                winnerCivId == null -> "draw"
+                agentCivName != legacyCivName && winnerCivName == agentCivName -> "agent"
+                agentCivName != legacyCivName && winnerCivName == legacyCivName -> "legacy"
+                else -> "other"
+            }
         }
         val topConcerns = mutableListOf<String>()
         if (failureMessage != null) topConcerns += failureMessage

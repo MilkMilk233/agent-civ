@@ -649,10 +649,8 @@
     .section-panel,
     .rail,
     .intelligence,
-    .timeline-list,
     .artifact-grid,
     .artifact-card,
-    .event-card,
     .detail-item,
     .expandable,
     .json-row,
@@ -697,7 +695,6 @@
     .roster-list,
     .incident-list,
     .dist-list,
-    .timeline-list,
     .stage-grid,
     .artifact-grid {
       display: grid;
@@ -1324,66 +1321,6 @@
       background: linear-gradient(90deg, var(--sky), var(--gold));
     }
 
-    .timeline-list {
-      position: relative;
-    }
-
-    .timeline-list::before {
-      content: "";
-      position: absolute;
-      left: 18px;
-      top: 12px;
-      bottom: 12px;
-      width: 1px;
-      background: rgba(139, 172, 181, 0.18);
-    }
-
-    .event-card {
-      position: relative;
-      margin-left: 34px;
-      padding: 15px;
-      border-radius: 18px;
-      border: 1px solid rgba(139, 172, 181, 0.14);
-      background: rgba(8, 20, 27, 0.9);
-    }
-
-    .event-card::before {
-      content: "";
-      position: absolute;
-      left: -24px;
-      top: 18px;
-      width: 11px;
-      height: 11px;
-      border-radius: 50%;
-      border: 2px solid rgba(8, 20, 27, 0.94);
-      background: rgba(156, 175, 183, 0.7);
-      box-shadow: 0 0 0 4px rgba(8, 20, 27, 0.9);
-    }
-
-    .event-card.event-healthy::before {
-      background: var(--teal);
-    }
-
-    .event-card.event-warning::before {
-      background: var(--amber);
-    }
-
-    .event-card.event-critical::before {
-      background: var(--coral);
-    }
-
-    .event-card.event-live::before {
-      background: var(--sky);
-    }
-
-    .event-top {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      align-items: baseline;
-      flex-wrap: wrap;
-    }
-
     .event-type {
       color: var(--ink);
       font-size: 13px;
@@ -1491,7 +1428,6 @@
     }
 
     .issue-list,
-    .event-list,
     .debug-stack {
       display: grid;
       gap: 12px;
@@ -1531,49 +1467,6 @@
       color: rgba(242, 236, 219, 0.9);
       font-size: 14px;
       line-height: 1.5;
-    }
-
-    .event-row {
-      padding: 13px;
-      border-radius: 16px;
-      border: 1px solid rgba(139, 172, 181, 0.14);
-      background: rgba(8, 20, 27, 0.9);
-    }
-
-    .event-row-top {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      align-items: baseline;
-      flex-wrap: wrap;
-    }
-
-    .event-row-type {
-      color: var(--ink);
-      font-size: 12px;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      font-weight: 700;
-    }
-
-    .event-row-time {
-      color: var(--muted);
-      font-size: 12px;
-    }
-
-    .event-row-message {
-      margin-top: 6px;
-      color: rgba(242, 236, 219, 0.88);
-      font-size: 14px;
-      line-height: 1.5;
-    }
-
-    .event-row-note {
-      margin-top: 8px;
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.45;
-      white-space: pre-wrap;
     }
 
     .debug-details {
@@ -1973,18 +1866,7 @@
           </article>
         </section>
 
-        <section class="dual-grid">
-          <article class="panel section-panel">
-            <div class="panel-head">
-              <div>
-                <div class="panel-kicker">Ordered turn log</div>
-                <h2 class="panel-title">Recent Events</h2>
-              </div>
-              <div class="panel-meta" id="timelineMeta">No events yet</div>
-            </div>
-            <div class="fade-in event-list" id="timeline"></div>
-          </article>
-
+        <section>
           <article class="panel section-panel">
             <div class="panel-head">
               <div>
@@ -2240,12 +2122,10 @@
     const stageGridEl = document.getElementById('stageGrid');
     const actionPlanEl = document.getElementById('actionPlan');
     const artifactsEl = document.getElementById('artifacts');
-    const timelineEl = document.getElementById('timeline');
     const rosterMetaEl = document.getElementById('rosterMeta');
     const stagesMetaEl = document.getElementById('stagesMeta');
     const actionsMetaEl = document.getElementById('actionsMeta');
     const artifactsMetaEl = document.getElementById('artifactsMeta');
-    const timelineMetaEl = document.getElementById('timelineMeta');
 
     const STATE = {
       snapshot: null,
@@ -3184,6 +3064,36 @@
       return Array.isArray(value) ? value : [];
     }
 
+    function observationEmpireSummary(observationData) {
+      return observationData && typeof observationData.empireSummary === 'object' ? observationData.empireSummary : {};
+    }
+
+    function observationCities(observationData) {
+      return listOrEmpty(observationData && observationData.citiesNeedingAttention);
+    }
+
+    function observationUnits(observationData) {
+      return listOrEmpty(observationData && observationData.actionableUnits);
+    }
+
+    function observationTargets(observationData) {
+      return listOrEmpty(observationData && observationData.visibleThreatsAndTargets);
+    }
+
+    function observationPriorityFacts(observationData) {
+      return listOrEmpty(observationData && observationData.priorityFacts);
+    }
+
+    function observationOpportunities(observationData) {
+      return listOrEmpty(observationData && observationData.opportunities);
+    }
+
+    function observationOmittedSummary(observationData) {
+      return observationData && observationData.omittedSummary && typeof observationData.omittedSummary === 'object'
+        ? observationData.omittedSummary
+        : {};
+    }
+
     function coordKey(x, y) {
       return `${x},${y}`;
     }
@@ -3261,74 +3171,67 @@
       }
 
       const checks = [];
-      const cities = listOrEmpty(observationData.cities);
-      const units = listOrEmpty(observationData.units);
-      const knownCivs = listOrEmpty(observationData.knownCivs);
-      const visibleTiles = toWholeNumber(observationData.visibleTiles);
-      const happiness = toWholeNumber(observationData.happiness);
+      const empire = observationEmpireSummary(observationData);
+      const cities = observationCities(observationData);
+      const units = observationUnits(observationData);
+      const targets = observationTargets(observationData);
+      const priorityFacts = observationPriorityFacts(observationData);
+      const omittedSummary = observationOmittedSummary(observationData);
+      const cityCount = toWholeNumber(empire.cityCount);
+      const unitCount = toWholeNumber(empire.unitCount);
+      const visibleTiles = toWholeNumber(empire.visibleTiles);
+      const happiness = toWholeNumber(empire.happiness);
+      const citiesNeedingProductionChoice = toWholeNumber(empire.citiesNeedingProductionChoice);
 
-      if (!cities.length) {
-        checks.push({ tone: 'critical', title: 'No cities observed', text: 'The agent saw zero cities in the structured observation.' });
+      if (!Number.isFinite(cityCount) || cityCount <= 0) {
+        checks.push({ tone: 'critical', title: 'No cities in empire summary', text: 'The curated observation reports zero cities.' });
       } else {
-        checks.push({ tone: 'ok', title: `${cities.length} cities observed`, text: cities.slice(0, 3).map(city => city.name).join(', ') || 'City list captured.' });
+        checks.push({ tone: 'ok', title: `${cityCount} cities in empire`, text: `${cities.length} cities were expanded into the turn brief.` });
       }
 
-      if (!units.length) {
-        checks.push({ tone: 'warning', title: 'No units observed', text: 'The agent saw zero units in the structured observation.' });
-      }
-
-      if (knownCivs.length === 0) {
-        checks.push({ tone: 'warning', title: 'No diplomacy context', text: 'No known civilizations were captured in the observation.' });
+      if (!Number.isFinite(unitCount) || unitCount < 0) {
+        checks.push({ tone: 'critical', title: 'Unit count missing', text: 'The curated observation did not report a valid unit count.' });
+      } else if (unitCount > 0 && units.length === 0) {
+        checks.push({ tone: 'warning', title: 'No actionable units surfaced', text: 'The empire has units, but none were lifted into the curated turn brief.' });
+      } else {
+        checks.push({ tone: 'ok', title: `${unitCount} units in empire`, text: `${units.length} units were surfaced as actionable this turn.` });
       }
 
       if (!Number.isFinite(visibleTiles) || visibleTiles <= 0) {
-        checks.push({ tone: 'critical', title: 'No map visibility captured', text: 'The structured observation reported zero visible tiles.' });
+        checks.push({ tone: 'critical', title: 'No map visibility captured', text: 'The curated observation reported zero visible tiles.' });
       } else {
-        checks.push({ tone: 'ok', title: `${visibleTiles} visible tiles`, text: 'Map visibility was captured for this turn.' });
+        checks.push({ tone: 'ok', title: `${visibleTiles} visible tiles`, text: `${targets.length} visible targets were called out from current vision.` });
+      }
+
+      if (Number.isFinite(citiesNeedingProductionChoice) && citiesNeedingProductionChoice > 0 && !cities.length) {
+        checks.push({ tone: 'warning', title: 'City decisions missing', text: `${citiesNeedingProductionChoice} cities need production review, but no city cards were surfaced.` });
+      }
+
+      if (empire.isAtWar === true && !targets.some(target => target.relation === 'war' || target.relation === 'barbarian')) {
+        checks.push({ tone: 'warning', title: 'War without visible contact', text: 'The empire is at war, but the current-turn brief contains no visible hostile targets.' });
+      }
+
+      if (!priorityFacts.length) {
+        checks.push({ tone: 'warning', title: 'No priority facts', text: 'The curated observation did not produce any ranked turn facts.' });
+      } else {
+        checks.push({ tone: 'ok', title: `${priorityFacts.length} priority facts`, text: priorityFacts[0].headline || 'Priority fact list captured.' });
+      }
+
+      if (!observationData.omittedSummary || typeof observationData.omittedSummary !== 'object') {
+        checks.push({ tone: 'warning', title: 'No omitted summary', text: 'The brief does not explain how much quiet state was filtered out.' });
+      } else {
+        checks.push({
+          tone: 'ok',
+          title: 'Filtered state accounted for',
+          text: `${toWholeNumber(omittedSummary.quietCities) ?? 0} quiet cities and ${toWholeNumber(omittedSummary.quietUnits) ?? 0} quiet units were omitted from the prompt brief.`,
+        });
       }
 
       if (Number.isFinite(happiness) && happiness < 0) {
         checks.push({ tone: 'warning', title: 'Negative happiness', text: `Observation reports happiness ${happiness}.` });
       }
 
-      const citiesWithoutChoices = cities.filter(city => !listOrEmpty(city.availableConstructions).length);
-      if (citiesWithoutChoices.length) {
-        checks.push({
-          tone: 'warning',
-          title: 'Cities without construction options',
-          text: citiesWithoutChoices.slice(0, 3).map(city => city.name).join(', '),
-        });
-      }
-
-      const unitsWithMovementButNoReach = units.filter(unit => unit.hasMovement && listOrEmpty(unit.reachableTiles).length === 0);
-      if (unitsWithMovementButNoReach.length) {
-        checks.push({
-          tone: 'warning',
-          title: 'Units can move but have no reachable tiles',
-          text: unitsWithMovementButNoReach.slice(0, 4).map(unit => `${unit.name} #${unit.id}`).join(', '),
-        });
-      }
-
-      const unitsWithMovementButNoOptions = units.filter(unit => unit.hasMovement && !listOrEmpty(unit.unitActions).length && !listOrEmpty(unit.reachableTiles).length);
-      if (unitsWithMovementButNoOptions.length) {
-        checks.push({
-          tone: 'warning',
-          title: 'Movable units without actions',
-          text: unitsWithMovementButNoOptions.slice(0, 4).map(unit => `${unit.name} #${unit.id}`).join(', '),
-        });
-      }
-
-      if (observationData.isAtWar === true && !knownCivs.some(civ => civ.isAtWar)) {
-        checks.push({
-          tone: 'warning',
-          title: 'War flag lacks counterpart',
-          text: 'The civ is marked at war, but no known civilization is flagged as an active war opponent.',
-        });
-      }
-
-      return checks.length ? checks : [
-        { tone: 'ok', title: 'Observation looks populated', text: 'Cities, units, and diplomacy context were captured for this turn.' },
-      ];
+      return checks;
     }
 
     function validatePlanAgainstObservation(run) {
@@ -3380,8 +3283,8 @@
         };
       }
 
-      const units = new Map(listOrEmpty(run.observationData.units).map(unit => [Number(unit.id), unit]));
-      const cities = new Map(listOrEmpty(run.observationData.cities).map(city => [coordKey(city.x, city.y), city]));
+      const units = new Map(observationUnits(run.observationData).map(unit => [Number(unit.id), unit]));
+      const cities = new Map(observationCities(run.observationData).map(city => [coordKey(city.x, city.y), city]));
       const actionChecks = run.actions.map((action, index) => {
         const type = action.type || action.actionType || action.kind || 'action';
         let tone = 'ok';
@@ -3467,15 +3370,6 @@
       ].join(' ').toLowerCase();
     }
 
-    function eventTone(type) {
-      const normalized = String(type || '').toLowerCase();
-      if (normalized.includes('error') || normalized === 'llm_parse_error') return 'critical';
-      if (normalized.includes('fallback') || normalized.includes('missing')) return 'warning';
-      if (normalized.includes('applied') || normalized.includes('parsed')) return 'healthy';
-      if (normalized.includes('request') || normalized.includes('response')) return 'live';
-      return 'idle';
-    }
-
     function diffMs(startEvent, endEvent) {
       if (!startEvent || !endEvent) return null;
       const start = startEvent.epochMs || 0;
@@ -3557,6 +3451,11 @@
         parts.push(`${subject} entered planning with ${observationFacts.join(', ')}.`);
       } else {
         parts.push(`${subject} is the current watch target.`);
+      }
+
+      const priorityFact = observationPriorityFacts(run.observationData)[0];
+      if (priorityFact && priorityFact.headline) {
+        parts.push(`Top brief: ${priorityFact.headline}.`);
       }
 
       if (run.provider || run.model) {
@@ -3650,17 +3549,21 @@
       }
 
       const observationData = parseObservationData(turnStartEvent, prompt);
+      const empireSummary = observationEmpireSummary(observationData);
       const observation = {
-        cities: numberFromDetail(turnStartEvent, 'cities') ?? listOrEmpty(observationData && observationData.cities).length,
-        units: numberFromDetail(turnStartEvent, 'units') ?? listOrEmpty(observationData && observationData.units).length,
-        knownCivs: numberFromDetail(turnStartEvent, 'knownCivs') ?? listOrEmpty(observationData && observationData.knownCivs).length,
-        visibleTiles: numberFromDetail(turnStartEvent, 'visibleTiles') ?? toWholeNumber(observationData && observationData.visibleTiles),
-        gold: numberFromDetail(turnStartEvent, 'gold') ?? toWholeNumber(observationData && observationData.gold),
-        sciencePerTurn: numberFromDetail(turnStartEvent, 'sciencePerTurn') ?? toWholeNumber(observationData && observationData.sciencePerTurn),
-        culturePerTurn: numberFromDetail(turnStartEvent, 'culturePerTurn') ?? toWholeNumber(observationData && observationData.culturePerTurn),
-        faithPerTurn: numberFromDetail(turnStartEvent, 'faithPerTurn') ?? toWholeNumber(observationData && observationData.faithPerTurn),
-        happiness: numberFromDetail(turnStartEvent, 'happiness') ?? toWholeNumber(observationData && observationData.happiness),
-        isAtWar: toBoolean(detailValue(turnStartEvent, 'isAtWar')) ?? toBoolean(observationData && observationData.isAtWar),
+        cities: numberFromDetail(turnStartEvent, 'cities') ?? toWholeNumber(empireSummary && empireSummary.cityCount) ?? observationCities(observationData).length,
+        units: numberFromDetail(turnStartEvent, 'units') ?? toWholeNumber(empireSummary && empireSummary.unitCount) ?? observationUnits(observationData).length,
+        knownCivs: numberFromDetail(turnStartEvent, 'knownCivs') ?? toWholeNumber(empireSummary && empireSummary.knownCivs),
+        visibleTiles: numberFromDetail(turnStartEvent, 'visibleTiles') ?? toWholeNumber(empireSummary && empireSummary.visibleTiles),
+        gold: numberFromDetail(turnStartEvent, 'gold') ?? toWholeNumber(empireSummary && empireSummary.gold),
+        sciencePerTurn: numberFromDetail(turnStartEvent, 'sciencePerTurn') ?? toWholeNumber(empireSummary && empireSummary.sciencePerTurn),
+        culturePerTurn: numberFromDetail(turnStartEvent, 'culturePerTurn') ?? toWholeNumber(empireSummary && empireSummary.culturePerTurn),
+        faithPerTurn: numberFromDetail(turnStartEvent, 'faithPerTurn') ?? toWholeNumber(empireSummary && empireSummary.faithPerTurn),
+        happiness: numberFromDetail(turnStartEvent, 'happiness') ?? toWholeNumber(empireSummary && empireSummary.happiness),
+        isAtWar: toBoolean(detailValue(turnStartEvent, 'isAtWar')) ?? toBoolean(empireSummary && empireSummary.isAtWar),
+        actionableUnits: numberFromDetail(turnStartEvent, 'actionableUnits') ?? observationUnits(observationData).length,
+        visibleTargets: numberFromDetail(turnStartEvent, 'visibleThreatsAndTargets') ?? observationTargets(observationData).length,
+        priorityFacts: numberFromDetail(turnStartEvent, 'priorityFacts') ?? observationPriorityFacts(observationData).length,
       };
       const illegalActionRate = computeIllegalActionRate({ plannedActions, actions, executedActions, rejectedActions });
       const observationChecks = buildObservationChecks(observationData);
@@ -3855,6 +3758,14 @@
       `;
     }
 
+    function renderObservationFactCard(fact) {
+      return renderCheckCard({
+        tone: fact?.severity || 'ok',
+        title: fact?.headline || 'Fact',
+        text: fact?.detail || '',
+      });
+    }
+
     function renderEntityCard(title, text, chips = []) {
       return `
         <div class="entity-card">
@@ -3894,6 +3805,8 @@
         run.observation.isAtWar === null ? null : (run.observation.isAtWar ? 'At war' : 'Not at war'),
         run.observation.cities !== null ? `${run.observation.cities} cities` : null,
         run.observation.units !== null ? `${run.observation.units} units` : null,
+        run.observation.actionableUnits ? `${run.observation.actionableUnits} actionable units` : null,
+        run.observation.visibleTargets ? `${run.observation.visibleTargets} visible targets` : null,
         run.observation.gold !== null ? `${run.observation.gold} gold` : null,
         run.observation.visibleTiles !== null ? `${run.observation.visibleTiles} visible tiles` : null,
       ].filter(Boolean);
@@ -3947,50 +3860,88 @@
       `;
     }
 
-    function renderStages(run) {
-      if (!run) {
-        stagesMetaEl.textContent = 'No turn selected';
-        stageGridEl.innerHTML = '<div class="empty">Observation quality checks and the captured turn snapshot will appear here once a turn is selected.</div>';
-        return;
-      }
-
-      const observationData = run.observationData || {};
-      const cities = listOrEmpty(observationData.cities);
-      const units = listOrEmpty(observationData.units);
-      const knownCivs = listOrEmpty(observationData.knownCivs);
+    function renderObservationV2(run, observationData) {
+      const empire = observationEmpireSummary(observationData);
+      const cities = observationCities(observationData);
+      const units = observationUnits(observationData);
+      const targets = observationTargets(observationData);
+      const priorityFacts = observationPriorityFacts(observationData);
+      const opportunities = observationOpportunities(observationData);
+      const omitted = observationOmittedSummary(observationData);
       const showAll = showDetailsEl.checked;
       const visibleCities = cities.slice(0, showAll ? cities.length : 4);
-      const visibleUnits = units.slice(0, showAll ? units.length : 5);
-      const visibleCivs = knownCivs.slice(0, showAll ? knownCivs.length : 6);
+      const visibleUnits = units.slice(0, showAll ? units.length : 6);
+      const visibleTargets = targets.slice(0, showAll ? targets.length : 6);
+      const visiblePriorityFacts = priorityFacts.slice(0, showAll ? priorityFacts.length : 5);
+      const visibleOpportunities = opportunities.slice(0, showAll ? opportunities.length : 5);
+
       const observationStats = [
-        renderObservationStat('Cities', run.observation.cities ?? '-', 'Settlements captured in the snapshot'),
-        renderObservationStat('Units', run.observation.units ?? '-', 'Movable units captured in the snapshot'),
-        renderObservationStat('Known civs', run.observation.knownCivs ?? '-', 'Diplomatic context available to the planner'),
-        renderObservationStat('Visible tiles', run.observation.visibleTiles ?? '-', 'Map visibility available to the planner'),
+        renderObservationStat('Cities', run.observation.cities ?? '-', 'Cities currently in the empire'),
+        renderObservationStat('Actionable units', run.observation.actionableUnits ?? units.length, 'Units lifted into the current-turn brief'),
+        renderObservationStat('Known civs', run.observation.knownCivs ?? '-', 'Known civilizations in diplomacy memory'),
+        renderObservationStat('Visible tiles', run.observation.visibleTiles ?? '-', 'Current map visibility this turn'),
+        renderObservationStat('Visible hostile units', toWholeNumber(empire.visibleHostileUnits) ?? '-', 'Visible hostile military pressure'),
+        renderObservationStat('Visible foreign cities', toWholeNumber(empire.visibleForeignCities) ?? '-', 'Foreign cities currently in view'),
         renderObservationStat('Gold', run.observation.gold ?? '-', 'Treasury at plan time'),
-        renderObservationStat('Science / turn', run.observation.sciencePerTurn ?? '-', 'Science yield in the snapshot'),
-        renderObservationStat('Culture / turn', run.observation.culturePerTurn ?? '-', 'Culture yield in the snapshot'),
-        renderObservationStat('Faith / turn', run.observation.faithPerTurn ?? '-', 'Faith yield in the snapshot'),
+        renderObservationStat('Science / turn', run.observation.sciencePerTurn ?? '-', 'Science yield this turn'),
         renderObservationStat('Happiness', run.observation.happiness ?? '-', 'Empire happiness at plan time'),
-        renderObservationStat('War state', run.observation.isAtWar === null ? '-' : (run.observation.isAtWar ? 'At war' : 'Peace'), 'Top-level war flag in the snapshot'),
+        renderObservationStat('War state', run.observation.isAtWar === null ? '-' : (run.observation.isAtWar ? 'At war' : 'Peace'), 'Top-level war state in the brief'),
       ];
-      const cityCards = visibleCities.map(city => renderEntityCard(
-        city.name || `City (${city.x}, ${city.y})`,
-        `Pop ${city.population ?? '?'} · Health ${city.health ?? '?'} · Building ${city.currentConstruction || 'none'}`,
-        [`(${city.x}, ${city.y})`, ...trimList(city.availableConstructions, 4)],
-      ));
+
+      const cityCards = visibleCities.map(city => {
+        const growthText = city.turnsToStarvation !== null && city.turnsToStarvation !== undefined
+          ? `Starves in ${city.turnsToStarvation}`
+          : (city.turnsToGrowth !== null && city.turnsToGrowth !== undefined ? `Grows in ${city.turnsToGrowth}` : 'Stable growth');
+        return renderEntityCard(
+          city.name || `City (${city.x}, ${city.y})`,
+          `Pop ${city.population ?? '?'} · ${city.foodPerTurn ?? '?'} food/turn · ${city.productionPerTurn ?? '?'} prod/turn · ${growthText}`,
+          [
+            `(${city.x}, ${city.y})`,
+            `strength ${city.cityStrength ?? '?'}`,
+            city.canBombard ? 'can bombard' : 'cannot bombard',
+            city.isCapital ? 'capital' : null,
+            city.isPuppet ? 'puppet' : null,
+            city.isGarrisoned ? 'garrisoned' : 'no garrison',
+            city.nearbyHostileUnits ? `${city.nearbyHostileUnits} hostile units nearby` : null,
+            ...trimList(city.reasons, 3),
+            ...trimList(city.localFacts, 2),
+            ...trimList(city.availableConstructions, 3),
+          ].filter(Boolean),
+        );
+      });
+
       const unitCards = visibleUnits.map(unit => renderEntityCard(
-        `${unit.name || 'Unit'} #${unit.id ?? '?'}`,
-        `At (${unit.x ?? '?'}, ${unit.y ?? '?'}) · ${unit.health ?? '?'} hp · ${unit.movementPoints || 'movement ?'} · ${unit.hasMovement ? 'can move' : 'no movement'}`,
-        [`reachable ${listOrEmpty(unit.reachableTiles).length}`, ...trimList(unit.unitActions, 4)],
-      ));
-      const diplomacyCards = visibleCivs.map(civ => renderEntityCard(
-        civ.civName || 'Unknown civ',
-        civ.diplomaticStatus || 'Unknown status',
-        [civ.isAtWar ? 'at war' : 'peace', civ.isCityState ? 'city-state' : 'major civ'],
+        `${String(unit.role || 'unit').replace(/_/g, ' ')} · ${unit.name || 'Unit'} #${unit.id ?? '?'}`,
+        `At (${unit.x ?? '?'}, ${unit.y ?? '?'}) · ${unit.health ?? '?'} hp · ${unit.movementPoints || 'movement ?'}${unit.strength ? ` · str ${unit.strength}` : ''}${unit.rangedStrength ? ` · rng ${unit.rangedStrength}` : ''}`,
+        [
+          `reachable ${listOrEmpty(unit.reachableTiles).length}`,
+          unit.range ? `range ${unit.range}` : null,
+          unit.nearbyHostileUnits ? `${unit.nearbyHostileUnits} hostile units nearby` : null,
+          ...trimList(unit.reasons, 3),
+          ...trimList(unit.localFacts, 3),
+          ...trimList(unit.unitActions, 3),
+        ].filter(Boolean),
       ));
 
-      stagesMetaEl.textContent = `${run.observationSummary.issueCount ? `${run.observationSummary.issueCount} flags` : 'Looks sane'} · ${formatDateTime(run.turnStartEvent ? run.turnStartEvent.epochMs : run.lastEpochMs)}`;
+      const targetCards = visibleTargets.map(target => renderEntityCard(
+        `${target.name || target.kind || 'Target'} · ${target.civName || 'Unknown civ'}`,
+        `At (${target.x ?? '?'}, ${target.y ?? '?'}) · ${target.relation || 'unknown relation'}${target.combatStrength ? ` · strength ${target.combatStrength}` : ''}${target.health ? ` · hp ${target.health}` : ''}`,
+        [
+          target.distanceToClosestCity !== null && target.distanceToClosestCity !== undefined ? `city ${target.distanceToClosestCity} tiles away` : null,
+          target.distanceToClosestUnit !== null && target.distanceToClosestUnit !== undefined ? `unit ${target.distanceToClosestUnit} tiles away` : null,
+          ...trimList(target.facts, 3),
+        ].filter(Boolean),
+      ));
+
+      const omittedCards = [
+        renderObservationStat('Quiet cities', toWholeNumber(omitted.quietCities) ?? 0, 'Cities intentionally left out of the prompt brief'),
+        renderObservationStat('Quiet units', toWholeNumber(omitted.quietUnits) ?? 0, 'Units intentionally left out of the prompt brief'),
+        renderObservationStat('Targets omitted', toWholeNumber(omitted.visibleTargetsOmitted) ?? 0, 'Visible contacts not expanded into cards'),
+        renderObservationStat('Lower-priority facts', toWholeNumber(omitted.lowerPriorityFactsOmitted) ?? 0, 'Facts filtered out behind the top-ranked brief'),
+        renderObservationStat('Lower-priority opportunities', toWholeNumber(omitted.lowerPriorityOpportunitiesOmitted) ?? 0, 'Opportunities filtered out behind the top-ranked list'),
+      ];
+
+      stagesMetaEl.textContent = `Curated brief · ${run.observationSummary.issueCount ? `${run.observationSummary.issueCount} flags` : 'looks sane'} · ${formatDateTime(run.turnStartEvent ? run.turnStartEvent.epochMs : run.lastEpochMs)}`;
       stageGridEl.innerHTML = `
         <div class="observation-grid">${observationStats.join('')}</div>
         <div class="info-section">
@@ -3998,18 +3949,40 @@
           <div class="check-list">${run.observationChecks.map(renderCheckCard).join('')}</div>
         </div>
         <div class="info-section">
-          <div class="section-subtitle">Captured cities${cities.length > visibleCities.length ? ` · showing ${visibleCities.length}/${cities.length}` : ''}</div>
-          ${cityCards.length ? `<div class="entity-list">${cityCards.join('')}</div>` : '<div class="empty">No city list was captured in the structured observation.</div>'}
+          <div class="section-subtitle">Priority facts${priorityFacts.length > visiblePriorityFacts.length ? ` · showing ${visiblePriorityFacts.length}/${priorityFacts.length}` : ''}</div>
+          ${visiblePriorityFacts.length ? `<div class="check-list">${visiblePriorityFacts.map(renderObservationFactCard).join('')}</div>` : '<div class="empty">No ranked current-turn facts were captured.</div>'}
         </div>
         <div class="info-section">
-          <div class="section-subtitle">Captured units${units.length > visibleUnits.length ? ` · showing ${visibleUnits.length}/${units.length}` : ''}</div>
-          ${unitCards.length ? `<div class="entity-list">${unitCards.join('')}</div>` : '<div class="empty">No unit list was captured in the structured observation.</div>'}
+          <div class="section-subtitle">Cities needing attention${cities.length > visibleCities.length ? ` · showing ${visibleCities.length}/${cities.length}` : ''}</div>
+          ${cityCards.length ? `<div class="entity-list">${cityCards.join('')}</div>` : '<div class="empty">No city cards were lifted into the current-turn brief.</div>'}
         </div>
         <div class="info-section">
-          <div class="section-subtitle">Diplomacy${knownCivs.length > visibleCivs.length ? ` · showing ${visibleCivs.length}/${knownCivs.length}` : ''}</div>
-          ${diplomacyCards.length ? `<div class="entity-columns">${diplomacyCards.join('')}</div>` : '<div class="empty">No known civilizations were captured in the structured observation.</div>'}
+          <div class="section-subtitle">Actionable units${units.length > visibleUnits.length ? ` · showing ${visibleUnits.length}/${units.length}` : ''}</div>
+          ${unitCards.length ? `<div class="entity-list">${unitCards.join('')}</div>` : '<div class="empty">No actionable units were lifted into the current-turn brief.</div>'}
+        </div>
+        <div class="info-section">
+          <div class="section-subtitle">Visible threats and targets${targets.length > visibleTargets.length ? ` · showing ${visibleTargets.length}/${targets.length}` : ''}</div>
+          ${targetCards.length ? `<div class="entity-columns">${targetCards.join('')}</div>` : '<div class="empty">No visible threats or targets were captured for this turn.</div>'}
+        </div>
+        <div class="info-section">
+          <div class="section-subtitle">Immediate opportunities${opportunities.length > visibleOpportunities.length ? ` · showing ${visibleOpportunities.length}/${opportunities.length}` : ''}</div>
+          ${visibleOpportunities.length ? `<div class="check-list">${visibleOpportunities.map(renderObservationFactCard).join('')}</div>` : '<div class="empty">No immediate opportunities were captured for this turn.</div>'}
+        </div>
+        <div class="info-section">
+          <div class="section-subtitle">Filtered-out background state</div>
+          <div class="observation-grid">${omittedCards.join('')}</div>
         </div>
       `;
+    }
+
+    function renderStages(run) {
+      if (!run) {
+        stagesMetaEl.textContent = 'No turn selected';
+        stageGridEl.innerHTML = '<div class="empty">Observation quality checks and the captured turn snapshot will appear here once a turn is selected.</div>';
+        return;
+      }
+
+      renderObservationV2(run, run.observationData || {});
     }
 
     function renderActionPanel(run) {
@@ -4166,66 +4139,6 @@
         : '<div class="empty">No observation, prompt, response, or parsed output were captured for this turn.</div>';
     }
 
-    function buildEventNote(event) {
-      if (!event || !event.details) return '';
-      if (event.type === 'llm_plan_parsed') {
-        const actions = detailValue(event, 'actions');
-        const notes = detailValue(event, 'notes');
-        return [actions ? `${actions} actions` : '', notes || ''].filter(Boolean).join(' · ');
-      }
-      if (event.type === 'plan_applied' || event.type === 'fallback_legacy') {
-        const planned = detailValue(event, 'plannedActions');
-        const executed = detailValue(event, 'executedActions');
-        const rejected = detailValue(event, 'rejectedActions');
-        return [`planned ${planned ?? '-'}`, `executed ${executed ?? '-'}`, `rejected ${rejected ?? '-'}`].join(' · ');
-      }
-      if (event.type === 'llm_request_error') {
-        return detailValue(event, 'error') || '';
-      }
-      if (event.type === 'llm_http_error') {
-        return detailValue(event, 'status') ? `status ${detailValue(event, 'status')}` : '';
-      }
-      if (event.type === 'llm_parse_error') {
-        return detailValue(event, 'error') || '';
-      }
-      if (event.type === 'turn_start') {
-        const cities = detailValue(event, 'cities');
-        const units = detailValue(event, 'units');
-        return [`cities ${cities ?? '-'}`, `units ${units ?? '-'}`].join(' · ');
-      }
-      return '';
-    }
-
-    function renderTimeline(run) {
-      if (!run) {
-        timelineMetaEl.textContent = 'No events yet';
-        timelineEl.innerHTML = '<div class="empty">The selected turn log will appear here.</div>';
-        return;
-      }
-
-      const filteredEvents = run.events.filter(eventMatchesFilters);
-      timelineMetaEl.textContent = `${filteredEvents.length}/${run.events.length} events shown`;
-
-      if (!filteredEvents.length) {
-        timelineEl.innerHTML = '<div class="empty">No events in this turn match the current type or search filters.</div>';
-        return;
-      }
-
-      timelineEl.innerHTML = filteredEvents.map(event => {
-        const note = buildEventNote(event);
-        return `
-          <article class="event-row">
-            <div class="event-row-top">
-              <div class="event-row-type">${esc(event.type || 'unknown')}</div>
-              <div class="event-row-time">#${event.id || '-'} · ${esc(formatDateTime(event.epochMs))}</div>
-            </div>
-            <div class="event-row-message">${esc(event.message || '')}</div>
-            ${note ? `<div class="event-row-note">${esc(note)}</div>` : ''}
-          </article>
-        `;
-      }).join('');
-    }
-
     function render() {
       sourceModeEl.value = STATE.sourceMode;
       renderBatchRunner();
@@ -4276,7 +4189,6 @@
       renderStages(selectedRun);
       renderActionPanel(selectedRun);
       renderArtifacts(selectedRun);
-      renderTimeline(selectedRun);
 
       const shownEvents = selectedRun ? selectedRun.events.filter(eventMatchesFilters).length : 0;
       const totalFetched = snapshot.recentEvents ? snapshot.recentEvents.length : 0;

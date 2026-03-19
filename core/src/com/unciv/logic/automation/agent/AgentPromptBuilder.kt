@@ -28,6 +28,9 @@ object AgentPromptBuilder {
               "notes": "optional"
             }
             Rules:
+            - The observation is a curated current-turn brief, not a full save dump.
+            - Focus first on empireSummary, priorityFacts, citiesNeedingAttention, actionableUnits, visibleThreatsAndTargets, and opportunities.
+            - Treat omittedSummary as a sign that quieter state exists, but only act through the entities explicitly listed in the observation.
             - Use only unit IDs, cities, action types, tiles, and constructions present in the observation.
             - Do not invent entities.
             - Prefer short, legal plans (0-25 commands).
