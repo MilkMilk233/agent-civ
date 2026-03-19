@@ -5,6 +5,7 @@ import com.unciv.UncivGame
 import com.unciv.json.LastSeenImprovement
 import com.unciv.logic.*
 import com.unciv.logic.automation.unit.WorkerAutomation
+import com.unciv.logic.automation.agent.AgentMemory
 import com.unciv.logic.city.City
 import com.unciv.logic.city.managers.CityFounder
 import com.unciv.logic.civilization.diplomacy.*
@@ -252,6 +253,8 @@ class Civilization : IsPartOfGameInfoSerialization {
 
     var statsHistory = CivRankingHistory()
 
+    var agentMemory = AgentMemory()
+
     constructor()
 
     constructor(civName: String) {
@@ -324,6 +327,7 @@ class Civilization : IsPartOfGameInfoSerialization {
         toReturn.hasMovedAutomatedUnits = hasMovedAutomatedUnits
         toReturn.statsHistory = statsHistory.clone()
         toReturn.resourceStockpiles = resourceStockpiles.clone()
+        toReturn.agentMemory = agentMemory.clone()
         return toReturn
     }
 

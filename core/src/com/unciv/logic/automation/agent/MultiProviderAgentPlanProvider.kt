@@ -64,9 +64,14 @@ class MultiProviderAgentPlanProvider(
         }
     }
 
-    override fun buildPlan(observation: AgentObservation, civInfo: Civilization): AgentActionPlan? = runBlocking {
+    override fun buildPlan(
+        memory: AgentMemory,
+        observation: AgentObservation,
+        civInfo: Civilization,
+        retryContext: AgentRetryContext?,
+    ): AgentActionPlan? = runBlocking {
         throwIfCancelled()
-        val prompt = AgentPromptBuilder.build(observation)
+        val prompt = AgentPromptBuilder.build(memory, observation, retryContext)
         AgentObservability.record(
             type = "llm_request",
             message = "Sending prompt to LLM provider",
@@ -80,6 +85,10 @@ class MultiProviderAgentPlanProvider(
                 "connectTimeoutMs" to connectTimeoutMs.toString(),
                 "socketTimeoutMs" to socketTimeoutMs.toString(),
                 "maxAttempts" to maxAttempts.toString(),
+                "memoryJson" to AgentPromptBuilder.memoryJson(memory),
+                "retryAttempt" to (retryContext?.retryAttempt?.toString() ?: "0"),
+                "retryMax" to (retryContext?.maxRetries?.toString() ?: "0"),
+                "retryContextJson" to (retryContext?.let { AgentPromptBuilder.retryContextJson(it) } ?: ""),
                 "prompt" to prompt,
             ),
         )

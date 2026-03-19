@@ -3046,17 +3046,39 @@
       return toWholeNumber(detailValue(event, key));
     }
 
-    function extractObservationJsonFromPrompt(prompt) {
+    function extractSectionFromPrompt(prompt, startMarker, endMarker = null) {
       if (typeof prompt !== 'string') return null;
-      const marker = 'Observation JSON:';
-      const markerIndex = prompt.indexOf(marker);
+      const markerIndex = prompt.indexOf(startMarker);
       if (markerIndex < 0) return null;
-      return prompt.slice(markerIndex + marker.length).trim();
+      const startIndex = markerIndex + startMarker.length;
+      if (!endMarker) return prompt.slice(startIndex).trim();
+      const endIndex = prompt.indexOf(endMarker, startIndex);
+      return (endIndex >= 0 ? prompt.slice(startIndex, endIndex) : prompt.slice(startIndex)).trim();
+    }
+
+    function extractMemoryJsonFromPrompt(prompt) {
+      return extractSectionFromPrompt(prompt, 'Memory JSON:', 'Observation JSON:');
+    }
+
+    function extractObservationJsonFromPrompt(prompt) {
+      return extractSectionFromPrompt(prompt, 'Observation JSON:');
     }
 
     function parseObservationData(turnStartEvent, prompt) {
       const observationJson = detailValue(turnStartEvent, 'observationJson') || extractObservationJsonFromPrompt(prompt);
       const parsed = observationJson ? tryParseJsonString(observationJson) : null;
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    }
+
+    function parseMemoryData(turnStartEvent, prompt) {
+      const memoryJson = detailValue(turnStartEvent, 'memoryJson') || extractMemoryJsonFromPrompt(prompt);
+      const parsed = memoryJson ? tryParseJsonString(memoryJson) : null;
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    }
+
+    function parseRetryContextData(event) {
+      const retryJson = detailValue(event, 'validationFailuresJson') || detailValue(event, 'retryContextJson');
+      const parsed = retryJson ? tryParseJsonString(retryJson) : null;
       return parsed && typeof parsed === 'object' ? parsed : null;
     }
 
@@ -3092,6 +3114,28 @@
       return observationData && observationData.omittedSummary && typeof observationData.omittedSummary === 'object'
         ? observationData.omittedSummary
         : {};
+    }
+
+    function memoryStrategicPosture(memoryData) {
+      return memoryData && memoryData.strategicPosture && typeof memoryData.strategicPosture === 'object'
+        ? memoryData.strategicPosture
+        : {};
+    }
+
+    function memoryCityIntents(memoryData) {
+      return listOrEmpty(memoryData && memoryData.cityIntents);
+    }
+
+    function memoryUnitAssignments(memoryData) {
+      return listOrEmpty(memoryData && memoryData.unitAssignments);
+    }
+
+    function memoryRecentFailures(memoryData) {
+      return listOrEmpty(memoryData && memoryData.recentFailures);
+    }
+
+    function retryFailures(retryContext) {
+      return listOrEmpty(retryContext && retryContext.failures);
     }
 
     function coordKey(x, y) {
@@ -3254,11 +3298,28 @@
       }
 
       if (run.fallbackEvent) {
-        issues.push({ tone: 'warning', title: 'Fallback after execution', text: 'Legacy AI took over after the decoded plan was partially or fully executed.' });
+        issues.push({ tone: 'warning', title: 'Legacy fallback used', text: run.fallbackReason || 'Legacy AI took over after the agent turn could not complete cleanly.' });
       }
 
       if (run.handoffToLegacyAI === true) {
         issues.push({ tone: 'warning', title: 'Model requested handoff', text: 'The decoded plan explicitly asked to hand control back to legacy AI.' });
+      }
+
+      if (run.retryCount > 0) {
+        issues.push({
+          tone: run.fallbackEvent ? 'critical' : 'warning',
+          title: 'Replanning was needed',
+          text: `${run.retryCount} retry ${run.retryCount === 1 ? 'attempt was' : 'attempts were'} used before the turn reached its final outcome.`,
+        });
+      }
+
+      if (run.validationFailures.length) {
+        const firstFailure = run.validationFailures[0];
+        issues.push({
+          tone: run.fallbackEvent ? 'critical' : 'warning',
+          title: 'Plan failed validation',
+          text: firstFailure.detail || 'A previous draft plan contained invalid actions and had to be retried.',
+        });
       }
 
       if ((run.rejectedActions ?? 0) > 0) {
@@ -3327,7 +3388,9 @@
 
       issues.push(...actionChecks.filter(check => check.tone !== 'ok'));
 
-      if (!run.actions.length && !run.handoffToLegacyAI && !run.planMissingEvent && !run.parseErrorEvent && !run.requestErrorEvent && !run.httpErrorEvent) {
+      if (run.intentionalNoOp) {
+        issues.push({ tone: 'ok', title: 'Intentional no-op', text: 'The planner explicitly chose to do nothing this turn without falling back to legacy AI.' });
+      } else if (!run.actions.length && !run.handoffToLegacyAI && !run.planMissingEvent && !run.parseErrorEvent && !run.requestErrorEvent && !run.httpErrorEvent) {
         issues.push({ tone: 'warning', title: 'No actions proposed', text: 'The model returned no concrete actions for this turn.' });
       }
 
@@ -3401,20 +3464,23 @@
         : `${run.civName} turn ${run.turn}`;
 
       if (run.planAppliedEvent) {
+        if (run.intentionalNoOp) {
+          return `${subject} intentionally took no direct actions this turn and finished without legacy fallback${run.retryCount ? ` after ${run.retryCount} retry ${run.retryCount === 1 ? 'attempt' : 'attempts'}` : ''}.`;
+        }
         const executed = run.executedActions ?? 0;
         const rejected = run.rejectedActions ?? 0;
         const planned = run.plannedActions ?? run.actions.length;
-        return `${subject} produced a usable plan with ${planned} proposed actions and finished without legacy fallback. Execution landed at ${executed} applied and ${rejected} rejected actions.`;
+        return `${subject} produced a usable plan with ${planned} proposed actions and finished without legacy fallback${run.retryCount ? ` after ${run.retryCount} retry ${run.retryCount === 1 ? 'attempt' : 'attempts'}` : ''}. Execution landed at ${executed} applied and ${rejected} rejected actions.`;
       }
 
       if (run.fallbackEvent) {
         const executed = run.executedActions ?? 0;
         const rejected = run.rejectedActions ?? 0;
-        return `${subject} reached execution, but control went back to legacy AI after ${executed} applied and ${rejected} rejected actions.`;
+        return `${subject} fell back to legacy AI${run.retryCount ? ` after ${run.retryCount} retry ${run.retryCount === 1 ? 'attempt' : 'attempts'}` : ''}. ${run.fallbackReason || `Execution landed at ${executed} applied and ${rejected} rejected actions before handoff.`}`;
       }
 
       if (run.planMissingEvent) {
-        return `${subject} never produced a usable structured plan, so the turn handed back to legacy AI.`;
+        return `${subject} never produced a usable structured plan${run.retryCount ? ` after ${run.retryCount} retry ${run.retryCount === 1 ? 'attempt' : 'attempts'}` : ''}, so the turn handed back to legacy AI.`;
       }
 
       if (run.parseErrorEvent) {
@@ -3462,6 +3528,20 @@
         parts.push(`Planner path: ${[run.provider, run.model].filter(Boolean).join(' / ')}.`);
       }
 
+      if (run.memory.mode) {
+        parts.push(`Memory posture: ${String(run.memory.mode).replace(/_/g, ' ')}.`);
+      }
+
+      if (run.retryCount > 0) {
+        parts.push(`Planner retries: ${run.retryCount}.`);
+      }
+
+      if (run.intentionalNoOp) {
+        parts.push('Final decision: intentional no-op.');
+      } else if (run.fallbackReason) {
+        parts.push(`Fallback reason: ${run.fallbackReason}.`);
+      }
+
       if (run.notes) {
         parts.push(`Planner note: ${clampText(run.notes, 160)}`);
       }
@@ -3485,6 +3565,8 @@
       const parseErrorEvent = lastEventOfType(events, 'llm_parse_error');
       const requestErrorEvent = lastEventOfType(events, 'llm_request_error');
       const httpErrorEvent = lastEventOfType(events, 'llm_http_error');
+      const validationFailedEvents = events.filter(event => (event.type || '') === 'plan_validation_failed');
+      const retryRequestedEvents = events.filter(event => (event.type || '') === 'plan_retry_requested');
       const planAppliedEvent = lastEventOfType(events, 'plan_applied');
       const fallbackEvent = lastEventOfType(events, 'fallback_legacy');
       const planMissingEvent = lastEventOfType(events, 'plan_missing');
@@ -3528,6 +3610,18 @@
 
       const rejectedActions = numberFromDetail(planAppliedEvent, 'rejectedActions')
         ?? numberFromDetail(fallbackEvent, 'rejectedActions');
+      const planningAttempts = numberFromDetail(planAppliedEvent, 'planningAttempts')
+        ?? numberFromDetail(fallbackEvent, 'planningAttempts')
+        ?? numberFromDetail(planMissingEvent, 'planningAttempts')
+        ?? events.filter(event => (event.type || '') === 'llm_request').length;
+      const retryCount = Math.max(0, (planningAttempts || 1) - 1);
+      const intentionalNoOp = toBoolean(detailValue(planAppliedEvent, 'intentionalNoOp')) ?? false;
+      const fallbackReason = detailValue(fallbackEvent, 'fallbackReason')
+        || detailValue(planMissingEvent, 'fallbackReason')
+        || null;
+      const latestValidationContext = parseRetryContextData(validationFailedEvents[validationFailedEvents.length - 1] || null)
+        || parseRetryContextData(retryRequestedEvents[retryRequestedEvents.length - 1] || null);
+      const validationFailures = retryFailures(latestValidationContext);
 
       const llmLatencyMs = diffMs(requestEvent, responseEvent || requestErrorEvent || httpErrorEvent);
       const totalRuntimeMs = diffMs(turnStartEvent, outcomeEvent);
@@ -3540,6 +3634,9 @@
       } else if (fallbackEvent || planMissingEvent || handoffToLegacyAI) {
         status = 'warning';
         statusLabel = 'Fallback';
+      } else if (planAppliedEvent && intentionalNoOp) {
+        status = 'healthy';
+        statusLabel = 'No-op';
       } else if (planAppliedEvent) {
         status = 'healthy';
         statusLabel = 'Applied';
@@ -3549,7 +3646,9 @@
       }
 
       const observationData = parseObservationData(turnStartEvent, prompt);
+      const memoryData = parseMemoryData(turnStartEvent, prompt);
       const empireSummary = observationEmpireSummary(observationData);
+      const memoryPosture = memoryStrategicPosture(memoryData);
       const observation = {
         cities: numberFromDetail(turnStartEvent, 'cities') ?? toWholeNumber(empireSummary && empireSummary.cityCount) ?? observationCities(observationData).length,
         units: numberFromDetail(turnStartEvent, 'units') ?? toWholeNumber(empireSummary && empireSummary.unitCount) ?? observationUnits(observationData).length,
@@ -3565,6 +3664,20 @@
         visibleTargets: numberFromDetail(turnStartEvent, 'visibleThreatsAndTargets') ?? observationTargets(observationData).length,
         priorityFacts: numberFromDetail(turnStartEvent, 'priorityFacts') ?? observationPriorityFacts(observationData).length,
       };
+      const memory = {
+        mode: detailValue(turnStartEvent, 'memoryMode') || memoryPosture.mode || null,
+        focus: trimList(memoryPosture.focus, showDetailsEl.checked ? 8 : 4),
+        cityIntents: numberFromDetail(turnStartEvent, 'memoryCityIntents') ?? memoryCityIntents(memoryData).length,
+        unitAssignments: numberFromDetail(turnStartEvent, 'memoryUnitAssignments') ?? memoryUnitAssignments(memoryData).length,
+        recentFailures: numberFromDetail(turnStartEvent, 'memoryRecentFailures') ?? memoryRecentFailures(memoryData).length,
+      };
+      const memoryOutcomeEvent = planAppliedEvent || fallbackEvent || planMissingEvent || parseErrorEvent || requestErrorEvent || httpErrorEvent || null;
+      const memoryAfter = {
+        mode: detailValue(memoryOutcomeEvent, 'memoryMode') || memory.mode,
+        cityIntents: numberFromDetail(memoryOutcomeEvent, 'memoryCityIntents'),
+        unitAssignments: numberFromDetail(memoryOutcomeEvent, 'memoryUnitAssignments'),
+        recentFailures: numberFromDetail(memoryOutcomeEvent, 'memoryRecentFailures'),
+      };
       const illegalActionRate = computeIllegalActionRate({ plannedActions, actions, executedActions, rejectedActions });
       const observationChecks = buildObservationChecks(observationData);
       const planValidation = validatePlanAgainstObservation({
@@ -3574,6 +3687,10 @@
         plannedActions,
         executedActions,
         rejectedActions,
+        retryCount,
+        intentionalNoOp,
+        fallbackReason,
+        validationFailures,
         fallbackEvent,
         planMissingEvent,
         parseErrorEvent,
@@ -3590,11 +3707,15 @@
         provider || '',
         model || '',
         baseUrl || '',
+        detailValue(turnStartEvent, 'memoryJson') || '',
+        fallbackReason || '',
         notes || '',
         prompt || '',
         rawResponse || '',
         parsedPlanJson || '',
+        normalizeDetails(latestValidationContext || {}),
         normalizeDetails(observationData || {}),
+        normalizeDetails(memoryData || {}),
         ...events.map(eventTextBlob),
       ].join(' ').toLowerCase();
 
@@ -3610,6 +3731,8 @@
         parseErrorEvent,
         requestErrorEvent,
         httpErrorEvent,
+        validationFailedEvents,
+        retryRequestedEvents,
         planAppliedEvent,
         fallbackEvent,
         planMissingEvent,
@@ -3627,12 +3750,21 @@
         plannedActions,
         executedActions,
         rejectedActions,
+        planningAttempts,
+        retryCount,
+        intentionalNoOp,
+        fallbackReason,
+        latestValidationContext,
+        validationFailures,
         llmLatencyMs,
         totalRuntimeMs,
         status,
         statusLabel,
         observation,
         observationData,
+        memory,
+        memoryData,
+        memoryAfter,
         observationChecks,
         observationSummary,
         planIssues: planValidation.issues,
@@ -3702,7 +3834,8 @@
           <div class="card-meta">
             <span class="meta-chip">${esc(run.provider || 'planner pending')}</span>
             <span class="meta-chip">${esc(run.observationSummary.issueCount ? `${run.observationSummary.issueCount} obs flags` : 'obs ok')}</span>
-            <span class="meta-chip">${esc(run.planSummary.issueCount ? `${run.planSummary.issueCount} plan flags` : (run.planParsedEvent || run.actions.length ? 'plan ok' : 'plan pending'))}</span>
+            <span class="meta-chip">${esc(run.intentionalNoOp ? 'intentional no-op' : (run.planSummary.issueCount ? `${run.planSummary.issueCount} plan flags` : (run.planParsedEvent || run.actions.length ? 'plan ok' : 'plan pending')))}</span>
+            <span class="meta-chip">${esc(run.retryCount ? `${run.retryCount} retries` : 'no retries')}</span>
             <span class="meta-chip">${esc(run.llmLatencyMs ? formatDuration(run.llmLatencyMs) : 'latency -')}</span>
           </div>
         </button>
@@ -3786,7 +3919,13 @@
       const completedTurnsLabel = portfolio.completedRuns ? `${portfolio.completedRuns} completed turns` : 'No completed turns yet';
       const summaryCards = [
         renderMiniCard('Observation', run.observationSummary.issueCount ? `${run.observationSummary.issueCount} flags` : 'Looks sane', run.observationSummary.note),
-        renderMiniCard('Plan', run.planSummary.issueCount ? `${run.planSummary.issueCount} flags` : (run.actions.length ? 'Looks sane' : 'Waiting'), run.planSummary.note),
+        renderMiniCard(
+          'Memory',
+          run.memory.mode ? String(run.memory.mode).replace(/_/g, ' ') : 'Fresh turn',
+          `${run.memory.cityIntents ?? 0} city intents · ${run.memory.unitAssignments ?? 0} unit assignments · ${run.memory.recentFailures ?? 0} recent failures`,
+        ),
+        renderMiniCard('Plan', run.intentionalNoOp ? 'Intentional no-op' : (run.planSummary.issueCount ? `${run.planSummary.issueCount} flags` : (run.actions.length ? 'Looks sane' : 'Waiting')), run.planSummary.note),
+        renderMiniCard('Retries', String(run.retryCount || 0), run.retryCount ? `${run.planningAttempts} total planning attempts` : 'Accepted on first attempt'),
         renderMiniCard('Inference latency', formatDuration(run.llmLatencyMs), 'Planner request to response'),
         renderMiniCard('Illegal action rate', toPercent(run.illegalActionRate), `${run.rejectedActions ?? 0} rejected of ${run.plannedActions ?? run.actions.length ?? 0} planned`),
         renderMiniCard('Turn runtime', formatDuration(run.totalRuntimeMs), 'Turn start to outcome signal'),
@@ -3802,6 +3941,9 @@
       const contextChips = [
         run.provider ? `Provider: ${run.provider}` : null,
         run.model ? `Model: ${run.model}` : null,
+        run.memory.mode ? `Memory: ${String(run.memory.mode).replace(/_/g, ' ')}` : null,
+        run.intentionalNoOp ? 'Intentional no-op' : null,
+        run.retryCount ? `${run.retryCount} retries` : null,
         run.observation.isAtWar === null ? null : (run.observation.isAtWar ? 'At war' : 'Not at war'),
         run.observation.cities !== null ? `${run.observation.cities} cities` : null,
         run.observation.units !== null ? `${run.observation.units} units` : null,
@@ -3810,6 +3952,24 @@
         run.observation.gold !== null ? `${run.observation.gold} gold` : null,
         run.observation.visibleTiles !== null ? `${run.observation.visibleTiles} visible tiles` : null,
       ].filter(Boolean);
+      const memoryFocusChips = listOrEmpty(run.memory.focus).slice(0, showDetailsEl.checked ? run.memory.focus.length : 4);
+      const memorySection = (run.memoryData || run.memory.mode || run.memoryAfter.mode)
+        ? `
+          <div class="info-section">
+            <div class="section-subtitle">Carryover memory</div>
+            <div class="context-row">
+              ${[
+                run.memory.mode ? `Incoming posture: ${String(run.memory.mode).replace(/_/g, ' ')}` : null,
+                Number.isFinite(run.memory.cityIntents) ? `${run.memory.cityIntents} city intents` : null,
+                Number.isFinite(run.memory.unitAssignments) ? `${run.memory.unitAssignments} unit assignments` : null,
+                Number.isFinite(run.memory.recentFailures) ? `${run.memory.recentFailures} recent failures` : null,
+                run.memoryAfter && run.memoryAfter.mode ? `After turn: ${String(run.memoryAfter.mode).replace(/_/g, ' ')}` : null,
+              ].filter(Boolean).map(chip => `<span class="context-chip">${esc(chip)}</span>`).join('')}
+            </div>
+            ${memoryFocusChips.length ? `<div class="note-banner"><strong>Memory focus:</strong> ${memoryFocusChips.map(item => esc(item)).join(' · ')}</div>` : ''}
+          </div>
+        `
+        : '';
       const topIssue = run.topConcern && normalizeTone(run.topConcern.tone) !== 'ok'
         ? `
           <div class="panel-section-spacer issue-list">
@@ -3846,6 +4006,7 @@
 
         ${run.notes ? `<div class="note-banner"><strong>Planner note:</strong> ${esc(run.notes)}</div>` : ''}
         ${contextChips.length ? `<div class="context-row">${contextChips.map(chip => `<span class="context-chip">${esc(chip)}</span>`).join('')}</div>` : ''}
+        ${memorySection}
       `;
     }
 
@@ -3996,22 +4157,35 @@
         ? `<div class="note-banner"><strong>Planner note:</strong> ${esc(run.notes)}</div>`
         : '';
       const metaCards = [
+        renderPlanMetaCard('Turn decision', run.intentionalNoOp ? 'No-op' : (run.fallbackEvent ? 'Fallback' : 'Execute'), run.fallbackReason || (run.intentionalNoOp ? 'Planner intentionally chose to take no direct action' : 'Decoded plan outcome')),
         renderPlanMetaCard('Decoded actions', String(run.actions.length), run.planParsedEvent ? 'Structured JSON decoded successfully' : 'No structured plan decoded'),
         renderPlanMetaCard('Executed / rejected', `${run.executedActions ?? 0} / ${run.rejectedActions ?? 0}`, 'Engine outcome for this turn'),
         renderPlanMetaCard('Illegal action rate', toPercent(run.illegalActionRate), `${run.rejectedActions ?? 0} rejected of ${run.plannedActions ?? run.actions.length ?? 0} planned`),
+        renderPlanMetaCard('Planning attempts', String(run.planningAttempts || 1), run.retryCount ? `${run.retryCount} retries were used` : 'Accepted on the first planner attempt'),
         renderPlanMetaCard('Inference latency', formatDuration(run.llmLatencyMs), 'Planner request to response'),
         renderPlanMetaCard('Fallback', run.fallbackEvent || run.planMissingEvent || run.handoffToLegacyAI ? 'Yes' : 'No', run.fallbackEvent ? 'Legacy AI took over' : (run.handoffToLegacyAI ? 'Planner asked for handoff' : 'Stayed on agent plan')),
       ];
 
       actionsMetaEl.textContent = run.planSummary.issueCount
         ? `${run.planSummary.issueCount} flags · ${run.actions.length} actions`
-        : run.actions.length
+        : run.intentionalNoOp
+          ? 'Intentional no-op · no fallback'
+          : run.actions.length
           ? `${run.actions.length} actions · looks sane`
           : 'No structured plan decoded';
 
-      const actionList = run.actions.length
+      const actionList = run.intentionalNoOp
+        ? '<div class="empty">The planner intentionally chose a no-op turn, so no direct actions were executed.</div>'
+        : run.actions.length
         ? renderActionList(run.actions, showDetailsEl.checked, run.actionChecks)
         : '<div class="empty">The planner returned no concrete actions for this turn.</div>';
+      const retryChecks = run.validationFailures.length
+        ? run.validationFailures.map((failure, index) => renderCheckCard({
+            tone: run.fallbackEvent ? 'critical' : 'warning',
+            title: `Rejected draft action ${index + 1}`,
+            text: failure.detail || 'Previous draft action failed validation.',
+          })).join('')
+        : '<div class="empty">No draft validation failures were recorded for this turn.</div>';
 
       actionPlanEl.innerHTML = `
         ${note}
@@ -4019,6 +4193,10 @@
         <div class="info-section">
           <div class="section-subtitle">Plan validation</div>
           <div class="check-list">${run.planIssues.map(renderCheckCard).join('')}</div>
+        </div>
+        <div class="info-section">
+          <div class="section-subtitle">Retry and validation feedback</div>
+          <div class="check-list">${retryChecks}</div>
         </div>
         <div class="info-section">
           <div class="section-subtitle">Decoded actions</div>
@@ -4073,8 +4251,8 @@
 
     function renderArtifacts(run) {
       if (!run) {
-        artifactsMetaEl.textContent = 'Observation, prompt, response, and parsed output';
-        artifactsEl.innerHTML = '<div class="empty">Select a turn to inspect raw observation, prompt, and response details only when you need them.</div>';
+        artifactsMetaEl.textContent = 'Memory, prompt, response, and parsed output';
+        artifactsEl.innerHTML = '<div class="empty">Select a turn to inspect memory, prompt, and response details only when you need them.</div>';
         return;
       }
 
@@ -4093,6 +4271,15 @@
           'Captured observation JSON',
           `${run.observation.cities ?? 0} cities · ${run.observation.units ?? 0} units`,
           renderJsonValue(run.observationData, openByDefault),
+          openByDefault,
+        ));
+      }
+
+      if (run.memoryData) {
+        sections.push(renderDebugSection(
+          'Memory carried into turn',
+          `${run.memory.cityIntents ?? 0} city intents · ${run.memory.unitAssignments ?? 0} unit assignments`,
+          renderJsonValue(run.memoryData, openByDefault),
           openByDefault,
         ));
       }
@@ -4130,6 +4317,34 @@
           'Decode error',
           renderMaybeExpandableText(detailValue(run.parseErrorEvent, 'error'), openByDefault),
           true,
+        ));
+      }
+
+      if (run.latestValidationContext) {
+        sections.push(renderDebugSection(
+          'Validation and retry context',
+          `${run.retryCount} retries · ${run.validationFailures.length} failures`,
+          renderJsonValue(run.latestValidationContext, openByDefault),
+          openByDefault,
+        ));
+      }
+
+      if (run.memoryAfter && (
+        run.memoryAfter.mode
+        || Number.isFinite(run.memoryAfter.cityIntents)
+        || Number.isFinite(run.memoryAfter.unitAssignments)
+        || Number.isFinite(run.memoryAfter.recentFailures)
+      )) {
+        sections.push(renderDebugSection(
+          'Memory after execution',
+          run.memoryAfter.mode ? String(run.memoryAfter.mode).replace(/_/g, ' ') : 'Turn outcome memory',
+          renderJsonValue({
+            strategicPosture: run.memoryAfter.mode ? { mode: run.memoryAfter.mode } : {},
+            cityIntents: run.memoryAfter.cityIntents,
+            unitAssignments: run.memoryAfter.unitAssignments,
+            recentFailures: run.memoryAfter.recentFailures,
+          }, openByDefault),
+          openByDefault,
         ));
       }
 

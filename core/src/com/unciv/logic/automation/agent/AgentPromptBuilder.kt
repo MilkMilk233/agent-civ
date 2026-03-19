@@ -9,10 +9,26 @@ object AgentPromptBuilder {
         explicitNulls = false
     }
 
+    fun memoryJson(memory: AgentMemory): String = json.encodeToString(memory)
     fun observationJson(observation: AgentObservation): String = json.encodeToString(observation)
+    fun planJson(plan: AgentActionPlan): String = json.encodeToString(plan)
+    fun retryContextJson(retryContext: AgentRetryContext): String = json.encodeToString(retryContext)
 
-    fun build(observation: AgentObservation): String {
+    fun build(memory: AgentMemory, observation: AgentObservation, retryContext: AgentRetryContext? = null): String {
+        val memoryJson = memoryJson(memory)
         val observationJson = observationJson(observation)
+        val retryBlock = retryContext?.let {
+            """
+            Retry context:
+            - This is retry attempt ${it.retryAttempt} of ${it.maxRetries}.
+            - The previous plan was rejected before real execution because some actions were invalid or failed in simulated execution.
+            - Fix the failed actions instead of repeating them unchanged.
+            Previous failed plan JSON:
+            ${planJson(it.previousPlan)}
+            Validation failures JSON:
+            ${retryContextJson(it)}
+            """.trimIndent()
+        } ?: ""
         return """
             You are an AI strategy planner for a turn-based 4X game.
             Produce JSON only, with no markdown or prose.
@@ -28,13 +44,20 @@ object AgentPromptBuilder {
               "notes": "optional"
             }
             Rules:
+            - Memory JSON captures current strategic intent carried over from earlier turns. It may be stale.
             - The observation is a curated current-turn brief, not a full save dump.
+            - Trust Observation JSON over Memory JSON if they conflict.
+            - Use Memory JSON to preserve continuity: keep strategicPosture consistent when still relevant, continue cityIntents and unitAssignments when the observation still supports them, and avoid repeating recentFailures.
             - Focus first on empireSummary, priorityFacts, citiesNeedingAttention, actionableUnits, visibleThreatsAndTargets, and opportunities.
             - Treat omittedSummary as a sign that quieter state exists, but only act through the entities explicitly listed in the observation.
             - Use only unit IDs, cities, action types, tiles, and constructions present in the observation.
             - Do not invent entities.
             - Prefer short, legal plans (0-25 commands).
-            - If uncertain, return an empty actions list and set handoffToLegacyAI=true.
+            - If the best move is to intentionally do nothing this turn, return an empty actions list with handoffToLegacyAI=false and explain why in notes.
+            - Use handoffToLegacyAI=true only when you want the legacy AI to take over the turn.
+            Memory JSON:
+            $memoryJson
+            ${if (retryBlock.isNotBlank()) "$retryBlock\n" else ""}
             Observation JSON:
             $observationJson
         """.trimIndent()

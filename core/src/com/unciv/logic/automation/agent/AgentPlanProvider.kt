@@ -4,7 +4,12 @@ import com.unciv.logic.civilization.Civilization
 import com.unciv.utils.Log
 
 interface AgentPlanProvider {
-    fun buildPlan(observation: AgentObservation, civInfo: Civilization): AgentActionPlan?
+    fun buildPlan(
+        memory: AgentMemory,
+        observation: AgentObservation,
+        civInfo: Civilization,
+        retryContext: AgentRetryContext? = null,
+    ): AgentActionPlan?
 }
 
 enum class LlmProvider {
@@ -75,5 +80,10 @@ object AgentPlanProviderFactory {
 }
 
 object NoopAgentPlanProvider : AgentPlanProvider {
-    override fun buildPlan(observation: AgentObservation, civInfo: Civilization): AgentActionPlan? = null
+    override fun buildPlan(
+        memory: AgentMemory,
+        observation: AgentObservation,
+        civInfo: Civilization,
+        retryContext: AgentRetryContext?,
+    ): AgentActionPlan? = null
 }
