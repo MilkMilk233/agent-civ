@@ -288,7 +288,7 @@ export default function App() {
         </aside>
 
         <section className="detail-pane">
-          {selectedTurn ? <TurnDetail turn={selectedTurn} /> : <EmptyState />}
+          {selectedTurn ? <TurnDetail turn={selectedTurn} allTurns={turns} matchSummary={selectedMatch} /> : <EmptyState />}
         </section>
       </section>
 
@@ -459,19 +459,46 @@ function LaunchModal({
   );
 }
 
-function TurnDetail({ turn }: { turn: TurnRecord }) {
+function TurnDetail({
+  turn,
+  allTurns,
+  matchSummary,
+}: {
+  turn: TurnRecord;
+  allTurns: TurnRecord[];
+  matchSummary: MatchSummary | null;
+}) {
   const observation = asRecord(turn.observation);
   const empireObservation = asRecord(turn.empireObservation);
   const plannerBrief = asRecord(turn.plannerBrief);
-  const roadmap = asRecord(turn.strategicRoadmap) ?? asRecord(turn.strategicPlan?.roadmap);
+  const strategistBrief = asRecord(turn.strategistBrief);
+  const roadmap = asRecord(turn.strategicRoadmap);
+  const strategicPlan = asRecord(turn.strategicPlan);
   const parsedPlan = asRecord(turn.parsedPlan);
   const empireSummary = asRecord(observation?.empireSummary);
   const doctrine = asRecord(plannerBrief?.doctrine);
   const criticalAlerts = objectArray(plannerBrief?.criticalAlerts ?? observation?.priorityFacts);
   const progressInMotion = objectArray(plannerBrief?.progressInMotion);
+  const strategistMacroFacts = objectArray(strategistBrief?.macroFacts);
+  const strategistRivalThreats = objectArray(strategistBrief?.rivalThreats ?? empireObservation?.victoryThreats);
+  const threatHighlights = objectArray(plannerBrief?.threatHighlights ?? observation?.visibleThreatsAndTargets);
+  const opportunityHighlights = objectArray(plannerBrief?.opportunityHighlights ?? observation?.opportunities);
   const cityHighlights = objectArray(plannerBrief?.cityHighlights ?? observation?.citiesNeedingAttention);
   const unitHighlights = objectArray(plannerBrief?.unitHighlights ?? observation?.actionableUnits);
+  const empireChoices = asRecord(plannerBrief?.empireChoices);
+  const suppressedContext = stringList(plannerBrief?.suppressedContext);
   const plannedActions = objectArray(parsedPlan?.actions);
+  const roadmapNotes = stringValue(strategicPlan?.notes);
+  const roadmapCreatedTurn = numberValue(roadmap?.createdTurn);
+  const roadmapLastReviewedTurn = numberValue(roadmap?.lastReviewedTurn);
+  const roadmapRefreshReason = stringValue(roadmap?.lastRefreshReason);
+  const roadmapSwitchTriggers = stringList(roadmap?.switchTriggers);
+  const turnMetrics = deriveTurnMetrics(turn);
+  const averageMetrics = deriveAverageMetrics(allTurns, matchSummary);
+  const strategistRefresh = latestEventDetails(turn.events, [
+    "strategist_refresh_requested_by_tactical",
+    "strategist_refresh_requested",
+  ]);
 
   return (
     <div className="detail-stack">
@@ -479,11 +506,47 @@ function TurnDetail({ turn }: { turn: TurnRecord }) {
         title={`${turn.civName} · Turn ${turn.turn}`}
         subtitle={turn.turnSummary?.notes || turn.synopsis}
       >
-        <div className="summary-grid">
-          <SummaryStat label="Status" value={turn.statusLabel} />
+        <div className="turn-summary-heading">
+          <div className="tag-list">
+            <StatusPill tone={turn.statusTone}>{turn.statusLabel}</StatusPill>
+            {turnMetrics.fallback ? <span className="tag warning">Fallback used</span> : null}
+            {turnMetrics.blocked ? <span className="tag warning">Blocked turn</span> : null}
+            {turnMetrics.retryCount > 0 ? <span className="tag neutral">{formatNumber(turnMetrics.retryCount)} retries</span> : null}
+          </div>
+          <p className="mini-note">
+            This card shows immediate turn health plus run-level averages so you can see whether the planner is stable or drifting.
+          </p>
+        </div>
+
+        <div className="summary-grid summary-grid-wide">
           <SummaryStat label="Latest event" value={formatRelative(turn.latestEpochMs)} />
-          <SummaryStat label="Planned actions" value={formatNumber(turn.turnSummary?.plannedActions ?? countActions(parsedPlan))} />
-          <SummaryStat label="Rejected actions" value={formatNumber(turn.turnSummary?.rejectedActions ?? countRejected(turn.validationFailures))} />
+          <SummaryStat
+            label="LLM time"
+            value={formatDurationMs(turnMetrics.totalLatencyMs)}
+            note={buildLatencyNote(turnMetrics.strategistLatencyMs, turnMetrics.tacticalLatencyMs)}
+          />
+          <SummaryStat
+            label="Planned actions"
+            value={formatNumber(turnMetrics.plannedActions)}
+            note={`${formatNumber(turnMetrics.executedActions)} executed`}
+          />
+          <SummaryStat
+            label="Rejected actions"
+            value={formatNumber(turnMetrics.rejectedActions)}
+            note={formatPercent(turnMetrics.rejectionRate)}
+          />
+          <SummaryStat label="This turn fallback" value={turnMetrics.fallback ? "100%" : "0%"} />
+          <SummaryStat label="This turn blocked" value={turnMetrics.blocked ? "100%" : "0%"} />
+          <SummaryStat label="Illegal action rate" value={formatPercent(turnMetrics.illegalActionRate)} />
+          <SummaryStat label="Avg LLM time" value={formatDurationMs(averageMetrics.avgLatencyMs)} />
+          <SummaryStat
+            label="Avg rejection rate"
+            value={formatPercent(averageMetrics.avgRejectionRate)}
+            note={`${formatNumber(averageMetrics.totalRejected)} rejected across ${formatNumber(averageMetrics.sampleTurns)} turns`}
+          />
+          <SummaryStat label="Avg fallback rate" value={formatPercent(averageMetrics.avgFallbackRate)} />
+          <SummaryStat label="Avg blocked rate" value={formatPercent(averageMetrics.avgBlockedRate)} />
+          <SummaryStat label="Avg illegal rate" value={formatPercent(averageMetrics.avgIllegalRate)} />
         </div>
       </Card>
 
@@ -496,14 +559,33 @@ function TurnDetail({ turn }: { turn: TurnRecord }) {
                 <SummaryStat label="Win path" value={stringValue(roadmap.winPath)} />
                 <SummaryStat label="Phase" value={stringValue(roadmap.phase)} />
                 <SummaryStat label="Review turn" value={formatNumber(numberValue(roadmap.reviewAfterTurn))} />
+                <SummaryStat label="Created" value={roadmapCreatedTurn === null ? "Unknown" : `Turn ${formatNumber(roadmapCreatedTurn)}`} />
+                <SummaryStat label="Last reviewed" value={roadmapLastReviewedTurn === null ? "Unknown" : `Turn ${formatNumber(roadmapLastReviewedTurn)}`} />
               </div>
               <p className="card-paragraph">{stringValue(roadmap.thesis) || "No roadmap thesis recorded."}</p>
+              {roadmapNotes ? <p className="mini-note">{roadmapNotes}</p> : null}
+              {roadmapRefreshReason || strategistRefresh ? (
+                <>
+                  <SectionLabel text="Refresh context" />
+                  <div className="tag-list">
+                    {roadmapRefreshReason ? <span className="tag accent">{roadmapRefreshReason}</span> : null}
+                    {stringValue(strategistRefresh?.urgency) ? (
+                      <StatusPill tone={toneFromUrgency(stringValue(strategistRefresh?.urgency))}>
+                        {stringValue(strategistRefresh?.urgency)}
+                      </StatusPill>
+                    ) : null}
+                    {stringValue(strategistRefresh?.reason) ? <span className="tag neutral">{stringValue(strategistRefresh?.reason)}</span> : null}
+                  </div>
+                </>
+              ) : null}
               <SectionLabel text="Mid-term goals" />
               <TagList values={stringList(roadmap.midTermGoals)} />
               <SectionLabel text="Must maintain" />
               <TagList values={stringList(roadmap.mustMaintain)} tone="accent" />
               <SectionLabel text="Watch-outs" />
               <TagList values={stringList(roadmap.watchOuts)} tone="warning" />
+              <SectionLabel text="Switch triggers" />
+              <TagList values={roadmapSwitchTriggers} />
             </>
           ) : (
             <p className="muted-text">No strategist roadmap was recorded for this turn.</p>
@@ -516,14 +598,18 @@ function TurnDetail({ turn }: { turn: TurnRecord }) {
               <div className="summary-grid compact">
                 <SummaryStat label="Archetype" value={stringValue(doctrine?.gameArchetype)} />
                 <SummaryStat label="Doctrine" value={stringValue(doctrine?.doctrine)} />
+                <SummaryStat label="Phase" value={stringValue(doctrine?.phase)} />
                 <SummaryStat label="Victory goal" value={stringValue(doctrine?.victoryGoal)} />
                 <SummaryStat label="Rival" value={stringValue(doctrine?.rivalCiv)} />
+                <SummaryStat label="Rival plan" value={stringValue(doctrine?.rivalVictoryGoal)} />
               </div>
               <p className="card-paragraph">{stringValue(doctrine?.thesis) || "No tactical thesis recorded."}</p>
               <SectionLabel text="Commitments" />
               <TagList values={stringList(doctrine?.commitments)} />
               <SectionLabel text="Watch-outs" />
               <TagList values={stringList(doctrine?.watchOuts)} tone="warning" />
+              <SectionLabel text="Suppressed context" />
+              <TagList values={suppressedContext} />
             </>
           ) : (
             <p className="muted-text">Planner brief missing from this turn.</p>
@@ -532,6 +618,13 @@ function TurnDetail({ turn }: { turn: TurnRecord }) {
       </div>
 
       <div className="panel-grid">
+        <StrategistContextSection
+          title="Strategist inputs"
+          brief={strategistBrief}
+          threats={strategistRivalThreats}
+          macroFacts={strategistMacroFacts}
+        />
+
         <Card title="Empire picture" subtitle="High-level state the strategist and tactical planner should keep in view.">
           {empireObservation ? (
             <div className="summary-grid compact">
@@ -546,21 +639,6 @@ function TurnDetail({ turn }: { turn: TurnRecord }) {
             <p className="muted-text">No empire observation captured.</p>
           )}
         </Card>
-
-        <Card title="Current board" subtitle="What mattered locally on this turn.">
-          {observation ? (
-            <div className="summary-grid compact">
-              <SummaryStat label="Cities" value={formatNumber(numberValue(empireSummary?.cityCount))} />
-              <SummaryStat label="Units" value={formatNumber(numberValue(empireSummary?.unitCount))} />
-              <SummaryStat label="Known civs" value={formatNumber(numberValue(empireSummary?.knownCivs))} />
-              <SummaryStat label="Priority facts" value={formatNumber(arrayLength(observation.priorityFacts))} />
-              <SummaryStat label="City highlights" value={formatNumber(arrayLength(observation.citiesNeedingAttention))} />
-              <SummaryStat label="Unit highlights" value={formatNumber(arrayLength(observation.actionableUnits))} />
-            </div>
-          ) : (
-            <p className="muted-text">No tactical observation captured.</p>
-          )}
-        </Card>
       </div>
 
       <div className="panel-grid">
@@ -569,8 +647,31 @@ function TurnDetail({ turn }: { turn: TurnRecord }) {
       </div>
 
       <div className="panel-grid">
+        <ThreatHighlightsSection title="Threat highlights" threats={threatHighlights} />
+        <ObservationFactSection title="Opportunity highlights" facts={opportunityHighlights} emptyText="No opportunity highlights were surfaced for this turn." />
+      </div>
+
+      <div className="panel-grid">
         <CityHighlightsSection title="City highlights" cities={cityHighlights} />
         <UnitHighlightsSection title="Unit highlights" units={unitHighlights} />
+      </div>
+
+      <div className="panel-grid">
+        <EmpireChoicesSection title="Empire choices" choices={empireChoices} />
+        <Card title="Current board" subtitle="What mattered locally on this turn.">
+          {observation ? (
+            <div className="summary-grid compact">
+              <SummaryStat label="Cities" value={formatNumber(numberValue(empireSummary?.cityCount))} />
+              <SummaryStat label="Units" value={formatNumber(numberValue(empireSummary?.unitCount))} />
+              <SummaryStat label="Known civs" value={formatNumber(numberValue(empireSummary?.knownCivs))} />
+              <SummaryStat label="Threats surfaced" value={formatNumber(arrayLength(observation.visibleThreatsAndTargets))} />
+              <SummaryStat label="City highlights" value={formatNumber(arrayLength(observation.citiesNeedingAttention))} />
+              <SummaryStat label="Unit highlights" value={formatNumber(arrayLength(observation.actionableUnits))} />
+            </div>
+          ) : (
+            <p className="muted-text">No tactical observation captured.</p>
+          )}
+        </Card>
       </div>
 
       <div className="panel-grid">
@@ -617,11 +718,22 @@ function Card({
   );
 }
 
-function SummaryStat({ label, value, subtle = false }: { label: string; value: string; subtle?: boolean }) {
+function SummaryStat({
+  label,
+  value,
+  note,
+  subtle = false,
+}: {
+  label: string;
+  value: string;
+  note?: string;
+  subtle?: boolean;
+}) {
   return (
     <div className={`summary-stat ${subtle ? "subtle" : ""}`}>
       <span>{label}</span>
       <strong>{value || "None"}</strong>
+      {note ? <small>{note}</small> : null}
     </div>
   );
 }
@@ -678,23 +790,235 @@ function AlertSection({ title, facts }: { title: string; facts: Record<string, u
   );
 }
 
-function ProgressSection({ title, items }: { title: string; items: Record<string, unknown>[] }) {
+function ProgressSection({
+  title,
+  items,
+  embedded = false,
+}: {
+  title: string;
+  items: Record<string, unknown>[];
+  embedded?: boolean;
+}) {
+  const content = items.length ? (
+    <div className="structured-list">
+      {items.map((item, index) => (
+        <article key={`${stringValue(item.label)}-${index}`} className="structured-item">
+          <div className="structured-item-header">
+            <strong>{stringValue(item.label) || "Unnamed progress item"}</strong>
+            <span className="tag neutral">{stringValue(item.category) || "progress"}</span>
+          </div>
+          <p className="card-paragraph">{stringValue(item.detail)}</p>
+        </article>
+      ))}
+    </div>
+  ) : (
+    <p className="muted-text">No in-flight progress was recorded for this turn.</p>
+  );
+
+  if (embedded) {
+    return (
+      <>
+        <SectionLabel text={title} />
+        {content}
+      </>
+    );
+  }
+
+  return <Card title={title}>{content}</Card>;
+}
+
+function StrategistContextSection({
+  title,
+  brief,
+  threats,
+  macroFacts,
+}: {
+  title: string;
+  brief: Record<string, unknown> | null;
+  threats: Record<string, unknown>[];
+  macroFacts: Record<string, unknown>[];
+}) {
+  const gameContext = asRecord(brief?.gameContext);
+  const empireSummary = asRecord(brief?.empireSummary);
+  const progressInMotion = objectArray(brief?.progressInMotion);
+  const recentFailures = stringList(brief?.recentFailures);
+  const enabledVictories = stringList(brief?.enabledVictoryTypes);
+
   return (
-    <Card title={title}>
-      {items.length ? (
+    <Card title={title} subtitle="Setup-aware strategist facts before the roadmap was chosen or refreshed.">
+      {brief ? (
+        <>
+          <div className="summary-grid compact">
+            <SummaryStat label="Map archetype" value={stringValue(gameContext?.archetype)} />
+            <SummaryStat label="Exploration value" value={stringValue(gameContext?.explorationValue)} />
+            <SummaryStat label="Expansion window" value={stringValue(gameContext?.expansionWindow)} />
+            <SummaryStat label="Current research" value={stringValue(brief.currentResearch)} />
+            <SummaryStat label="Research status" value={stringValue(brief.currentResearchStatus)} />
+            <SummaryStat label="Empire size" value={`${formatNumber(numberValue(empireSummary?.cityCount))} cities · ${formatNumber(numberValue(empireSummary?.unitCount))} units`} />
+          </div>
+
+          <SectionLabel text="Enabled victories" />
+          <TagList values={enabledVictories} tone="accent" />
+
+          <ThreatHighlightsSection title="Rival threats" threats={threats} embedded />
+          <ObservationFactSection title="Strategic facts" facts={macroFacts.slice(0, 6)} embedded emptyText="No strategist facts were recorded." />
+          <ProgressSection title="Strategist progress cues" items={progressInMotion.slice(0, 4)} embedded />
+
+          {recentFailures.length ? (
+            <>
+              <SectionLabel text="Recent failures to avoid" />
+              <TagList values={recentFailures} tone="warning" />
+            </>
+          ) : null}
+        </>
+      ) : (
+        <p className="muted-text">No strategist brief was captured for this turn.</p>
+      )}
+    </Card>
+  );
+}
+
+function ObservationFactSection({
+  title,
+  facts,
+  emptyText,
+  embedded = false,
+}: {
+  title: string;
+  facts: Record<string, unknown>[];
+  emptyText: string;
+  embedded?: boolean;
+}) {
+  const content = facts.length ? (
+    <div className="structured-list">
+      {facts.map((fact, index) => (
+        <article key={`${stringValue(fact.headline)}-${index}`} className="structured-item">
+          <div className="structured-item-header">
+            <strong>{stringValue(fact.headline) || "Untitled fact"}</strong>
+            <div className="tag-list compact">
+              {stringValue(fact.severity) ? (
+                <StatusPill tone={toneFromSeverity(stringValue(fact.severity))}>{stringValue(fact.severity)}</StatusPill>
+              ) : null}
+              {stringValue(fact.category) ? <span className="tag neutral">{stringValue(fact.category)}</span> : null}
+            </div>
+          </div>
+          <p className="card-paragraph">{stringValue(fact.detail)}</p>
+        </article>
+      ))}
+    </div>
+  ) : (
+    <p className="muted-text">{emptyText}</p>
+  );
+
+  if (embedded) {
+    return (
+      <>
+        <SectionLabel text={title} />
+        {content}
+      </>
+    );
+  }
+
+  return <Card title={title}>{content}</Card>;
+}
+
+function ThreatHighlightsSection({
+  title,
+  threats,
+  embedded = false,
+}: {
+  title: string;
+  threats: Record<string, unknown>[];
+  embedded?: boolean;
+}) {
+  const content = threats.length ? (
+    <div className="structured-list">
+      {threats.map((threat, index) => (
+        <article key={`${stringValue(threat.civName)}-${stringValue(threat.name)}-${index}`} className="structured-item">
+          <div className="structured-item-header">
+            <strong>{stringValue(threat.civName) || "Unknown rival"}</strong>
+            <div className="tag-list compact">
+              {stringValue(threat.threatLevel) ? (
+                <StatusPill tone={toneFromSeverity(stringValue(threat.threatLevel))}>
+                  {stringValue(threat.threatLevel)}
+                </StatusPill>
+              ) : null}
+              {stringValue(threat.likelyVictoryType) ? <span className="tag warning">{stringValue(threat.likelyVictoryType)}</span> : null}
+              {stringValue(threat.kind) ? <span className="tag warning">{stringValue(threat.kind)}</span> : null}
+              {stringValue(threat.focus) ? <span className="tag neutral">{stringValue(threat.focus)}</span> : null}
+              {stringValue(threat.relation) ? <span className="tag neutral">{stringValue(threat.relation)}</span> : null}
+            </div>
+          </div>
+          {hasThreatMetrics(threat) ? (
+            <div className="mini-metric-grid">
+              <MiniMetric label="Tech delta" value={signedNumberText(threat.technologyDeltaVsUs)} />
+              <MiniMetric label="Score delta" value={signedNumberText(threat.scoreDeltaVsUs)} />
+              <MiniMetric label="Force delta" value={signedNumberText(threat.forceDeltaVsUs)} />
+              <MiniMetric label="Milestones" value={`${formatNumber(numberValue(threat.completedMilestones) ?? 0)}/${formatNumber(numberValue(threat.totalMilestones) ?? 0)}`} />
+            </div>
+          ) : (
+            <div className="mini-metric-grid">
+              <MiniMetric label="Target" value={stringValue(threat.name) || "Unknown"} />
+              <MiniMetric label="Health" value={nullableNumberText(threat.health)} />
+              <MiniMetric label="Combat" value={nullableNumberText(threat.combatStrength)} />
+              <MiniMetric label="Distance" value={nullableNumberText(threat.distanceToClosestUnit)} />
+            </div>
+          )}
+          {stringValue(threat.nextMilestone) ? <p className="card-paragraph">Next milestone: {stringValue(threat.nextMilestone)}</p> : null}
+          <p className="card-paragraph">{stringValue(threat.detail) || stringList(threat.facts).join(" · ") || "No additional threat detail recorded."}</p>
+        </article>
+      ))}
+    </div>
+  ) : (
+    <p className="muted-text">No threat highlights were surfaced for this turn.</p>
+  );
+
+  if (embedded) {
+    return (
+      <>
+        <SectionLabel text={title} />
+        {content}
+      </>
+    );
+  }
+
+  return <Card title={title}>{content}</Card>;
+}
+
+function EmpireChoicesSection({
+  title,
+  choices,
+}: {
+  title: string;
+  choices: Record<string, unknown> | null;
+}) {
+  const sections = [
+    { label: "Research", items: objectArray(choices?.researchChoices) },
+    { label: "Policies", items: objectArray(choices?.policyChoices) },
+    { label: "Macro", items: objectArray(choices?.macroChoices) },
+    { label: "Diplomacy", items: objectArray(choices?.diplomacyChoices) },
+    { label: "Spies", items: objectArray(choices?.spyChoices) },
+  ].filter((section) => section.items.length);
+
+  return (
+    <Card title={title} subtitle="Empire-level options the tactical planner could choose from this turn.">
+      {sections.length ? (
         <div className="structured-list">
-          {items.map((item, index) => (
-            <article key={`${stringValue(item.label)}-${index}`} className="structured-item">
+          {sections.map((section) => (
+            <article key={section.label} className="structured-item">
               <div className="structured-item-header">
-                <strong>{stringValue(item.label) || "Unnamed progress item"}</strong>
-                <span className="tag neutral">{stringValue(item.category) || "progress"}</span>
+                <strong>{section.label}</strong>
+                <span className="tag neutral">{formatNumber(section.items.length)} surfaced</span>
               </div>
-              <p className="card-paragraph">{stringValue(item.detail)}</p>
+              <TagList
+                values={section.items.slice(0, 5).map((item) => stringValue(item.title)).filter(Boolean)}
+                tone="accent"
+              />
             </article>
           ))}
         </div>
       ) : (
-        <p className="muted-text">No in-flight progress was recorded for this turn.</p>
+        <p className="muted-text">No empire-level choices were surfaced in the tactical brief.</p>
       )}
     </Card>
   );
@@ -970,12 +1294,82 @@ function objectArray(value: unknown): Record<string, unknown>[] {
     : [];
 }
 
+function latestEventDetails(events: TurnRecord["events"], eventTypes: string[]): Record<string, unknown> | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (eventTypes.includes(events[index].type) && events[index].details) {
+      return events[index].details as Record<string, unknown>;
+    }
+  }
+  return null;
+}
+
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
 function numberValue(value: unknown): number | null {
   return typeof value === "number" ? value : null;
+}
+
+function deriveTurnMetrics(turn: TurnRecord) {
+  const summary = turn.turnSummary;
+  const tacticalLatencyMs = sumEventPairDurations(turn.events, "llm_request", "llm_response");
+  const strategistLatencyMs = sumEventPairDurations(turn.events, "strategist_llm_request", "strategist_llm_response");
+  const totalLatencyMs = (tacticalLatencyMs ?? 0) + (strategistLatencyMs ?? 0) || summary?.llmLatencyMs || 0;
+  const plannedActions = summary?.plannedActions ?? countActions(turn.parsedPlan);
+  const executedActions = summary?.executedActions ?? plannedActions;
+  const rejectedActions = summary?.rejectedActions ?? countRejected(turn.validationFailures);
+  const fallback = summary?.fallback ?? turn.statusLabel.toLowerCase().includes("fallback");
+  const blocked = summary?.blocked ?? turn.statusLabel.toLowerCase().includes("blocked");
+  const retryCount = countEvents(turn.events, "plan_validation_failed");
+  const rejectionDenominator = Math.max(1, executedActions + rejectedActions);
+
+  return {
+    plannedActions,
+    executedActions,
+    rejectedActions,
+    rejectionRate: rejectedActions / rejectionDenominator,
+    fallback,
+    blocked,
+    retryCount,
+    illegalActionRate: summary?.illegalActionRate ?? 0,
+    tacticalLatencyMs,
+    strategistLatencyMs,
+    totalLatencyMs: totalLatencyMs || null,
+  };
+}
+
+function deriveAverageMetrics(allTurns: TurnRecord[], matchSummary: MatchSummary | null) {
+  const turnMetrics = allTurns.map((turn) => deriveTurnMetrics(turn));
+  const sampleTurns = Math.max(1, turnMetrics.length);
+  const totalRejected = turnMetrics.reduce((sum, metrics) => sum + metrics.rejectedActions, 0);
+  const totalDecisionPoints = turnMetrics.reduce((sum, metrics) => sum + Math.max(1, metrics.executedActions + metrics.rejectedActions), 0);
+  const latencies = turnMetrics.map((metrics) => metrics.totalLatencyMs).filter((value): value is number => value !== null);
+  const fallbackCount = turnMetrics.filter((metrics) => metrics.fallback).length;
+  const blockedCount = turnMetrics.filter((metrics) => metrics.blocked).length;
+  const totalIllegalRate = turnMetrics.reduce((sum, metrics) => sum + metrics.illegalActionRate, 0);
+
+  return {
+    sampleTurns,
+    totalRejected,
+    avgRejectionRate: totalRejected / Math.max(1, totalDecisionPoints),
+    avgFallbackRate:
+      matchSummary && matchSummary.agentTurnCount > 0
+        ? matchSummary.fallbackTurns / matchSummary.agentTurnCount
+        : fallbackCount / sampleTurns,
+    avgBlockedRate:
+      matchSummary && matchSummary.agentTurnCount > 0
+        ? matchSummary.blockedTurns / matchSummary.agentTurnCount
+        : blockedCount / sampleTurns,
+    avgLatencyMs:
+      matchSummary?.avgInferenceLatencyMs && matchSummary.avgInferenceLatencyMs > 0
+        ? matchSummary.avgInferenceLatencyMs
+        : average(latencies),
+    avgIllegalRate:
+      matchSummary?.illegalActionRate && matchSummary.illegalActionRate > 0
+        ? matchSummary.illegalActionRate
+        : totalIllegalRate / sampleTurns,
+  };
 }
 
 function stringList(value: unknown): string[] {
@@ -994,6 +1388,31 @@ function countRejected(value: unknown): number {
   return Array.isArray(value) ? value.length : 0;
 }
 
+function countEvents(events: TurnRecord["events"], type: string): number {
+  return events.filter((event) => event.type === type).length;
+}
+
+function sumEventPairDurations(events: TurnRecord["events"], requestType: string, responseType: string): number | null {
+  let pendingRequestEpochMs: number | null = null;
+  let totalMs = 0;
+  let pairs = 0;
+
+  for (const event of events) {
+    if (event.type === requestType) {
+      pendingRequestEpochMs = event.epochMs;
+      continue;
+    }
+
+    if (event.type === responseType && pendingRequestEpochMs !== null) {
+      totalMs += Math.max(0, event.epochMs - pendingRequestEpochMs);
+      pendingRequestEpochMs = null;
+      pairs += 1;
+    }
+  }
+
+  return pairs ? totalMs : null;
+}
+
 function toneFromSeverity(severity: string): "success" | "warning" | "muted" {
   const normalized = severity.toLowerCase();
   if (normalized === "critical" || normalized === "warning") return "warning";
@@ -1001,9 +1420,56 @@ function toneFromSeverity(severity: string): "success" | "warning" | "muted" {
   return "muted";
 }
 
+function toneFromUrgency(urgency: string): "success" | "warning" | "muted" {
+  const normalized = urgency.toLowerCase();
+  if (normalized === "emergency") return "warning";
+  if (normalized === "scheduled") return "success";
+  return "muted";
+}
+
 function nullableNumberText(value: unknown): string {
   const number = numberValue(value);
   return number === null ? "—" : formatNumber(number);
+}
+
+function formatDurationMs(value: number | null): string {
+  if (value === null || value <= 0) return "—";
+  if (value < 1000) return `${formatNumber(Math.round(value))} ms`;
+  return `${(value / 1000).toFixed(1)} s`;
+}
+
+function formatPercent(value: number | null): string {
+  if (value === null || Number.isNaN(value)) return "—";
+  return `${(value * 100).toFixed(value >= 0.1 ? 0 : 1)}%`;
+}
+
+function buildLatencyNote(strategistLatencyMs: number | null, tacticalLatencyMs: number | null): string {
+  const strategist = formatDurationMs(strategistLatencyMs);
+  const tactical = formatDurationMs(tacticalLatencyMs);
+  if (strategist === "—" && tactical === "—") return "";
+  return `Strategist ${strategist} · Tactical ${tactical}`;
+}
+
+function signedNumberText(value: unknown): string {
+  const number = numberValue(value);
+  if (number === null) return "—";
+  if (number > 0) return `+${formatNumber(number)}`;
+  return formatNumber(number);
+}
+
+function average(values: number[]): number | null {
+  if (!values.length) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function hasThreatMetrics(threat: Record<string, unknown>): boolean {
+  return (
+    numberValue(threat.technologyDeltaVsUs) !== null ||
+    numberValue(threat.scoreDeltaVsUs) !== null ||
+    numberValue(threat.forceDeltaVsUs) !== null ||
+    numberValue(threat.completedMilestones) !== null ||
+    numberValue(threat.totalMilestones) !== null
+  );
 }
 
 function humanizeKey(value: string): string {

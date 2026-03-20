@@ -37,18 +37,23 @@ object AgentPlanProviderFactory {
         val baseUrl = System.getenv("UNCIV_LLM_BASE_URL")?.trim().orEmpty()
             .ifEmpty { MultiProviderAgentPlanProvider.defaultGatewayBaseUrl }
 
-        val model = System.getenv("UNCIV_LLM_MODEL")?.trim().orEmpty().ifEmpty {
+        val sharedModel = System.getenv("UNCIV_LLM_MODEL")?.trim().orEmpty().ifEmpty {
             if (provider == LlmProvider.Google) {
                 System.getenv("UNCIV_GEMINI_MODEL")?.trim().orEmpty()
             } else ""
         }
+        val strategistModel = System.getenv("UNCIV_LLM_STRATEGIST_MODEL")?.trim().orEmpty()
+            .ifEmpty { sharedModel }
+        val tacticalModel = System.getenv("UNCIV_LLM_TACTICAL_MODEL")?.trim().orEmpty()
+            .ifEmpty { sharedModel }
 
         if (apiKey.isNotEmpty()) {
             MultiProviderAgentPlanProvider(
                 apiKey = apiKey,
                 baseUrl = baseUrl,
                 provider = provider,
-                model = if (model.isNotEmpty()) model else MultiProviderAgentPlanProvider.defaultModel(provider),
+                strategistModel = if (strategistModel.isNotEmpty()) strategistModel else MultiProviderAgentPlanProvider.defaultModel(provider),
+                tacticalModel = if (tacticalModel.isNotEmpty()) tacticalModel else MultiProviderAgentPlanProvider.defaultModel(provider),
                 requestTimeoutMs = MultiProviderAgentPlanProvider.envLong(
                     "UNCIV_LLM_REQUEST_TIMEOUT_MS",
                     MultiProviderAgentPlanProvider.defaultRequestTimeoutMs,

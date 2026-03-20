@@ -1,17 +1,18 @@
 {
-  "name": "agent-vs-legacy-smoke",
+  "name": "short-loop-1",
   "games": 1,
-  "maxTurns": 40,
+  "maxTurns": 330,
   "seedStart": 2000,
-  "pairMatchesBySeed": true,
+  "pairMatchesBySeed": false,
   "saveFinalGames": false,
   "saveOnlyInterestingGames": false,
   "gameParameters": {
-    "difficulty": "King",
-    "speed": "Standard",
+    "baseRuleset": "Civ V - Gods & Kings",
+    "difficulty": "Settler",
+    "speed": "Quick",
     "numberOfCityStates": 0,
     "noBarbarians": true,
-    "maxTurns": 40,
+    "maxTurns": 330,
     "players": [
       {
         "chosenCiv": "Germany",

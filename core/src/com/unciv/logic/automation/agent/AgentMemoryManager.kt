@@ -273,27 +273,13 @@ object AgentMemoryManager {
                 turn = turn,
             )
         }
-        val primaryThreat = empireObservation.victoryThreats.firstOrNull()
-        val doctrineSnapshot = chooseDoctrine(posture, observation, empireObservation, turn)
-        val memo = buildStrategicMemo(doctrineSnapshot, observation, empireObservation)
-        val focusSource = posture.copy(doctrine = doctrineSnapshot.doctrine)
-        if (posture.mode.isNotBlank()) {
-            return posture.copy(
-                focus = buildStrategicFocus(focusSource, observation, empireObservation, null),
-                gameArchetype = empireObservation.gameContext.archetype,
-                doctrine = doctrineSnapshot.doctrine,
-                phase = doctrineSnapshot.phase,
-                victoryGoal = empireObservation.victoryGoal ?: posture.victoryGoal,
-                rivalCiv = primaryThreat?.civName ?: posture.rivalCiv,
-                rivalVictoryGoal = primaryThreat?.likelyVictoryType ?: posture.rivalVictoryGoal,
-                turnThesis = memo.thesis,
-                commitments = ArrayList(memo.commitments),
-                watchOuts = ArrayList(memo.watchOuts),
-                sinceTurn = posture.sinceTurn.takeIf { it > 0 } ?: turn,
-                lastUpdatedTurn = turn,
-            )
-        }
-        return deriveStrategicPosture(AgentMemory(strategicPosture = StrategicPostureMemory()), observation, empireObservation, null, turn)
+        return factualStrategicPosture(
+            previous = posture,
+            observation = observation,
+            empireObservation = empireObservation,
+            plan = null,
+            turn = turn,
+        )
     }
 
     private fun deriveStrategicPosture(
@@ -315,48 +301,12 @@ object AgentMemoryManager {
                 turn = turn,
             )
         }
-        val peacefulSnowballWindow = isPeacefulSnowballWindow(observation, turn)
-        val primaryThreat = empireObservation.victoryThreats.firstOrNull()
-        val lowContact = empireObservation.macroFacts.any { it.category == "contact" && it.severity in setOf("warning", "critical") }
-        val smallEmpireForRace = empireObservation.macroFacts.any { it.category == "expansion" && it.severity in setOf("warning", "critical") }
-        val weakMilitaryFloor = empireObservation.macroFacts.any { it.category == "war" && it.headline.contains("Military floor", ignoreCase = true) }
-        val goldTempoPressure = empireObservation.macroFacts.any { it.category == "economy" && it.headline.contains("gold reserve", ignoreCase = true) }
-        val victoryMode = victoryMode(empireObservation.victoryGoal, empireObservation.victoryFocus)
-        val mode = when {
-            peacefulSnowballWindow -> "peaceful_snowball"
-            observation.empireSummary.visibleHostileUnits > 0 ||
-                observation.citiesNeedingAttention.any { it.nearbyHostileUnits > 0 || it.nearbyHostileCities > 0 } -> "defend_and_stabilize"
-            lowContact -> "expand_contact_and_scout"
-            weakMilitaryFloor -> "build_military_floor"
-            smallEmpireForRace -> "expand_empire_for_victory"
-            goldTempoPressure -> "convert_gold_to_tempo"
-            primaryThreat?.threatLevel == "critical" -> "deny_rival_victory"
-            victoryMode != null -> victoryMode
-            observation.empireSummary.settlersReady > 0 ||
-                observation.opportunities.any { it.looksLikeSettlementOpportunity() } -> "expand_safely"
-            observation.empireSummary.workersReady > 0 &&
-                observation.opportunities.any { it.looksLikeImprovementOpportunity() } -> "improve_infrastructure"
-            observation.empireSummary.citiesNeedingProductionChoice > 0 -> "develop_cities"
-            else -> previous.mode.ifBlank { "stabilize_empire" }
-        }
-        val doctrineSnapshot = chooseDoctrine(previous, observation, empireObservation, turn)
-        val memo = buildStrategicMemo(doctrineSnapshot, observation, empireObservation)
-        val focusSource = previous.copy(doctrine = doctrineSnapshot.doctrine)
-
-        return StrategicPostureMemory(
-            mode = mode,
-            focus = buildStrategicFocus(focusSource, observation, empireObservation, plan),
-            gameArchetype = empireObservation.gameContext.archetype,
-            doctrine = doctrineSnapshot.doctrine,
-            phase = doctrineSnapshot.phase,
-            victoryGoal = empireObservation.victoryGoal ?: previous.victoryGoal,
-            rivalCiv = primaryThreat?.civName ?: previous.rivalCiv,
-            rivalVictoryGoal = primaryThreat?.likelyVictoryType ?: previous.rivalVictoryGoal,
-            turnThesis = memo.thesis,
-            commitments = ArrayList(memo.commitments),
-            watchOuts = ArrayList(memo.watchOuts),
-            sinceTurn = if (mode == previous.mode && previous.sinceTurn > 0) previous.sinceTurn else turn,
-            lastUpdatedTurn = turn,
+        return factualStrategicPosture(
+            previous = previous,
+            observation = observation,
+            empireObservation = empireObservation,
+            plan = plan,
+            turn = turn,
         )
     }
 
@@ -410,6 +360,53 @@ object AgentMemoryManager {
                     .take(3)
             ),
             sinceTurn = if (previous.doctrine == roadmap.doctrine && previous.sinceTurn > 0) previous.sinceTurn else turn,
+            lastUpdatedTurn = turn,
+        )
+    }
+
+    private fun factualStrategicPosture(
+        previous: StrategicPostureMemory,
+        observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+        plan: AgentActionPlan?,
+        turn: Int,
+    ): StrategicPostureMemory {
+        val primaryThreat = empireObservation.victoryThreats.firstOrNull()
+        val mode = when {
+            observation.empireSummary.visibleHostileUnits > 0 ||
+                observation.citiesNeedingAttention.any { it.nearbyHostileUnits > 0 || it.nearbyHostileCities > 0 } -> "defend_and_stabilize"
+            observation.empireSummary.settlersReady > 0 ||
+                observation.opportunities.any { it.looksLikeSettlementOpportunity() } -> "expand_safely"
+            observation.empireSummary.workersReady > 0 &&
+                observation.opportunities.any { it.looksLikeImprovementOpportunity() } -> "improve_infrastructure"
+            observation.empireSummary.citiesNeedingProductionChoice > 0 -> "develop_cities"
+            previous.mode.isNotBlank() -> previous.mode
+            else -> "observe_and_plan"
+        }
+        val focusSource = previous.copy(
+            doctrine = null,
+            victoryGoal = null,
+            turnThesis = null,
+            commitments = arrayListOf(),
+            watchOuts = arrayListOf(),
+        )
+        return StrategicPostureMemory(
+            mode = mode,
+            focus = buildStrategicFocus(focusSource, observation, empireObservation, plan),
+            gameArchetype = empireObservation.gameContext.archetype,
+            doctrine = null,
+            phase = previous.phase.takeIf { it.isNotBlank() } ?: "",
+            victoryGoal = null,
+            rivalCiv = primaryThreat?.civName ?: previous.rivalCiv,
+            rivalVictoryGoal = primaryThreat?.likelyVictoryType ?: previous.rivalVictoryGoal,
+            turnThesis = null,
+            commitments = arrayListOf(),
+            watchOuts = ArrayList(
+                listOfNotNull(
+                    primaryThreat?.takeIf { it.threatLevel == "critical" }?.let { "${it.civName} is an urgent rival." },
+                ).take(3),
+            ),
+            sinceTurn = if (mode == previous.mode && previous.sinceTurn > 0) previous.sinceTurn else turn,
             lastUpdatedTurn = turn,
         )
     }

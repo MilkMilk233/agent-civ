@@ -58,8 +58,8 @@ object AgentEmpireObservationBuilder {
         val roadmap = memory.strategicRoadmap.takeIf { it.doctrine.isNotBlank() }
         val victoryPlan = chooseVictoryPlan(civInfo, enabledVictories, preferredVictoryTypes)
         val victoryThreats = buildVictoryThreats(civInfo, enabledVictories, victoryPlan)
-        val displayedVictoryGoal = roadmap?.winPath ?: victoryPlan?.victory?.name
-        val displayedVictoryFocus = roadmap?.winPath?.let(::defaultFocusForRoadmapWinPath) ?: victoryPlan?.focus?.name
+        val displayedVictoryGoal = roadmap?.winPath
+        val displayedVictoryFocus = roadmap?.winPath?.let(::defaultFocusForRoadmapWinPath)
 
         val observation = AgentEmpireObservation(
             turn = civInfo.gameInfo.turns,
@@ -564,17 +564,6 @@ object AgentEmpireObservationBuilder {
                 severity = "info",
                 headline = "Current strategist roadmap: ${roadmap.winPath ?: roadmap.doctrine}",
                 detail = roadmap.thesis ?: "Follow the current roadmap unless the board creates an emergency that justifies a strategic refresh.",
-            )
-        } else if (victoryPlan != null) {
-            facts += ObservationFact(
-                category = "victory",
-                severity = "info",
-                headline = "Current best victory path: ${victoryPlan.victory.name}",
-                detail = buildString {
-                    append("Focus ${victoryPlan.focus.name.lowercase()}")
-                    append(", progress ${victoryPlan.completedMilestones}/${victoryPlan.totalMilestones}")
-                    victoryPlan.nextMilestone?.let { append(", next milestone: ${it.uniqueDescription}") }
-                },
             )
         }
         victoryThreats.firstOrNull()?.let { threat ->

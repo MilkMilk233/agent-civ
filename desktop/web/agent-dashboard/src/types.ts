@@ -148,6 +148,7 @@ export interface TurnRecord {
   empireObservation: unknown | null;
   memory: unknown | null;
   plannerBrief: unknown | null;
+  strategistBrief: unknown | null;
   strategicRoadmap: unknown | null;
   parsedPlan: Record<string, unknown> | null;
   strategicPlan: Record<string, unknown> | null;

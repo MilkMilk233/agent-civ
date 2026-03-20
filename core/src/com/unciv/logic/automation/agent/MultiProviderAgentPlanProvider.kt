@@ -34,7 +34,8 @@ class MultiProviderAgentPlanProvider(
     private val apiKey: String,
     private val baseUrl: String,
     private val provider: LlmProvider,
-    private val model: String,
+    private val strategistModel: String,
+    private val tacticalModel: String,
     private val requestTimeoutMs: Long,
     private val connectTimeoutMs: Long,
     private val socketTimeoutMs: Long,
@@ -81,7 +82,7 @@ class MultiProviderAgentPlanProvider(
             turn = civInfo.gameInfo.turns,
             details = mapOf(
                 "provider" to provider.name,
-                "model" to model,
+                "model" to strategistModel,
                 "baseUrl" to baseUrl,
                 "requestTimeoutMs" to requestTimeoutMs.toString(),
                 "connectTimeoutMs" to connectTimeoutMs.toString(),
@@ -106,7 +107,7 @@ class MultiProviderAgentPlanProvider(
             turn = civInfo.gameInfo.turns,
             details = mapOf(
                 "provider" to provider.name,
-                "model" to model,
+                "model" to strategistModel,
                 "rawResponse" to planText,
             ),
         )
@@ -163,7 +164,7 @@ class MultiProviderAgentPlanProvider(
             turn = civInfo.gameInfo.turns,
             details = mapOf(
                 "provider" to provider.name,
-                "model" to model,
+                "model" to tacticalModel,
                 "baseUrl" to baseUrl,
                 "requestTimeoutMs" to requestTimeoutMs.toString(),
                 "connectTimeoutMs" to connectTimeoutMs.toString(),
@@ -189,7 +190,7 @@ class MultiProviderAgentPlanProvider(
             turn = civInfo.gameInfo.turns,
             details = mapOf(
                 "provider" to provider.name,
-                "model" to model,
+                "model" to tacticalModel,
                 "rawResponse" to planText,
             ),
         )
@@ -243,6 +244,7 @@ class MultiProviderAgentPlanProvider(
 
     private suspend fun requestOpenAiCompatible(prompt: String, civName: String, turn: Int, eventPrefix: String = ""): String? {
         val url = "${baseUrl.normalizedBase()}/v1/chat/completions"
+        val model = resolveModelForRequest(eventPrefix)
         val payload = buildJsonObject {
             put("model", JsonPrimitive(model))
             put("temperature", JsonPrimitive(0.2))
@@ -270,6 +272,7 @@ class MultiProviderAgentPlanProvider(
 
     private suspend fun requestAnthropicDirect(prompt: String, civName: String, turn: Int, eventPrefix: String = ""): String? {
         val url = "${baseUrl.normalizedBase()}/v1/messages"
+        val model = resolveModelForRequest(eventPrefix)
         val payload = buildJsonObject {
             put("model", JsonPrimitive(model))
             put("max_tokens", JsonPrimitive(1500))
@@ -309,6 +312,7 @@ class MultiProviderAgentPlanProvider(
     }
 
     private suspend fun requestGoogleDirect(prompt: String, civName: String, turn: Int, eventPrefix: String = ""): String? {
+        val model = resolveModelForRequest(eventPrefix)
         val url = "${baseUrl.normalizedBase()}/v1beta/models/$model:generateContent?key=$apiKey"
         val payload = buildJsonObject {
             put("contents", buildJsonArray {
@@ -395,7 +399,7 @@ class MultiProviderAgentPlanProvider(
                         "status" to response.status.toString(),
                         "url" to url,
                         "provider" to provider.name,
-                        "model" to model,
+                        "model" to resolveModelForRequest(eventPrefix),
                         "attempts" to attemptsUsed.toString(),
                         "requestTimeoutMs" to requestTimeoutMs.toString(),
                         "connectTimeoutMs" to connectTimeoutMs.toString(),
@@ -433,7 +437,7 @@ class MultiProviderAgentPlanProvider(
             details = mapOf(
                 "url" to url,
                 "provider" to provider.name,
-                "model" to model,
+                "model" to resolveModelForRequest(eventPrefix),
                 "attempts" to attemptsUsed.toString(),
                 "requestTimeoutMs" to requestTimeoutMs.toString(),
                 "connectTimeoutMs" to connectTimeoutMs.toString(),
@@ -455,6 +459,10 @@ class MultiProviderAgentPlanProvider(
     }
 
     private fun String.normalizedBase(): String = trim().trimEnd('/')
+
+    private fun resolveModelForRequest(eventPrefix: String): String {
+        return if (eventPrefix.startsWith("strategist")) strategistModel else tacticalModel
+    }
 
     private fun isGatewayBaseUrl(url: String): Boolean {
         val normalized = url.normalizedBase().lowercase()

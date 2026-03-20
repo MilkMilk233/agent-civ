@@ -45,15 +45,14 @@ object AgentStrategistGovernor {
             refreshRequest = refreshRequest,
             gameContext = empireObservation.gameContext,
             enabledVictoryTypes = empireObservation.enabledVictoryTypes,
-            preferredVictoryTypes = empireObservation.preferredVictoryTypes,
             empireSummary = observation.empireSummary,
-            heuristicVictoryGoal = empireObservation.heuristicVictoryGoal ?: empireObservation.victoryGoal,
-            heuristicVictoryFocus = empireObservation.heuristicVictoryFocus ?: empireObservation.victoryFocus,
             currentResearch = empireObservation.currentResearch,
             currentResearchStatus = empireObservation.currentResearchStatus,
             currentRoadmap = memory.strategicRoadmap.takeIf { it.doctrine.isNotBlank() },
             rivalThreats = empireObservation.victoryThreats.take(2),
-            macroFacts = empireObservation.macroFacts.take(6),
+            macroFacts = empireObservation.macroFacts
+                .filterNot { it.category == "victory" && it.headline.startsWith("Current best victory path:", ignoreCase = true) }
+                .take(6),
             progressInMotion = progressInMotion,
             citySnapshots = citySnapshots,
             unitSnapshots = unitSnapshots,

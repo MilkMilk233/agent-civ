@@ -82,6 +82,7 @@ export function deriveTurns(events: ObservabilityEvent[], turnSummaries: TurnSum
       const turnStart = latestEventOfType(group, "turn_start");
       const planParsed = latestEventOfType(group, "llm_plan_parsed");
       const strategistParsed = latestEventOfType(group, "strategist_llm_plan_parsed");
+      const strategistRequest = latestEventOfType(group, "strategist_llm_request");
       const planApplied = latestEventOfType(group, "plan_applied");
       const validationFailed = latestEventOfType(group, "plan_validation_failed");
       const roadmapApplied = latestEventOfType(group, "strategist_roadmap_applied");
@@ -102,10 +103,10 @@ export function deriveTurns(events: ObservabilityEvent[], turnSummaries: TurnSum
         plannerBrief:
           parseJsonValue(details.plannerBriefJson) ??
           parseJsonValue(latestEventOfType(group, "llm_request")?.details?.plannerBriefJson),
+        strategistBrief: parseJsonValue(strategistRequest?.details?.strategistBriefJson),
         strategicRoadmap:
           parseJsonValue(details.strategicRoadmapJson) ??
-          parseJsonValue(roadmapApplied?.details?.roadmapJson) ??
-          parseJsonValue(strategyPlanOrNull(strategistParsed?.details?.parsedPlan)?.roadmapJson),
+          parseJsonValue(roadmapApplied?.details?.roadmapJson),
         parsedPlan: parseJsonValue(planParsed?.details?.parsedPlan),
         strategicPlan: parseJsonValue(strategistParsed?.details?.parsedPlan),
         plannedDomainCounts: parseJsonValue(planApplied?.details?.plannedDomainCountsJson),
@@ -122,8 +123,4 @@ export function deriveTurns(events: ObservabilityEvent[], turnSummaries: TurnSum
       if (left.turn !== right.turn) return right.turn - left.turn;
       return right.latestEpochMs - left.latestEpochMs;
     });
-}
-
-function strategyPlanOrNull(raw: string | undefined): { roadmapJson?: string } | null {
-  return parseJsonValue<{ roadmapJson?: string }>(raw);
 }
