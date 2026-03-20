@@ -156,6 +156,25 @@ class ConstructionAutomation(val cityConstructions: CityConstructions) {
         )
     }
 
+    fun getRankedConstructionChoices(limit: Int = 5): List<IConstruction> {
+        relativeCostEffectiveness.clear()
+
+        addBuildingChoices()
+
+        if (!city.isPuppet) {
+            addSpaceshipPartChoice()
+            addWorkerChoice()
+            addWorkBoatChoice()
+            addMilitaryUnitChoice()
+        }
+
+        return relativeCostEffectiveness
+            .sortedByDescending { (it.choiceModifier / it.remainingWork.coerceAtLeast(1)).coerceAtLeast(0f) }
+            .map { it.choice }
+            .distinctBy { it.name }
+            .take(limit)
+    }
+
     private fun addMilitaryUnitChoice() {
         if (!isAtWar && !cityIsOverAverageProduction) return // don't make any military units here. Infrastructure first!
         // There is a risk however, that these cities run out of things to build, and start to construct nothing

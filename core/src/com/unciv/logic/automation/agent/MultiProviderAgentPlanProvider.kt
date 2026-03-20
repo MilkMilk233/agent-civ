@@ -67,11 +67,12 @@ class MultiProviderAgentPlanProvider(
     override fun buildPlan(
         memory: AgentMemory,
         observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
         civInfo: Civilization,
         retryContext: AgentRetryContext?,
     ): AgentActionPlan? = runBlocking {
         throwIfCancelled()
-        val prompt = AgentPromptBuilder.build(memory, observation, retryContext)
+        val prompt = AgentPromptBuilder.build(memory, observation, empireObservation, retryContext)
         AgentObservability.record(
             type = "llm_request",
             message = "Sending prompt to LLM provider",
@@ -86,6 +87,7 @@ class MultiProviderAgentPlanProvider(
                 "socketTimeoutMs" to socketTimeoutMs.toString(),
                 "maxAttempts" to maxAttempts.toString(),
                 "memoryJson" to AgentPromptBuilder.memoryJson(memory),
+                "empireObservationJson" to AgentPromptBuilder.empireObservationJson(empireObservation),
                 "retryAttempt" to (retryContext?.retryAttempt?.toString() ?: "0"),
                 "retryMax" to (retryContext?.maxRetries?.toString() ?: "0"),
                 "retryContextJson" to (retryContext?.let { AgentPromptBuilder.retryContextJson(it) } ?: ""),
@@ -146,7 +148,7 @@ class MultiProviderAgentPlanProvider(
         }
     }
 
-    private suspend fun requestOpenAiCompatible(prompt: String, civName: String, turn: Int): String? {
+    private suspend fun requestOpenAiCompatible(prompt: String, civName: String, turn: Int, eventPrefix: String = ""): String? {
         val url = "${baseUrl.normalizedBase()}/v1/chat/completions"
         val payload = buildJsonObject {
             put("model", JsonPrimitive(model))
@@ -160,7 +162,7 @@ class MultiProviderAgentPlanProvider(
             })
         }
 
-        val responseJson = postJson(url, payload, civName = civName, turn = turn) ?: return null
+        val responseJson = postJson(url, payload, civName = civName, turn = turn, eventPrefix = eventPrefix) ?: return null
         val contentElement = responseJson["choices"]
             ?.jsonArray
             ?.firstOrNull()
@@ -173,7 +175,7 @@ class MultiProviderAgentPlanProvider(
         return contentElement.toContentString().trim().ifEmpty { null }
     }
 
-    private suspend fun requestAnthropicDirect(prompt: String, civName: String, turn: Int): String? {
+    private suspend fun requestAnthropicDirect(prompt: String, civName: String, turn: Int, eventPrefix: String = ""): String? {
         val url = "${baseUrl.normalizedBase()}/v1/messages"
         val payload = buildJsonObject {
             put("model", JsonPrimitive(model))
@@ -199,6 +201,7 @@ class MultiProviderAgentPlanProvider(
             useBearerToken = false,
             civName = civName,
             turn = turn,
+            eventPrefix = eventPrefix,
         ) ?: return null
 
         return responseJson["content"]
@@ -212,7 +215,7 @@ class MultiProviderAgentPlanProvider(
             ?.ifEmpty { null }
     }
 
-    private suspend fun requestGoogleDirect(prompt: String, civName: String, turn: Int): String? {
+    private suspend fun requestGoogleDirect(prompt: String, civName: String, turn: Int, eventPrefix: String = ""): String? {
         val url = "${baseUrl.normalizedBase()}/v1beta/models/$model:generateContent?key=$apiKey"
         val payload = buildJsonObject {
             put("contents", buildJsonArray {
@@ -230,7 +233,7 @@ class MultiProviderAgentPlanProvider(
             })
         }
 
-        val responseJson = postJson(url, payload, useBearerToken = false, civName = civName, turn = turn) ?: return null
+        val responseJson = postJson(url, payload, useBearerToken = false, civName = civName, turn = turn, eventPrefix = eventPrefix) ?: return null
         return responseJson["candidates"]
             ?.jsonArray
             ?.firstOrNull()
@@ -255,6 +258,7 @@ class MultiProviderAgentPlanProvider(
         useBearerToken: Boolean = true,
         civName: String? = null,
         turn: Int? = null,
+        eventPrefix: String = "",
     ): JsonObject? {
         var lastException: Exception? = null
         var attemptsUsed = 0
@@ -290,7 +294,7 @@ class MultiProviderAgentPlanProvider(
 
                 Log.debug("AI (agent): provider returned %s, url=%s", response.status, url)
                 AgentObservability.record(
-                    type = "llm_http_error",
+                    type = eventType(eventPrefix, "llm_http_error"),
                     message = "Provider returned non-200 status",
                     civName = civName,
                     turn = turn,
@@ -329,7 +333,7 @@ class MultiProviderAgentPlanProvider(
         Log.debug("AI (agent): provider request failed, url=%s", url)
         Log.debug("AI (agent): provider exception", ex)
         AgentObservability.record(
-            type = "llm_request_error",
+            type = eventType(eventPrefix, "llm_request_error"),
             message = "Provider request failed",
             civName = civName,
             turn = turn,
@@ -399,5 +403,9 @@ class MultiProviderAgentPlanProvider(
 
         fun envInt(name: String, default: Int): Int =
             System.getenv(name)?.trim()?.toIntOrNull()?.takeIf { it > 0 } ?: default
+    }
+
+    private fun eventType(prefix: String, baseType: String): String {
+        return if (prefix.isBlank()) baseType else "${prefix}_${baseType}"
     }
 }

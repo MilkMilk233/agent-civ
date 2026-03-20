@@ -1,6 +1,7 @@
 package com.unciv.logic.automation.agent
 
 import com.unciv.logic.automation.unit.CityLocationTileRanker
+import com.unciv.logic.automation.city.ConstructionAutomation
 import com.unciv.logic.battle.CityCombatant
 import com.unciv.logic.city.City
 import com.unciv.logic.civilization.Civilization
@@ -31,6 +32,7 @@ object AgentObservationBuilder {
             .sortedBy { it.id }
             .toList()
         val visibleTargetCandidates = buildVisibleTargetCandidates(civInfo, allUnits)
+        val cityOptionContext = AgentCityOptionBuilder.build(civInfo)
         val cityCandidates = civInfo.cities
             .sortedWith(compareBy<City> { it.name }.thenBy { it.location.toString() })
             .map { buildCityCandidate(it, civInfo, visibleTargetCandidates) }
@@ -54,15 +56,19 @@ object AgentObservationBuilder {
                 isCoastal = candidate.city.isCoastal(),
                 isPuppet = candidate.city.isPuppet,
                 isGarrisoned = candidate.city.isGarrisoned(),
+                cityFocus = candidate.city.getCityFocus().name,
                 nearbyHostileUnits = candidate.nearbyHostileUnits,
                 nearbyHostileCities = candidate.nearbyHostileCities,
                 reasons = candidate.reasons,
                 localFacts = candidate.localFacts,
+                cityOptionCandidates = cityOptionContext.observationsByCityKey["${candidate.city.location.x},${candidate.city.location.y}"]
+                    ?: emptyList(),
             )
         }
 
         val unitCandidates = allUnits.map { buildUnitCandidate(it, civInfo, visibleTargetCandidates) }
         val selectedUnitCandidates = selectUnitCandidates(unitCandidates)
+        val unitOptionContext = AgentUnitOptionBuilder.build(civInfo)
         val selectedUnits = selectedUnitCandidates.map { candidate ->
             val unit = candidate.unit
             val availableActions = collectAvailableUnitActions(unit)
@@ -88,6 +94,7 @@ object AgentObservationBuilder {
                     role = candidate.role,
                     availableActions = availableActions,
                 ),
+                unitOptionCandidates = unitOptionContext.observationsByUnitId[unit.id] ?: emptyList(),
                 reachableTiles = buildReachableTiles(unit),
                 nearbyHostileUnits = candidate.nearbyHostileUnits,
                 nearbyHostileCities = candidate.nearbyHostileCities,
@@ -688,8 +695,12 @@ object AgentObservationBuilder {
     }
 
     private fun buildConstructionOptions(city: City): List<String> {
+        val ranked = ConstructionAutomation(city.cityConstructions)
+            .getRankedConstructionChoices(limit = maxConstructionsPerCity)
+            .map { it.name }
+            .toMutableList()
         val cityConstructions = city.cityConstructions
-        return (
+        val fallbacks = (
             cityConstructions.getBuildableBuildings().map { it.name } +
                 cityConstructions.getConstructableUnits().map { it.name } +
                 PerpetualConstruction.perpetualConstructionsMap.values.asSequence()
@@ -698,8 +709,11 @@ object AgentObservationBuilder {
             )
             .distinct()
             .sorted()
-            .take(maxConstructionsPerCity)
-            .toList()
+        for (name in fallbacks) {
+            if (ranked.size >= maxConstructionsPerCity) break
+            if (name !in ranked) ranked += name
+        }
+        return ranked.take(maxConstructionsPerCity)
     }
 
     private fun collectAvailableUnitActions(unit: MapUnit): List<UnitAction> {

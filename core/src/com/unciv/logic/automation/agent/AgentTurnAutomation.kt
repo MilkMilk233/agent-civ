@@ -18,7 +18,11 @@ object AgentTurnAutomation {
         val observation = AgentObservationBuilder.build(civInfo)
         val memory = AgentMemoryManager.prepareForTurn(civInfo, observation)
         val observationJson = AgentPromptBuilder.observationJson(observation)
+        val empireObservation = AgentEmpireObservationBuilder.build(civInfo, memory).observation
+        val empireObservationJson = AgentPromptBuilder.empireObservationJson(empireObservation)
         val memoryJson = AgentMemoryManager.memoryJson(memory)
+        val supportSnapshot = AgentTurnDiagnostics.supportSnapshot(observation, empireObservation)
+        val supportSnapshotJson = AgentTurnDiagnostics.supportSnapshotJson(supportSnapshot)
         AgentObservability.record(
             type = "turn_start",
             message = "Built observation for AI agent turn",
@@ -46,6 +50,13 @@ object AgentTurnAutomation {
                 "memoryRecentFailures" to memory.recentFailures.size.toString(),
                 "memoryJson" to memoryJson,
                 "observationJson" to observationJson,
+                "empireObservationJson" to empireObservationJson,
+                "domainSupportJson" to supportSnapshotJson,
+                "empireResearchCandidates" to empireObservation.researchCandidates.size.toString(),
+                "empirePolicyCandidates" to empireObservation.policyCandidates.size.toString(),
+                "empireMacroCandidates" to empireObservation.macroCandidates.size.toString(),
+                "empireDiplomacyCandidates" to empireObservation.diplomacyCandidates.size.toString(),
+                "empireSpyCandidates" to empireObservation.spyCandidates.size.toString(),
             ),
         )
         var retryContext: AgentRetryContext? = null
@@ -56,7 +67,7 @@ object AgentTurnAutomation {
 
         while (planningAttempts < maxPlanningAttemptsPerTurn) {
             planningAttempts += 1
-            val plan = AgentPlanProviderFactory.provider.buildPlan(memory, observation, civInfo, retryContext)
+            val plan = AgentPlanProviderFactory.provider.buildPlan(memory, observation, empireObservation, civInfo, retryContext)
             if (plan == null) {
                 fallbackReason = "No plan produced"
                 break
@@ -86,6 +97,9 @@ object AgentTurnAutomation {
                             "attempt" to planningAttempts.toString(),
                             "maxAttempts" to maxPlanningAttemptsPerTurn.toString(),
                             "failedPlanJson" to AgentPromptBuilder.planJson(plan),
+                            "plannedDomainCountsJson" to AgentTurnDiagnostics.plannedDomainCountsJson(plan),
+                            "affectedDomains" to AgentTurnDiagnostics.affectedDomainsCsv(validation.outcomes),
+                            "outcomeDomainSummaryJson" to AgentTurnDiagnostics.outcomeSummaryJson(validation.outcomes),
                             "validationFailuresJson" to AgentPromptBuilder.retryContextJson(
                                 AgentRetryContextFactory.fromValidation(
                                     plan = plan,
@@ -119,6 +133,7 @@ object AgentTurnAutomation {
                             "attempt" to planningAttempts.toString(),
                             "nextAttempt" to (planningAttempts + 1).toString(),
                             "maxAttempts" to maxPlanningAttemptsPerTurn.toString(),
+                            "plannedDomainCountsJson" to AgentTurnDiagnostics.plannedDomainCountsJson(plan),
                             "retryContextJson" to AgentPromptBuilder.retryContextJson(retryContext),
                         ),
                     )
@@ -145,10 +160,9 @@ object AgentTurnAutomation {
                 details = mapOf(
                     "planningAttempts" to planningAttempts.toString(),
                     "fallbackReason" to (fallbackReason ?: "No plan produced"),
-                    "memoryMode" to updatedMemory.strategicPosture.mode,
-                    "memoryCityIntents" to updatedMemory.cityIntents.size.toString(),
-                    "memoryUnitAssignments" to updatedMemory.unitAssignments.size.toString(),
-                    "memoryRecentFailures" to updatedMemory.recentFailures.size.toString(),
+                ) + memoryDetails(updatedMemory) + domainDetails(
+                    supportSnapshotJson = supportSnapshotJson,
+                    plan = null,
                 ),
             )
             NextTurnAutomation.automateCivMoves(civInfo)
@@ -177,10 +191,9 @@ object AgentTurnAutomation {
                     "handoffToLegacyAI" to "true",
                     "plannedActions" to selectedPlan.actions.size.toString(),
                     "fallbackReason" to (fallbackReason ?: "Planner requested legacy handoff"),
-                    "memoryMode" to updatedMemory.strategicPosture.mode,
-                    "memoryCityIntents" to updatedMemory.cityIntents.size.toString(),
-                    "memoryUnitAssignments" to updatedMemory.unitAssignments.size.toString(),
-                    "memoryRecentFailures" to updatedMemory.recentFailures.size.toString(),
+                ) + memoryDetails(updatedMemory) + domainDetails(
+                    supportSnapshotJson = supportSnapshotJson,
+                    plan = selectedPlan,
                 ),
             )
             NextTurnAutomation.automateCivMoves(civInfo)
@@ -209,10 +222,9 @@ object AgentTurnAutomation {
                     "rejectedActions" to "0",
                     "plannedActions" to selectedPlan.actions.size.toString(),
                     "fallbackReason" to "Plan validation did not complete",
-                    "memoryMode" to updatedMemory.strategicPosture.mode,
-                    "memoryCityIntents" to updatedMemory.cityIntents.size.toString(),
-                    "memoryUnitAssignments" to updatedMemory.unitAssignments.size.toString(),
-                    "memoryRecentFailures" to updatedMemory.recentFailures.size.toString(),
+                ) + memoryDetails(updatedMemory) + domainDetails(
+                    supportSnapshotJson = supportSnapshotJson,
+                    plan = selectedPlan,
                 ),
             )
             NextTurnAutomation.automateCivMoves(civInfo)
@@ -241,6 +253,7 @@ object AgentTurnAutomation {
                     "rejectedActions" to validation.rejectedActionsPreview.toString(),
                     "plannedActions" to selectedPlan.actions.size.toString(),
                     "fallbackReason" to (fallbackReason ?: "Plan remained invalid after retries"),
+                    "fallbackScope" to AgentTurnDiagnostics.affectedDomainsCsv(validation.rejectedOutcomes),
                     "validationFailuresJson" to AgentPromptBuilder.retryContextJson(
                         AgentRetryContextFactory.fromValidation(
                             plan = selectedPlan,
@@ -249,10 +262,10 @@ object AgentTurnAutomation {
                             maxRetries = maxPlanningAttemptsPerTurn - 1,
                         )
                     ),
-                    "memoryMode" to updatedMemory.strategicPosture.mode,
-                    "memoryCityIntents" to updatedMemory.cityIntents.size.toString(),
-                    "memoryUnitAssignments" to updatedMemory.unitAssignments.size.toString(),
-                    "memoryRecentFailures" to updatedMemory.recentFailures.size.toString(),
+                ) + memoryDetails(updatedMemory) + domainDetails(
+                    supportSnapshotJson = supportSnapshotJson,
+                    plan = selectedPlan,
+                    outcomes = validation.outcomes,
                 ),
             )
             NextTurnAutomation.automateCivMoves(civInfo)
@@ -280,10 +293,9 @@ object AgentTurnAutomation {
                     "rejectedActions" to "0",
                     "plannedActions" to selectedPlan.actions.count { it !is AgentActionCommand.EndTurn }.toString(),
                     "intentionalNoOp" to "true",
-                    "memoryMode" to updatedMemory.strategicPosture.mode,
-                    "memoryCityIntents" to updatedMemory.cityIntents.size.toString(),
-                    "memoryUnitAssignments" to updatedMemory.unitAssignments.size.toString(),
-                    "memoryRecentFailures" to updatedMemory.recentFailures.size.toString(),
+                ) + memoryDetails(updatedMemory) + domainDetails(
+                    supportSnapshotJson = supportSnapshotJson,
+                    plan = selectedPlan,
                 ),
             )
             return
@@ -311,10 +323,11 @@ object AgentTurnAutomation {
                     "rejectedActions" to report.rejectedActions.toString(),
                     "plannedActions" to selectedPlan.actions.size.toString(),
                     "fallbackReason" to "Validated plan still rejected during live execution",
-                    "memoryMode" to updatedMemory.strategicPosture.mode,
-                    "memoryCityIntents" to updatedMemory.cityIntents.size.toString(),
-                    "memoryUnitAssignments" to updatedMemory.unitAssignments.size.toString(),
-                    "memoryRecentFailures" to updatedMemory.recentFailures.size.toString(),
+                    "fallbackScope" to AgentTurnDiagnostics.affectedDomainsCsv(report.outcomes.filter { it.status == AgentActionExecutor.ActionStatus.Rejected }),
+                ) + memoryDetails(updatedMemory) + domainDetails(
+                    supportSnapshotJson = supportSnapshotJson,
+                    plan = selectedPlan,
+                    outcomes = report.outcomes,
                 ),
             )
             NextTurnAutomation.automateCivMoves(civInfo)
@@ -346,11 +359,35 @@ object AgentTurnAutomation {
                 "executedActions" to report.executedActions.toString(),
                 "rejectedActions" to report.rejectedActions.toString(),
                 "plannedActions" to selectedPlan.actions.size.toString(),
-                "memoryMode" to updatedMemory.strategicPosture.mode,
-                "memoryCityIntents" to updatedMemory.cityIntents.size.toString(),
-                "memoryUnitAssignments" to updatedMemory.unitAssignments.size.toString(),
-                "memoryRecentFailures" to updatedMemory.recentFailures.size.toString(),
+            ) + memoryDetails(updatedMemory) + domainDetails(
+                supportSnapshotJson = supportSnapshotJson,
+                plan = selectedPlan,
+                outcomes = report.outcomes,
             ),
         )
     }
+
+    private fun memoryDetails(memory: AgentMemory): Map<String, String> = mapOf(
+        "memoryMode" to memory.strategicPosture.mode,
+        "memoryCityIntents" to memory.cityIntents.size.toString(),
+        "memoryUnitAssignments" to memory.unitAssignments.size.toString(),
+        "memoryRecentFailures" to memory.recentFailures.size.toString(),
+    )
+
+    private fun domainDetails(
+        supportSnapshotJson: String,
+        plan: AgentActionPlan?,
+        outcomes: List<AgentActionExecutor.ActionOutcome> = emptyList(),
+    ): Map<String, String> {
+        val details = linkedMapOf(
+            "domainSupportJson" to supportSnapshotJson,
+            "plannedDomainCountsJson" to AgentTurnDiagnostics.plannedDomainCountsJson(plan),
+        )
+        if (outcomes.isNotEmpty()) {
+            details["outcomeDomainSummaryJson"] = AgentTurnDiagnostics.outcomeSummaryJson(outcomes)
+            details["affectedDomains"] = AgentTurnDiagnostics.affectedDomainsCsv(outcomes)
+        }
+        return details
+    }
+
 }

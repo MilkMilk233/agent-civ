@@ -2871,6 +2871,7 @@
         const looksLikeActions = actions.some(action => (
           'type' in action ||
           'actionType' in action ||
+          'candidateId' in action ||
           'unitId' in action ||
           'destinationX' in action ||
           'destinationY' in action ||
@@ -2888,9 +2889,22 @@
       return null;
     }
 
-    function summarizeAction(action) {
+    function summarizeAction(action, run = null) {
       const type = action.type || action.actionType || action.kind || 'action';
+      const candidate = resolveCandidate(run, action.candidateId);
       switch (type) {
+        case 'select_empire_option':
+          return candidate
+            ? `${candidate.title} (${domainLabel(candidate.domain || 'empire')})`
+            : `Select empire option ${action.candidateId || '?'}`;
+        case 'select_city_option':
+          return candidate
+            ? `${candidate.title}${candidate.ownerName ? ` for ${candidate.ownerName}` : ''}`
+            : `Select city option ${action.candidateId || '?'}`;
+        case 'select_unit_option':
+          return candidate
+            ? `${candidate.title}${candidate.ownerName ? ` for ${candidate.ownerName}` : ''}`
+            : `Select unit option ${action.candidateId || '?'}`;
         case 'unit_move':
           return `Move unit ${action.unitId ?? '?'} to (${action.destinationX ?? '?'}, ${action.destinationY ?? '?'})`;
         case 'unit_action':
@@ -2904,11 +2918,13 @@
       }
     }
 
-    function renderActionCard(action, index, actionCheck) {
+    function renderActionCard(action, index, actionCheck, run = null) {
       const actionType = action.type || action.actionType || action.kind || 'action';
-      const actionSummary = summarizeAction(action);
+      const actionSummary = summarizeAction(action, run);
+      const candidate = resolveCandidate(run, action.candidateId);
       const keyFields = [
         ['priority', action.priority],
+        ['candidate', action.candidateId],
         ['unitId', action.unitId],
         ['destination', action.destinationX !== undefined && action.destinationY !== undefined ? `${action.destinationX},${action.destinationY}` : undefined],
         ['city', action.cityX !== undefined && action.cityY !== undefined ? `${action.cityX},${action.cityY}` : undefined],
@@ -2916,7 +2932,7 @@
       ].filter(([, value]) => value !== undefined && value !== null && String(value).length > 0);
 
       const remaining = Object.entries(action)
-        .filter(([key]) => !['type', 'actionType', 'kind', 'priority', 'unitId', 'destinationX', 'destinationY', 'cityX', 'cityY', 'constructionName'].includes(key));
+        .filter(([key]) => !['type', 'actionType', 'kind', 'priority', 'candidateId', 'unitId', 'destinationX', 'destinationY', 'cityX', 'cityY', 'constructionName'].includes(key));
 
       const chips = keyFields.map(([key, value]) => `<span class="action-chip">${esc(key)}=${esc(String(value))}</span>`).join('');
       const extra = remaining.length
@@ -2931,6 +2947,16 @@
       const actionIssue = actionCheck && checkTone !== 'ok'
         ? `<div class="action-check action-check-${checkTone}">${esc(actionCheck.text)}</div>`
         : '';
+      const candidateMeta = candidate
+        ? `
+          <div class="action-fields">
+            <span class="action-chip">${esc(domainLabel(candidate.domain || 'unknown'))}</span>
+            ${candidate.category ? `<span class="action-chip">${esc(candidate.category)}</span>` : ''}
+            ${candidate.ownerName ? `<span class="action-chip">${esc(candidate.ownerName)}</span>` : ''}
+          </div>
+          ${candidate.detail ? `<div class="action-check">${esc(candidate.detail)}</div>` : ''}
+        `
+        : '';
 
       return `
         <div class="action-card">
@@ -2940,14 +2966,15 @@
           </div>
           <div class="action-summary">${esc(actionSummary)}</div>
           ${chips ? `<div class="action-fields">${chips}</div>` : ''}
+          ${candidateMeta}
           ${actionIssue}
           ${extra}
         </div>
       `;
     }
 
-    function renderActionList(actions, expandLargeByDefault, actionChecks = []) {
-      const cards = actions.map((action, index) => renderActionCard(action, index, actionChecks[index]));
+    function renderActionList(actions, expandLargeByDefault, actionChecks = [], run = null) {
+      const cards = actions.map((action, index) => renderActionCard(action, index, actionChecks[index], run));
       if (actions.length <= 8) return `<div class="action-list">${cards.join('')}</div>`;
 
       const preview = `<div class="action-list">${cards.slice(0, 4).join('')}</div>`;
@@ -3046,15 +3073,34 @@
       return toWholeNumber(detailValue(event, key));
     }
 
+    const CONTROL_DOMAINS = ['empire', 'city', 'unit', 'diplomacy'];
+
+    function parseStructuredJsonDetail(event, key) {
+      const raw = detailValue(event, key);
+      return raw ? tryParseJsonString(raw) : null;
+    }
+
+    function parseCsvDetail(event, key) {
+      const raw = detailValue(event, key);
+      if (!raw) return [];
+      return String(raw)
+        .split(',')
+        .map(part => part.trim())
+        .filter(Boolean);
+    }
+
     function parseObservationData(turnStartEvent) {
-      const observationJson = detailValue(turnStartEvent, 'observationJson');
-      const parsed = observationJson ? tryParseJsonString(observationJson) : null;
+      const parsed = parseStructuredJsonDetail(turnStartEvent, 'observationJson');
       return parsed && typeof parsed === 'object' ? parsed : null;
     }
 
+    function parseEmpireObservationData(turnStartEvent) {
+      const parsed = parseStructuredJsonDetail(turnStartEvent, 'empireObservationJson');
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    }
+
     function parseMemoryData(turnStartEvent) {
-      const memoryJson = detailValue(turnStartEvent, 'memoryJson');
-      const parsed = memoryJson ? tryParseJsonString(memoryJson) : null;
+      const parsed = parseStructuredJsonDetail(turnStartEvent, 'memoryJson');
       return parsed && typeof parsed === 'object' ? parsed : null;
     }
 
@@ -3066,6 +3112,25 @@
 
     function listOrEmpty(value) {
       return Array.isArray(value) ? value : [];
+    }
+
+    function parseDomainSupportData(event) {
+      const parsed = parseStructuredJsonDetail(event, 'domainSupportJson');
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    }
+
+    function parsePlannedDomainCountsData(event) {
+      const parsed = parseStructuredJsonDetail(event, 'plannedDomainCountsJson');
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    }
+
+    function parseOutcomeDomainSummaryData(event) {
+      const parsed = parseStructuredJsonDetail(event, 'outcomeDomainSummaryJson');
+      return Array.isArray(parsed) ? parsed : [];
+    }
+
+    function observationEmpireData(observationData) {
+      return observationData && typeof observationData === 'object' ? observationData : {};
     }
 
     function observationEmpireSummary(observationData) {
@@ -3098,6 +3163,40 @@
         : {};
     }
 
+    function empireMacroFacts(empireObservationData) {
+      return listOrEmpty(empireObservationData && empireObservationData.macroFacts);
+    }
+
+    function empireResearchCandidates(empireObservationData) {
+      return listOrEmpty(empireObservationData && empireObservationData.researchCandidates);
+    }
+
+    function empirePolicyCandidates(empireObservationData) {
+      return listOrEmpty(empireObservationData && empireObservationData.policyCandidates);
+    }
+
+    function empireMacroCandidates(empireObservationData) {
+      return listOrEmpty(empireObservationData && empireObservationData.macroCandidates);
+    }
+
+    function empireDiplomacyCandidates(empireObservationData) {
+      return listOrEmpty(empireObservationData && empireObservationData.diplomacyCandidates);
+    }
+
+    function empireSpyCandidates(empireObservationData) {
+      return listOrEmpty(empireObservationData && empireObservationData.spyCandidates);
+    }
+
+    function flattenEmpireCandidates(empireObservationData) {
+      return [
+        ...empireResearchCandidates(empireObservationData).map(candidate => ({ ...candidate, domain: 'empire', group: 'research' })),
+        ...empirePolicyCandidates(empireObservationData).map(candidate => ({ ...candidate, domain: 'empire', group: 'policy' })),
+        ...empireMacroCandidates(empireObservationData).map(candidate => ({ ...candidate, domain: 'empire', group: 'macro' })),
+        ...empireDiplomacyCandidates(empireObservationData).map(candidate => ({ ...candidate, domain: 'diplomacy', group: 'diplomacy' })),
+        ...empireSpyCandidates(empireObservationData).map(candidate => ({ ...candidate, domain: 'diplomacy', group: 'spy' })),
+      ];
+    }
+
     function memoryStrategicPosture(memoryData) {
       return memoryData && memoryData.strategicPosture && typeof memoryData.strategicPosture === 'object'
         ? memoryData.strategicPosture
@@ -3118,6 +3217,154 @@
 
     function retryFailures(retryContext) {
       return listOrEmpty(retryContext && retryContext.failures);
+    }
+
+    function domainLabel(domain) {
+      switch (String(domain || '').toLowerCase()) {
+        case 'empire':
+          return 'Empire';
+        case 'city':
+          return 'City';
+        case 'unit':
+          return 'Unit';
+        case 'diplomacy':
+          return 'Diplomacy';
+        default:
+          return String(domain || 'Unknown');
+      }
+    }
+
+    function normalizeDomainCounts(value) {
+      const counts = Object.fromEntries(CONTROL_DOMAINS.map(domain => [domain, 0]));
+      if (!value || typeof value !== 'object') return counts;
+      for (const [key, raw] of Object.entries(value)) {
+        const parsed = toWholeNumber(raw);
+        counts[key] = Number.isFinite(parsed) ? parsed : 0;
+      }
+      return counts;
+    }
+
+    function inferPlannedDomainCounts(actions) {
+      const counts = Object.fromEntries(CONTROL_DOMAINS.map(domain => [domain, 0]));
+      for (const action of listOrEmpty(actions)) {
+        const type = String(action?.type || action?.actionType || action?.kind || '');
+        const candidateId = String(action?.candidateId || '');
+        let domain = null;
+        if (type === 'select_empire_option') {
+          domain = candidateId.startsWith('diplo:') || candidateId.startsWith('trade:') || candidateId.startsWith('spy:')
+            ? 'diplomacy'
+            : 'empire';
+        } else if (type === 'select_city_option' || type === 'city_choose_construction') {
+          domain = 'city';
+        } else if (type === 'select_unit_option' || type === 'unit_move' || type === 'unit_action') {
+          domain = 'unit';
+        }
+        if (domain) counts[domain] = (counts[domain] || 0) + 1;
+      }
+      return counts;
+    }
+
+    function normalizeOutcomeDomainSummary(items) {
+      const rows = listOrEmpty(items)
+        .filter(item => item && typeof item === 'object' && item.domain)
+        .map(item => ({
+          domain: String(item.domain),
+          planned: toWholeNumber(item.planned) ?? 0,
+          executed: toWholeNumber(item.executed) ?? 0,
+          rejected: toWholeNumber(item.rejected) ?? 0,
+        }));
+
+      const seen = new Set(rows.map(row => row.domain));
+      for (const domain of CONTROL_DOMAINS) {
+        if (!seen.has(domain)) rows.push({ domain, planned: 0, executed: 0, rejected: 0 });
+      }
+      return rows;
+    }
+
+    function deriveDomainSupportData(observationData, empireObservationData) {
+      const cities = observationCities(observationData);
+      const units = observationUnits(observationData);
+      return {
+        supportedDomains: CONTROL_DOMAINS.slice(),
+        availableCandidatesByDomain: {
+          empire:
+            empireResearchCandidates(empireObservationData).length
+            + empirePolicyCandidates(empireObservationData).length
+            + empireMacroCandidates(empireObservationData).length,
+          city:
+            cities.reduce((sum, city) => sum + listOrEmpty(city.cityOptionCandidates).length, 0)
+            + cities.filter(city => listOrEmpty(city.availableConstructions).length > 0).length,
+          unit:
+            units.reduce((sum, unit) => sum + listOrEmpty(unit.legalActionCandidates).length + listOrEmpty(unit.unitOptionCandidates).length, 0)
+            + units.filter(unit => unit.hasMovement).length,
+          diplomacy:
+            empireDiplomacyCandidates(empireObservationData).length
+            + empireSpyCandidates(empireObservationData).length,
+        },
+      };
+    }
+
+    function activeSupportedDomains(domainSupport) {
+      const counts = normalizeDomainCounts(domainSupport && domainSupport.availableCandidatesByDomain);
+      return CONTROL_DOMAINS.filter(domain => (counts[domain] || 0) > 0);
+    }
+
+    function formatDomainList(domains) {
+      const normalized = listOrEmpty(domains).filter(Boolean);
+      if (!normalized.length) return 'None';
+      return normalized.map(domainLabel).join(', ');
+    }
+
+    function formatDomainCounts(counts) {
+      const normalized = normalizeDomainCounts(counts);
+      const parts = CONTROL_DOMAINS
+        .filter(domain => (normalized[domain] || 0) > 0)
+        .map(domain => `${domainLabel(domain)} ${normalized[domain]}`);
+      return parts.length ? parts.join(' · ') : 'No domain options';
+    }
+
+    function formatOutcomeSummary(outcomes) {
+      const normalized = normalizeOutcomeDomainSummary(outcomes).filter(item => item.planned > 0 || item.executed > 0 || item.rejected > 0);
+      if (!normalized.length) return 'No domain outcome recorded';
+      return normalized
+        .map(item => `${domainLabel(item.domain)} ${item.executed}/${item.rejected}`)
+        .join(' · ');
+    }
+
+    function buildCandidateIndex(observationData, empireObservationData) {
+      const index = new Map();
+      for (const candidate of flattenEmpireCandidates(empireObservationData)) {
+        index.set(candidate.candidateId, {
+          ...candidate,
+          commandType: 'select_empire_option',
+        });
+      }
+      for (const city of observationCities(observationData)) {
+        for (const candidate of listOrEmpty(city.cityOptionCandidates)) {
+          index.set(candidate.candidateId, {
+            ...candidate,
+            domain: 'city',
+            ownerName: city.name,
+            commandType: 'select_city_option',
+          });
+        }
+      }
+      for (const unit of observationUnits(observationData)) {
+        for (const candidate of listOrEmpty(unit.unitOptionCandidates)) {
+          index.set(candidate.candidateId, {
+            ...candidate,
+            domain: 'unit',
+            ownerName: `${unit.name || 'Unit'} #${unit.id}`,
+            commandType: 'select_unit_option',
+          });
+        }
+      }
+      return index;
+    }
+
+    function resolveCandidate(run, candidateId) {
+      if (!run || !run.candidateIndex || !candidateId) return null;
+      return run.candidateIndex.get(candidateId) || null;
     }
 
     function coordKey(x, y) {
@@ -3189,7 +3436,7 @@
       return (runLike.rejectedActions ?? 0) / planned;
     }
 
-    function buildObservationChecks(observationData) {
+    function buildObservationChecks(observationData, empireObservationData, domainSupportData) {
       if (!observationData) {
         return [
           { tone: 'critical', title: 'Observation missing', text: 'No structured observation snapshot was captured for this turn.' },
@@ -3203,6 +3450,10 @@
       const targets = observationTargets(observationData);
       const priorityFacts = observationPriorityFacts(observationData);
       const omittedSummary = observationOmittedSummary(observationData);
+      const empireFacts = empireMacroFacts(empireObservationData);
+      const empireChoices = flattenEmpireCandidates(empireObservationData);
+      const domainCounts = normalizeDomainCounts((domainSupportData || {}).availableCandidatesByDomain);
+      const supportedDomains = activeSupportedDomains(domainSupportData || {});
       const cityCount = toWholeNumber(empire.cityCount);
       const unitCount = toWholeNumber(empire.unitCount);
       const visibleTiles = toWholeNumber(empire.visibleTiles);
@@ -3241,6 +3492,32 @@
         checks.push({ tone: 'warning', title: 'No priority facts', text: 'The curated observation did not produce any ranked turn facts.' });
       } else {
         checks.push({ tone: 'ok', title: `${priorityFacts.length} priority facts`, text: priorityFacts[0].headline || 'Priority fact list captured.' });
+      }
+
+      if (!empireObservationData) {
+        checks.push({ tone: 'warning', title: 'Empire observation missing', text: 'No empire-level control surface was captured for this turn.' });
+      } else if (!empireChoices.length) {
+        checks.push({ tone: 'warning', title: 'No empire or diplomacy options', text: 'The turn snapshot did not surface any research, policy, macro, diplomacy, or spy candidates.' });
+      } else {
+        checks.push({
+          tone: 'ok',
+          title: `${empireChoices.length} empire-level options`,
+          text: `${empireResearchCandidates(empireObservationData).length} research, ${empirePolicyCandidates(empireObservationData).length} policy, ${empireMacroCandidates(empireObservationData).length} macro, ${empireDiplomacyCandidates(empireObservationData).length} diplomacy, ${empireSpyCandidates(empireObservationData).length} spy candidates.`,
+        });
+      }
+
+      if (!supportedDomains.length) {
+        checks.push({ tone: 'warning', title: 'No active control domains', text: 'The snapshot did not expose any actionable domain candidates.' });
+      } else {
+        checks.push({
+          tone: 'ok',
+          title: `${supportedDomains.length} active control domains`,
+          text: formatDomainCounts(domainCounts),
+        });
+      }
+
+      if (empireObservationData && !empireFacts.length) {
+        checks.push({ tone: 'warning', title: 'No empire macro facts', text: 'The empire planner snapshot has no macro facts explaining the current strategic context.' });
       }
 
       if (!observationData.omittedSummary || typeof observationData.omittedSummary !== 'object') {
@@ -3328,12 +3605,22 @@
 
       const units = new Map(observationUnits(run.observationData).map(unit => [Number(unit.id), unit]));
       const cities = new Map(observationCities(run.observationData).map(city => [coordKey(city.x, city.y), city]));
+      const candidateIndex = run.candidateIndex || new Map();
       const actionChecks = run.actions.map((action, index) => {
         const type = action.type || action.actionType || action.kind || 'action';
         let tone = 'ok';
-        let text = summarizeAction(action);
+        let text = summarizeAction(action, run);
 
-        if (type === 'unit_move') {
+        if (type === 'select_empire_option' || type === 'select_city_option' || type === 'select_unit_option') {
+          const candidate = candidateIndex.get(action.candidateId);
+          if (!candidate) {
+            tone = 'critical';
+            text = `Action ${index + 1} references missing candidate ${action.candidateId || '?'}.`;
+          } else if (candidate.commandType !== type) {
+            tone = 'warning';
+            text = `Action ${index + 1} chooses ${action.candidateId}, but that candidate belongs to ${candidate.commandType}.`;
+          }
+        } else if (type === 'unit_move') {
           const unit = units.get(Number(action.unitId));
           if (!unit) {
             tone = 'critical';
@@ -3514,6 +3801,16 @@
         parts.push(`Memory posture: ${String(run.memory.mode).replace(/_/g, ' ')}.`);
       }
 
+      const activeDomains = activeSupportedDomains(run.domainSupport);
+      if (activeDomains.length) {
+        parts.push(`Control surface: ${formatDomainCounts(run.domainSupport.availableCandidatesByDomain)}.`);
+      }
+
+      const plannedDomains = CONTROL_DOMAINS.filter(domain => (run.plannedDomainCounts[domain] || 0) > 0);
+      if (plannedDomains.length) {
+        parts.push(`Plan touched ${formatDomainList(plannedDomains)}.`);
+      }
+
       if (run.retryCount > 0) {
         parts.push(`Planner retries: ${run.retryCount}.`);
       }
@@ -3522,6 +3819,10 @@
         parts.push('Final decision: intentional no-op.');
       } else if (run.fallbackReason) {
         parts.push(`Fallback reason: ${run.fallbackReason}.`);
+      }
+
+      if (run.fallbackScope && run.fallbackScope.length) {
+        parts.push(`Fallback scope: ${formatDomainList(run.fallbackScope)}.`);
       }
 
       if (run.notes) {
@@ -3553,6 +3854,9 @@
       const fallbackEvent = lastEventOfType(events, 'fallback_legacy');
       const planMissingEvent = lastEventOfType(events, 'plan_missing');
       const outcomeEvent = planAppliedEvent || fallbackEvent || planMissingEvent || parseErrorEvent || requestErrorEvent || httpErrorEvent || latestEvent;
+      const latestValidationEvent = validationFailedEvents[validationFailedEvents.length - 1]
+        || retryRequestedEvents[retryRequestedEvents.length - 1]
+        || null;
 
       const provider = detailValue(requestEvent, 'provider')
         || detailValue(responseEvent, 'provider')
@@ -3628,7 +3932,24 @@
       }
 
       const observationData = parseObservationData(turnStartEvent);
+      const empireObservationData = parseEmpireObservationData(turnStartEvent);
       const memoryData = parseMemoryData(turnStartEvent);
+      const domainSupport = parseDomainSupportData(turnStartEvent) || deriveDomainSupportData(observationData, empireObservationData);
+      const plannedDomainCounts = normalizeDomainCounts(
+        parsePlannedDomainCountsData(outcomeEvent)
+        || parsePlannedDomainCountsData(latestValidationEvent)
+        || inferPlannedDomainCounts(actions)
+      );
+      const outcomeDomainSummary = normalizeOutcomeDomainSummary(
+        parseOutcomeDomainSummaryData(outcomeEvent).length
+          ? parseOutcomeDomainSummaryData(outcomeEvent)
+          : parseOutcomeDomainSummaryData(latestValidationEvent)
+      );
+      const affectedDomains = parseCsvDetail(outcomeEvent, 'affectedDomains')
+        .concat(parseCsvDetail(latestValidationEvent, 'affectedDomains'))
+        .filter((value, index, array) => array.indexOf(value) === index);
+      const fallbackScope = parseCsvDetail(fallbackEvent, 'fallbackScope');
+      const candidateIndex = buildCandidateIndex(observationData, empireObservationData);
       const empireSummary = observationEmpireSummary(observationData);
       const memoryPosture = memoryStrategicPosture(memoryData);
       const observation = {
@@ -3661,9 +3982,11 @@
         recentFailures: numberFromDetail(memoryOutcomeEvent, 'memoryRecentFailures'),
       };
       const illegalActionRate = computeIllegalActionRate({ plannedActions, actions, executedActions, rejectedActions });
-      const observationChecks = buildObservationChecks(observationData);
+      const observationChecks = buildObservationChecks(observationData, empireObservationData, domainSupport);
       const planValidation = validatePlanAgainstObservation({
         observationData,
+        empireObservationData,
+        candidateIndex,
         actions,
         handoffToLegacyAI,
         plannedActions,
@@ -3697,7 +4020,13 @@
         parsedPlanJson || '',
         normalizeDetails(latestValidationContext || {}),
         normalizeDetails(observationData || {}),
+        normalizeDetails(empireObservationData || {}),
         normalizeDetails(memoryData || {}),
+        normalizeDetails(domainSupport || {}),
+        normalizeDetails(plannedDomainCounts || {}),
+        normalizeDetails(outcomeDomainSummary || {}),
+        affectedDomains.join(' '),
+        fallbackScope.join(' '),
         ...events.map(eventTextBlob),
       ].join(' ').toLowerCase();
 
@@ -3744,9 +4073,16 @@
         statusLabel,
         observation,
         observationData,
+        empireObservationData,
         memory,
         memoryData,
         memoryAfter,
+        domainSupport,
+        plannedDomainCounts,
+        outcomeDomainSummary,
+        affectedDomains,
+        fallbackScope,
+        candidateIndex,
         observationChecks,
         observationSummary,
         planIssues: planValidation.issues,
@@ -3815,6 +4151,7 @@
           <div class="card-summary">${esc(clampText(run.topConcern ? `${run.topConcern.title}: ${run.topConcern.text}` : (run.notes || run.summary), 120))}</div>
           <div class="card-meta">
             <span class="meta-chip">${esc(run.provider || 'planner pending')}</span>
+            <span class="meta-chip">${esc(activeSupportedDomains(run.domainSupport).length ? `${activeSupportedDomains(run.domainSupport).length} domains` : 'no domains')}</span>
             <span class="meta-chip">${esc(run.observationSummary.issueCount ? `${run.observationSummary.issueCount} obs flags` : 'obs ok')}</span>
             <span class="meta-chip">${esc(run.intentionalNoOp ? 'intentional no-op' : (run.planSummary.issueCount ? `${run.planSummary.issueCount} plan flags` : (run.planParsedEvent || run.actions.length ? 'plan ok' : 'plan pending')))}</span>
             <span class="meta-chip">${esc(run.retryCount ? `${run.retryCount} retries` : 'no retries')}</span>
@@ -3899,6 +4236,8 @@
 
       const portfolio = buildPortfolioMetrics(visibleRuns || [run]);
       const completedTurnsLabel = portfolio.completedRuns ? `${portfolio.completedRuns} completed turns` : 'No completed turns yet';
+      const activeDomains = activeSupportedDomains(run.domainSupport);
+      const plannedDomains = CONTROL_DOMAINS.filter(domain => (run.plannedDomainCounts[domain] || 0) > 0);
       const summaryCards = [
         renderMiniCard('Observation', run.observationSummary.issueCount ? `${run.observationSummary.issueCount} flags` : 'Looks sane', run.observationSummary.note),
         renderMiniCard(
@@ -3906,6 +4245,8 @@
           run.memory.mode ? String(run.memory.mode).replace(/_/g, ' ') : 'Fresh turn',
           `${run.memory.cityIntents ?? 0} city intents · ${run.memory.unitAssignments ?? 0} unit assignments · ${run.memory.recentFailures ?? 0} recent failures`,
         ),
+        renderMiniCard('Supported domains', activeDomains.length ? formatDomainList(activeDomains) : 'None', formatDomainCounts(run.domainSupport.availableCandidatesByDomain)),
+        renderMiniCard('Plan coverage', plannedDomains.length ? formatDomainList(plannedDomains) : 'None', formatDomainCounts(run.plannedDomainCounts)),
         renderMiniCard('Plan', run.intentionalNoOp ? 'Intentional no-op' : (run.planSummary.issueCount ? `${run.planSummary.issueCount} flags` : (run.actions.length ? 'Looks sane' : 'Waiting')), run.planSummary.note),
         renderMiniCard('Retries', String(run.retryCount || 0), run.retryCount ? `${run.planningAttempts} total planning attempts` : 'Accepted on first attempt'),
         renderMiniCard('Inference latency', formatDuration(run.llmLatencyMs), 'Planner request to response'),
@@ -3926,6 +4267,9 @@
         run.memory.mode ? `Memory: ${String(run.memory.mode).replace(/_/g, ' ')}` : null,
         run.intentionalNoOp ? 'Intentional no-op' : null,
         run.retryCount ? `${run.retryCount} retries` : null,
+        activeDomains.length ? `Supported: ${formatDomainList(activeDomains)}` : null,
+        plannedDomains.length ? `Planned: ${formatDomainList(plannedDomains)}` : null,
+        run.fallbackScope.length ? `Fallback scope: ${formatDomainList(run.fallbackScope)}` : null,
         run.observation.isAtWar === null ? null : (run.observation.isAtWar ? 'At war' : 'Not at war'),
         run.observation.cities !== null ? `${run.observation.cities} cities` : null,
         run.observation.units !== null ? `${run.observation.units} units` : null,
@@ -4005,18 +4349,24 @@
 
     function renderObservationV2(run, observationData) {
       const empire = observationEmpireSummary(observationData);
+      const empireObservation = observationEmpireData(run.empireObservationData);
       const cities = observationCities(observationData);
       const units = observationUnits(observationData);
       const targets = observationTargets(observationData);
       const priorityFacts = observationPriorityFacts(observationData);
       const opportunities = observationOpportunities(observationData);
       const omitted = observationOmittedSummary(observationData);
+      const domainCounts = normalizeDomainCounts(run.domainSupport && run.domainSupport.availableCandidatesByDomain);
+      const empireFacts = empireMacroFacts(empireObservation);
+      const empireCandidates = flattenEmpireCandidates(empireObservation);
       const showAll = showDetailsEl.checked;
       const visibleCities = cities.slice(0, showAll ? cities.length : 4);
       const visibleUnits = units.slice(0, showAll ? units.length : 6);
       const visibleTargets = targets.slice(0, showAll ? targets.length : 6);
       const visiblePriorityFacts = priorityFacts.slice(0, showAll ? priorityFacts.length : 5);
       const visibleOpportunities = opportunities.slice(0, showAll ? opportunities.length : 5);
+      const visibleEmpireFacts = empireFacts.slice(0, showAll ? empireFacts.length : 4);
+      const visibleEmpireCandidates = empireCandidates.slice(0, showAll ? empireCandidates.length : 8);
 
       const observationStats = [
         renderObservationStat('Cities', run.observation.cities ?? '-', 'Cities currently in the empire'),
@@ -4029,6 +4379,16 @@
         renderObservationStat('Science / turn', run.observation.sciencePerTurn ?? '-', 'Science yield this turn'),
         renderObservationStat('Happiness', run.observation.happiness ?? '-', 'Empire happiness at plan time'),
         renderObservationStat('War state', run.observation.isAtWar === null ? '-' : (run.observation.isAtWar ? 'At war' : 'Peace'), 'Top-level war state in the brief'),
+      ];
+      const domainStats = [
+        renderObservationStat('Empire options', domainCounts.empire ?? 0, 'Research, policy, macro, and other empire choices'),
+        renderObservationStat('City options', domainCounts.city ?? 0, 'City purchases, focus changes, and build decisions'),
+        renderObservationStat('Unit options', domainCounts.unit ?? 0, 'Legal unit candidates and grounded tactical options'),
+        renderObservationStat('Diplomacy options', domainCounts.diplomacy ?? 0, 'Diplomacy, trade, and spy choices'),
+        renderObservationStat('Research candidates', empireResearchCandidates(empireObservation).length, 'Exact research choices exposed this turn'),
+        renderObservationStat('Policy candidates', empirePolicyCandidates(empireObservation).length, 'Exact policy choices exposed this turn'),
+        renderObservationStat('Macro candidates', empireMacroCandidates(empireObservation).length, 'Gold, faith, bombardment, and other macro choices'),
+        renderObservationStat('Spy candidates', empireSpyCandidates(empireObservation).length, 'Available spy assignments and actions'),
       ];
 
       const cityCards = visibleCities.map(city => {
@@ -4046,8 +4406,10 @@
             city.isPuppet ? 'puppet' : null,
             city.isGarrisoned ? 'garrisoned' : 'no garrison',
             city.nearbyHostileUnits ? `${city.nearbyHostileUnits} hostile units nearby` : null,
+            city.cityOptionCandidates?.length ? `${city.cityOptionCandidates.length} city options` : null,
             ...trimList(city.reasons, 3),
             ...trimList(city.localFacts, 2),
+            ...trimList(listOrEmpty(city.cityOptionCandidates).map(candidate => candidate.title), 2),
             ...trimList(city.availableConstructions, 3),
           ].filter(Boolean),
         );
@@ -4060,8 +4422,11 @@
           `reachable ${listOrEmpty(unit.reachableTiles).length}`,
           unit.range ? `range ${unit.range}` : null,
           unit.nearbyHostileUnits ? `${unit.nearbyHostileUnits} hostile units nearby` : null,
+          unit.legalActionCandidates?.length ? `${unit.legalActionCandidates.length} legal actions` : null,
+          unit.unitOptionCandidates?.length ? `${unit.unitOptionCandidates.length} grounded options` : null,
           ...trimList(unit.reasons, 3),
           ...trimList(unit.localFacts, 3),
+          ...trimList(listOrEmpty(unit.unitOptionCandidates).map(candidate => candidate.title), 2),
           ...trimList(unit.unitActions, 3),
         ].filter(Boolean),
       ));
@@ -4083,13 +4448,34 @@
         renderObservationStat('Lower-priority facts', toWholeNumber(omitted.lowerPriorityFactsOmitted) ?? 0, 'Facts filtered out behind the top-ranked brief'),
         renderObservationStat('Lower-priority opportunities', toWholeNumber(omitted.lowerPriorityOpportunitiesOmitted) ?? 0, 'Opportunities filtered out behind the top-ranked list'),
       ];
+      const empireCandidateCards = visibleEmpireCandidates.map(candidate => renderEntityCard(
+        candidate.title || candidate.candidateId || 'Candidate',
+        candidate.detail || 'Exact candidate surfaced to the planner',
+        [
+          domainLabel(candidate.domain || candidate.group || 'empire'),
+          candidate.category || null,
+          candidate.candidateId || null,
+        ].filter(Boolean),
+      ));
 
-      stagesMetaEl.textContent = `Curated brief · ${run.observationSummary.issueCount ? `${run.observationSummary.issueCount} flags` : 'looks sane'} · ${formatDateTime(run.turnStartEvent ? run.turnStartEvent.epochMs : run.lastEpochMs)}`;
+      stagesMetaEl.textContent = `Curated brief · ${run.observationSummary.issueCount ? `${run.observationSummary.issueCount} flags` : 'looks sane'} · ${activeSupportedDomains(run.domainSupport).length} active domains · ${formatDateTime(run.turnStartEvent ? run.turnStartEvent.epochMs : run.lastEpochMs)}`;
       stageGridEl.innerHTML = `
         <div class="observation-grid">${observationStats.join('')}</div>
         <div class="info-section">
+          <div class="section-subtitle">Domain control surface</div>
+          <div class="observation-grid">${domainStats.join('')}</div>
+        </div>
+        <div class="info-section">
           <div class="section-subtitle">Observation checks</div>
           <div class="check-list">${run.observationChecks.map(renderCheckCard).join('')}</div>
+        </div>
+        <div class="info-section">
+          <div class="section-subtitle">Empire macro facts${empireFacts.length > visibleEmpireFacts.length ? ` · showing ${visibleEmpireFacts.length}/${empireFacts.length}` : ''}</div>
+          ${visibleEmpireFacts.length ? `<div class="check-list">${visibleEmpireFacts.map(renderObservationFactCard).join('')}</div>` : '<div class="empty">No empire-level macro facts were captured for this turn.</div>'}
+        </div>
+        <div class="info-section">
+          <div class="section-subtitle">Empire, diplomacy, and spy options${empireCandidates.length > visibleEmpireCandidates.length ? ` · showing ${visibleEmpireCandidates.length}/${empireCandidates.length}` : ''}</div>
+          ${empireCandidateCards.length ? `<div class="entity-columns">${empireCandidateCards.join('')}</div>` : '<div class="empty">No empire-level candidates were surfaced for this turn.</div>'}
         </div>
         <div class="info-section">
           <div class="section-subtitle">Priority facts${priorityFacts.length > visiblePriorityFacts.length ? ` · showing ${visiblePriorityFacts.length}/${priorityFacts.length}` : ''}</div>
@@ -4138,6 +4524,7 @@
       const note = run.notes
         ? `<div class="note-banner"><strong>Planner note:</strong> ${esc(run.notes)}</div>`
         : '';
+      const plannedDomains = CONTROL_DOMAINS.filter(domain => (run.plannedDomainCounts[domain] || 0) > 0);
       const metaCards = [
         renderPlanMetaCard('Turn decision', run.intentionalNoOp ? 'No-op' : (run.fallbackEvent ? 'Fallback' : 'Execute'), run.fallbackReason || (run.intentionalNoOp ? 'Planner intentionally chose to take no direct action' : 'Decoded plan outcome')),
         renderPlanMetaCard('Decoded actions', String(run.actions.length), run.planParsedEvent ? 'Structured JSON decoded successfully' : 'No structured plan decoded'),
@@ -4146,6 +4533,12 @@
         renderPlanMetaCard('Planning attempts', String(run.planningAttempts || 1), run.retryCount ? `${run.retryCount} retries were used` : 'Accepted on the first planner attempt'),
         renderPlanMetaCard('Inference latency', formatDuration(run.llmLatencyMs), 'Planner request to response'),
         renderPlanMetaCard('Fallback', run.fallbackEvent || run.planMissingEvent || run.handoffToLegacyAI ? 'Yes' : 'No', run.fallbackEvent ? 'Legacy AI took over' : (run.handoffToLegacyAI ? 'Planner asked for handoff' : 'Stayed on agent plan')),
+      ];
+      const domainCards = [
+        renderPlanMetaCard('Supported domains', activeSupportedDomains(run.domainSupport).length ? formatDomainList(activeSupportedDomains(run.domainSupport)) : 'None', formatDomainCounts(run.domainSupport.availableCandidatesByDomain)),
+        renderPlanMetaCard('Planned domains', plannedDomains.length ? formatDomainList(plannedDomains) : 'None', formatDomainCounts(run.plannedDomainCounts)),
+        renderPlanMetaCard('Outcome by domain', formatOutcomeSummary(run.outcomeDomainSummary), 'Executed/rejected counts by domain'),
+        renderPlanMetaCard('Fallback scope', run.fallbackScope.length ? formatDomainList(run.fallbackScope) : '-', run.fallbackScope.length ? 'Domains that triggered or accompanied fallback' : 'No scoped fallback on this turn'),
       ];
 
       actionsMetaEl.textContent = run.planSummary.issueCount
@@ -4159,7 +4552,7 @@
       const actionList = run.intentionalNoOp
         ? '<div class="empty">The planner intentionally chose a no-op turn, so no direct actions were executed.</div>'
         : run.actions.length
-        ? renderActionList(run.actions, showDetailsEl.checked, run.actionChecks)
+        ? renderActionList(run.actions, showDetailsEl.checked, run.actionChecks, run)
         : '<div class="empty">The planner returned no concrete actions for this turn.</div>';
       const retryChecks = run.validationFailures.length
         ? run.validationFailures.map((failure, index) => renderCheckCard({
@@ -4172,6 +4565,10 @@
       actionPlanEl.innerHTML = `
         ${note}
         <div class="plan-meta-grid">${metaCards.join('')}</div>
+        <div class="info-section">
+          <div class="section-subtitle">Domain coverage</div>
+          <div class="plan-meta-grid">${domainCards.join('')}</div>
+        </div>
         <div class="info-section">
           <div class="section-subtitle">Plan validation</div>
           <div class="check-list">${run.planIssues.map(renderCheckCard).join('')}</div>
@@ -4257,6 +4654,15 @@
         ));
       }
 
+      if (run.empireObservationData) {
+        sections.push(renderDebugSection(
+          'Empire observation JSON',
+          `${flattenEmpireCandidates(run.empireObservationData).length} total candidates`,
+          renderJsonValue(run.empireObservationData, openByDefault),
+          openByDefault,
+        ));
+      }
+
       if (run.memoryData) {
         sections.push(renderDebugSection(
           'Memory carried into turn',
@@ -4326,6 +4732,42 @@
             unitAssignments: run.memoryAfter.unitAssignments,
             recentFailures: run.memoryAfter.recentFailures,
           }, openByDefault),
+          openByDefault,
+        ));
+      }
+
+      if (run.domainSupport) {
+        sections.push(renderDebugSection(
+          'Domain support snapshot',
+          `${activeSupportedDomains(run.domainSupport).length} active domains`,
+          renderJsonValue(run.domainSupport, openByDefault),
+          openByDefault,
+        ));
+      }
+
+      if (run.plannedDomainCounts) {
+        sections.push(renderDebugSection(
+          'Planned domain counts',
+          formatDomainCounts(run.plannedDomainCounts),
+          renderJsonValue(run.plannedDomainCounts, openByDefault),
+          openByDefault,
+        ));
+      }
+
+      if (run.outcomeDomainSummary.some(item => item.planned || item.executed || item.rejected)) {
+        sections.push(renderDebugSection(
+          'Outcome by domain',
+          formatOutcomeSummary(run.outcomeDomainSummary),
+          renderJsonValue(run.outcomeDomainSummary, openByDefault),
+          openByDefault,
+        ));
+      }
+
+      if (run.fallbackScope.length) {
+        sections.push(renderDebugSection(
+          'Fallback scope',
+          formatDomainList(run.fallbackScope),
+          renderJsonValue(run.fallbackScope, openByDefault),
           openByDefault,
         ));
       }

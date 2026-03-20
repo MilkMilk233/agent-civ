@@ -7,6 +7,7 @@ interface AgentPlanProvider {
     fun buildPlan(
         memory: AgentMemory,
         observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
         civInfo: Civilization,
         retryContext: AgentRetryContext? = null,
     ): AgentActionPlan?
@@ -83,6 +84,7 @@ object NoopAgentPlanProvider : AgentPlanProvider {
     override fun buildPlan(
         memory: AgentMemory,
         observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
         civInfo: Civilization,
         retryContext: AgentRetryContext?,
     ): AgentActionPlan? = null

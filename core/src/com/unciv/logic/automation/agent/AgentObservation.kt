@@ -65,10 +65,20 @@ data class CityAttentionObservation(
     val isCoastal: Boolean,
     val isPuppet: Boolean,
     val isGarrisoned: Boolean,
+    val cityFocus: String,
     val nearbyHostileUnits: Int,
     val nearbyHostileCities: Int,
     val reasons: List<String>,
     val localFacts: List<String>,
+    val cityOptionCandidates: List<CityOptionCandidateObservation> = emptyList(),
+)
+
+@Serializable
+data class CityOptionCandidateObservation(
+    val candidateId: String,
+    val category: String,
+    val title: String,
+    val detail: String,
 )
 
 @Serializable
@@ -86,6 +96,7 @@ data class ActionableUnitObservation(
     val range: Int? = null,
     val unitActions: List<String>,
     val legalActionCandidates: List<LegalActionCandidateObservation> = emptyList(),
+    val unitOptionCandidates: List<UnitOptionCandidateObservation> = emptyList(),
     val reachableTiles: List<TileRef>,
     val nearbyHostileUnits: Int,
     val nearbyHostileCities: Int,
@@ -102,6 +113,14 @@ data class LegalActionCandidateObservation(
     val targetX: Int? = null,
     val targetY: Int? = null,
     val rationale: String? = null,
+)
+
+@Serializable
+data class UnitOptionCandidateObservation(
+    val candidateId: String,
+    val category: String,
+    val title: String,
+    val detail: String,
 )
 
 @Serializable

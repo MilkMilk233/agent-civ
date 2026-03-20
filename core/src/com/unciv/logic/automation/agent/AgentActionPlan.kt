@@ -15,6 +15,27 @@ sealed class AgentActionCommand {
     abstract val priority: Int
 
     @Serializable
+    @SerialName("select_empire_option")
+    data class SelectEmpireOption(
+        override val priority: Int = 0,
+        val candidateId: String,
+    ) : AgentActionCommand()
+
+    @Serializable
+    @SerialName("select_city_option")
+    data class SelectCityOption(
+        override val priority: Int = 0,
+        val candidateId: String,
+    ) : AgentActionCommand()
+
+    @Serializable
+    @SerialName("select_unit_option")
+    data class SelectUnitOption(
+        override val priority: Int = 0,
+        val candidateId: String,
+    ) : AgentActionCommand()
+
+    @Serializable
     @SerialName("unit_move")
     data class UnitMove(
         override val priority: Int = 0,

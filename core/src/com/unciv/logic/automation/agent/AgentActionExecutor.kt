@@ -16,11 +16,13 @@ class AgentActionExecutor {
         val commandType: String,
         val status: ActionStatus,
         val reason: String,
+        val candidateId: String? = null,
         val unitId: Int? = null,
         val cityX: Int? = null,
         val cityY: Int? = null,
         val actionType: String? = null,
         val constructionName: String? = null,
+        val domain: AgentControlDomain? = AgentControlDomain.fromOutcome(commandType, candidateId),
     )
 
     data class ExecutionReport(
@@ -88,9 +90,228 @@ class AgentActionExecutor {
         var rejected = 0
         val outcomes = arrayListOf<ActionOutcome>()
         val sortedActions = plan.actions.sortedBy { it.priority }
+        val usedEmpireCandidateIds = hashSetOf<String>()
+        val usedCityCandidateIds = hashSetOf<String>()
+        val usedUnitCandidateIds = hashSetOf<String>()
 
         for (action in sortedActions) {
             when (action) {
+                is AgentActionCommand.SelectEmpireOption -> {
+                    if (!usedEmpireCandidateIds.add(action.candidateId)) {
+                        rejected++
+                        outcomes += ActionOutcome(
+                            commandType = "select_empire_option",
+                            status = ActionStatus.Rejected,
+                            reason = "Empire option rejected: candidate selected more than once",
+                            candidateId = action.candidateId,
+                        )
+                        continue
+                    }
+
+                    val context = AgentEmpireObservationBuilder.build(civInfo, civInfo.agentMemory.clone())
+                    val candidate = context.candidates[action.candidateId]
+                    if (candidate == null) {
+                        rejected++
+                        outcomes += ActionOutcome(
+                            commandType = "select_empire_option",
+                            status = ActionStatus.Rejected,
+                            reason = "Empire option rejected: candidate missing",
+                            candidateId = action.candidateId,
+                        )
+                        continue
+                    }
+
+                    val invalidReason = candidate.validate(civInfo)
+                    if (invalidReason != null) {
+                        rejected++
+                        outcomes += ActionOutcome(
+                            commandType = "select_empire_option",
+                            status = ActionStatus.Rejected,
+                            reason = invalidReason,
+                            candidateId = action.candidateId,
+                        )
+                        continue
+                    }
+
+                    val success = runCatching { candidate.execute(civInfo) }.getOrElse { ex ->
+                        if (recordActionErrors) {
+                            AgentObservability.record(
+                                type = "plan_action_error",
+                                message = "Empire action execution failed",
+                                civName = civInfo.civName,
+                                turn = civInfo.gameInfo.turns,
+                                details = mapOf(
+                                    "candidateId" to action.candidateId,
+                                    "error" to (ex.message ?: ex::class.simpleName.orEmpty()),
+                                ),
+                            )
+                        }
+                        false
+                    }
+
+                    if (success) {
+                        executed++
+                        outcomes += ActionOutcome(
+                            commandType = "select_empire_option",
+                            status = ActionStatus.Executed,
+                            reason = candidate.successMessage,
+                            candidateId = action.candidateId,
+                        )
+                    } else {
+                        rejected++
+                        outcomes += ActionOutcome(
+                            commandType = "select_empire_option",
+                            status = ActionStatus.Rejected,
+                            reason = "Empire option rejected: execution produced no state change",
+                            candidateId = action.candidateId,
+                        )
+                    }
+                }
+
+                is AgentActionCommand.SelectCityOption -> {
+                    if (!usedCityCandidateIds.add(action.candidateId)) {
+                        rejected++
+                        outcomes += ActionOutcome(
+                            commandType = "select_city_option",
+                            status = ActionStatus.Rejected,
+                            reason = "City option rejected: candidate selected more than once",
+                            candidateId = action.candidateId,
+                        )
+                        continue
+                    }
+
+                    val context = AgentCityOptionBuilder.build(civInfo)
+                    val candidate = context.candidates[action.candidateId]
+                    if (candidate == null) {
+                        rejected++
+                        outcomes += ActionOutcome(
+                            commandType = "select_city_option",
+                            status = ActionStatus.Rejected,
+                            reason = "City option rejected: candidate missing",
+                            candidateId = action.candidateId,
+                        )
+                        continue
+                    }
+
+                    val invalidReason = candidate.validate(civInfo)
+                    if (invalidReason != null) {
+                        rejected++
+                        outcomes += ActionOutcome(
+                            commandType = "select_city_option",
+                            status = ActionStatus.Rejected,
+                            reason = invalidReason,
+                            candidateId = action.candidateId,
+                        )
+                        continue
+                    }
+
+                    val success = runCatching { candidate.execute(civInfo) }.getOrElse { ex ->
+                        if (recordActionErrors) {
+                            AgentObservability.record(
+                                type = "plan_action_error",
+                                message = "City option execution failed",
+                                civName = civInfo.civName,
+                                turn = civInfo.gameInfo.turns,
+                                details = mapOf(
+                                    "candidateId" to action.candidateId,
+                                    "error" to (ex.message ?: ex::class.simpleName.orEmpty()),
+                                ),
+                            )
+                        }
+                        false
+                    }
+
+                    if (success) {
+                        executed++
+                        outcomes += ActionOutcome(
+                            commandType = "select_city_option",
+                            status = ActionStatus.Executed,
+                            reason = candidate.successMessage,
+                            candidateId = action.candidateId,
+                        )
+                    } else {
+                        rejected++
+                        outcomes += ActionOutcome(
+                            commandType = "select_city_option",
+                            status = ActionStatus.Rejected,
+                            reason = "City option rejected: execution produced no state change",
+                            candidateId = action.candidateId,
+                        )
+                    }
+                }
+
+                is AgentActionCommand.SelectUnitOption -> {
+                    if (!usedUnitCandidateIds.add(action.candidateId)) {
+                        rejected++
+                        outcomes += ActionOutcome(
+                            commandType = "select_unit_option",
+                            status = ActionStatus.Rejected,
+                            reason = "Unit option rejected: candidate selected more than once",
+                            candidateId = action.candidateId,
+                        )
+                        continue
+                    }
+
+                    val context = AgentUnitOptionBuilder.build(civInfo)
+                    val candidate = context.candidates[action.candidateId]
+                    if (candidate == null) {
+                        rejected++
+                        outcomes += ActionOutcome(
+                            commandType = "select_unit_option",
+                            status = ActionStatus.Rejected,
+                            reason = "Unit option rejected: candidate missing",
+                            candidateId = action.candidateId,
+                        )
+                        continue
+                    }
+
+                    val invalidReason = candidate.validate(civInfo)
+                    if (invalidReason != null) {
+                        rejected++
+                        outcomes += ActionOutcome(
+                            commandType = "select_unit_option",
+                            status = ActionStatus.Rejected,
+                            reason = invalidReason,
+                            candidateId = action.candidateId,
+                        )
+                        continue
+                    }
+
+                    val success = runCatching { candidate.execute(civInfo) }.getOrElse { ex ->
+                        if (recordActionErrors) {
+                            AgentObservability.record(
+                                type = "plan_action_error",
+                                message = "Unit option execution failed",
+                                civName = civInfo.civName,
+                                turn = civInfo.gameInfo.turns,
+                                details = mapOf(
+                                    "candidateId" to action.candidateId,
+                                    "error" to (ex.message ?: ex::class.simpleName.orEmpty()),
+                                ),
+                            )
+                        }
+                        false
+                    }
+
+                    if (success) {
+                        executed++
+                        outcomes += ActionOutcome(
+                            commandType = "select_unit_option",
+                            status = ActionStatus.Executed,
+                            reason = candidate.successMessage,
+                            candidateId = action.candidateId,
+                        )
+                    } else {
+                        rejected++
+                        outcomes += ActionOutcome(
+                            commandType = "select_unit_option",
+                            status = ActionStatus.Rejected,
+                            reason = "Unit option rejected: execution produced no state change",
+                            candidateId = action.candidateId,
+                        )
+                    }
+                }
+
                 is AgentActionCommand.UnitMove -> {
                     val unit = civInfo.units.getCivUnits().firstOrNull { it.id == action.unitId }
                     val destinationCoord = HexCoord(action.destinationX, action.destinationY)

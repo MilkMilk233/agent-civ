@@ -14,6 +14,7 @@ data class AgentRetryContext(
 data class AgentPlanFailure(
     val commandType: String,
     val detail: String,
+    val candidateId: String? = null,
     val unitId: Int? = null,
     val cityX: Int? = null,
     val cityY: Int? = null,
@@ -32,6 +33,7 @@ object AgentRetryContextFactory {
             AgentPlanFailure(
                 commandType = outcome.commandType,
                 detail = outcome.reason,
+                candidateId = outcome.candidateId,
                 unitId = outcome.unitId,
                 cityX = outcome.cityX,
                 cityY = outcome.cityY,

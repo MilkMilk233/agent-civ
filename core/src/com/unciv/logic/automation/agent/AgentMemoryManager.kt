@@ -259,6 +259,33 @@ object AgentMemoryManager {
                 )
             }
 
+        plan.actions
+            .filterIsInstance<AgentActionCommand.SelectCityOption>()
+            .forEach { action ->
+                val parsed = parseCityOptionCandidateId(action.candidateId) ?: return@forEach
+                val city = cityByKey[cityKey(parsed.cityX, parsed.cityY)]
+                when (parsed.kind) {
+                    "citypurchase" -> intentsByKey[cityKey(parsed.cityX, parsed.cityY)] = CityIntentMemory(
+                        cityX = parsed.cityX,
+                        cityY = parsed.cityY,
+                        cityName = city?.name ?: "(${parsed.cityX}, ${parsed.cityY})",
+                        intent = "invest_with_gold",
+                        target = parsed.payload,
+                        reasons = ArrayList(listOf("Gold purchase selected") + (city?.reasons?.take(2) ?: emptyList())),
+                        staleAfterTurn = turn + cityIntentHorizonTurns,
+                    )
+                    "cityfocus" -> intentsByKey[cityKey(parsed.cityX, parsed.cityY)] = CityIntentMemory(
+                        cityX = parsed.cityX,
+                        cityY = parsed.cityY,
+                        cityName = city?.name ?: "(${parsed.cityX}, ${parsed.cityY})",
+                        intent = "city_focus",
+                        target = parsed.payload,
+                        reasons = ArrayList(listOf("City focus adjusted") + (city?.reasons?.take(2) ?: emptyList())),
+                        staleAfterTurn = turn + cityIntentHorizonTurns,
+                    )
+                }
+            }
+
         return ArrayList(intentsByKey.values)
     }
 
@@ -268,18 +295,23 @@ object AgentMemoryManager {
         turn: Int,
     ): ArrayList<UnitAssignmentMemory> {
         val unitById = observation.actionableUnits.associateBy { it.id }
+        val assignmentsByUnitId = linkedMapOf<Int, UnitAssignmentMemory>()
         val commandsByUnit = linkedMapOf<Int, MutableList<AgentActionCommand>>()
 
         for (action in plan.actions.sortedBy { it.priority }) {
             when (action) {
+                is AgentActionCommand.SelectUnitOption -> {
+                    val assignment = deriveUnitOptionAssignment(action.candidateId, unitById, turn) ?: continue
+                    assignmentsByUnitId[assignment.unitId] = assignment
+                }
                 is AgentActionCommand.UnitMove -> commandsByUnit.getOrPut(action.unitId) { arrayListOf() }.add(action)
                 is AgentActionCommand.UnitAction -> commandsByUnit.getOrPut(action.unitId) { arrayListOf() }.add(action)
                 else -> Unit
             }
         }
 
-        val assignments = arrayListOf<UnitAssignmentMemory>()
         for ((unitId, commands) in commandsByUnit) {
+            if (unitId in assignmentsByUnitId) continue
             val unit = unitById[unitId]
             val lastMove = commands.filterIsInstance<AgentActionCommand.UnitMove>().lastOrNull()
             val lastAction = commands.filterIsInstance<AgentActionCommand.UnitAction>().lastOrNull()
@@ -287,10 +319,10 @@ object AgentMemoryManager {
             val targetY = lastMove?.destinationY ?: unit?.y
             val assignment = classifyAssignment(unit, lastAction?.actionType, targetX, targetY, turn)
             if (!shouldPersistUnitAssignment(unit, lastAction?.actionType, assignment)) continue
-            assignments += assignment.copy(unitId = unitId, unitName = unit?.name ?: assignment.unitName)
+            assignmentsByUnitId[unitId] = assignment.copy(unitId = unitId, unitName = unit?.name ?: assignment.unitName)
         }
 
-        return assignments
+        return ArrayList(assignmentsByUnitId.values)
     }
 
     private fun classifyAssignment(
@@ -361,10 +393,11 @@ object AgentMemoryManager {
         }
 
         if (assignment.role == "hold_position" &&
-            (unit?.role == "worker" || unit?.role == "settler" || unit?.role == "great_person") &&
-            (unit?.nearbyHostileUnits ?: 0) == 0 &&
-            (unit?.nearbyHostileCities ?: 0) == 0 &&
-            (unit?.health ?: 100) >= 100
+            unit != null &&
+            (unit.role == "worker" || unit.role == "settler" || unit.role == "great_person") &&
+            unit.nearbyHostileUnits == 0 &&
+            unit.nearbyHostileCities == 0 &&
+            unit.health >= 100
         ) {
             return false
         }
@@ -372,7 +405,115 @@ object AgentMemoryManager {
         return true
     }
 
+    private fun deriveUnitOptionAssignment(
+        candidateId: String,
+        unitById: Map<Int, ActionableUnitObservation>,
+        turn: Int,
+    ): UnitAssignmentMemory? {
+        val parsed = parseUnitOptionCandidateId(candidateId) ?: return null
+        val unit = unitById[parsed.unitId]
+        val assignment = when (parsed.kind) {
+            "unitattack" -> UnitAssignmentMemory(
+                unitId = parsed.unitId,
+                unitName = unit?.name ?: "",
+                role = "attack_target",
+                targetX = parsed.targetX,
+                targetY = parsed.targetY,
+                detail = "Grounded attack option",
+                staleAfterTurn = turn + unitAssignmentHorizonTurns,
+            )
+            "unitsettle" -> UnitAssignmentMemory(
+                unitId = parsed.unitId,
+                unitName = unit?.name ?: "",
+                role = "settle_city_site",
+                targetX = parsed.targetX,
+                targetY = parsed.targetY,
+                detail = "Grounded city-site option",
+                staleAfterTurn = turn + unitAssignmentHorizonTurns,
+            )
+            "unitspecial" -> classifyAssignment(unit, parsed.actionType, unit?.x, unit?.y, turn)
+                .copy(unitId = parsed.unitId, unitName = unit?.name ?: "")
+            else -> return null
+        }
+        val actionType = parsed.actionType
+        return assignment.takeIf { shouldPersistUnitAssignment(unit, actionType, it) }
+    }
+
     private fun cityKey(x: Int, y: Int): String = "$x,$y"
+
+    private fun parseCityOptionCandidateId(candidateId: String): ParsedCityOption? {
+        val parts = candidateId.split(":", limit = 3)
+        if (parts.size != 3) return null
+        val coords = parts[1].split(",", limit = 2)
+        if (coords.size != 2) return null
+        return ParsedCityOption(
+            kind = parts[0],
+            cityX = coords[0].toIntOrNull() ?: return null,
+            cityY = coords[1].toIntOrNull() ?: return null,
+            payload = parts[2],
+        )
+    }
+
+    private data class ParsedCityOption(
+        val kind: String,
+        val cityX: Int,
+        val cityY: Int,
+        val payload: String,
+    )
+
+    private fun parseUnitOptionCandidateId(candidateId: String): ParsedUnitOption? {
+        val parts = candidateId.split(":")
+        if (parts.size < 3) return null
+        val unitId = parts[1].toIntOrNull() ?: return null
+        return when (parts[0]) {
+            "unitattack" -> {
+                if (parts.size != 4) return null
+                val target = parseCoords(parts[3]) ?: return null
+                ParsedUnitOption(
+                    kind = parts[0],
+                    unitId = unitId,
+                    targetX = target.first,
+                    targetY = target.second,
+                )
+            }
+            "unitsettle" -> {
+                if (parts.size != 3) return null
+                val target = parseCoords(parts[2]) ?: return null
+                ParsedUnitOption(
+                    kind = parts[0],
+                    unitId = unitId,
+                    targetX = target.first,
+                    targetY = target.second,
+                )
+            }
+            "unitspecial" -> {
+                if (parts.size != 3) return null
+                ParsedUnitOption(
+                    kind = parts[0],
+                    unitId = unitId,
+                    actionType = parts[2],
+                )
+            }
+            else -> null
+        }
+    }
+
+    private fun parseCoords(raw: String): Pair<Int, Int>? {
+        val coords = raw.split(",", limit = 2)
+        if (coords.size != 2) return null
+        return Pair(
+            coords[0].toIntOrNull() ?: return null,
+            coords[1].toIntOrNull() ?: return null,
+        )
+    }
+
+    private data class ParsedUnitOption(
+        val kind: String,
+        val unitId: Int,
+        val targetX: Int? = null,
+        val targetY: Int? = null,
+        val actionType: String? = null,
+    )
 
     private fun ObservationFact.looksLikeSettlementOpportunity(): Boolean {
         val haystack = "${headline.lowercase()} ${detail.lowercase()} ${category.lowercase()}"
