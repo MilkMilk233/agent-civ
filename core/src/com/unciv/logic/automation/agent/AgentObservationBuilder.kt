@@ -32,10 +32,11 @@ object AgentObservationBuilder {
             .sortedBy { it.id }
             .toList()
         val visibleTargetCandidates = buildVisibleTargetCandidates(civInfo, allUnits)
+        val peacefulGrowthWindow = isPeacefulGrowthWindow(civInfo, visibleTargetCandidates)
         val cityOptionContext = AgentCityOptionBuilder.build(civInfo)
         val cityCandidates = civInfo.cities
             .sortedWith(compareBy<City> { it.name }.thenBy { it.location.toString() })
-            .map { buildCityCandidate(it, civInfo, visibleTargetCandidates) }
+            .map { buildCityCandidate(it, civInfo, visibleTargetCandidates, peacefulGrowthWindow) }
         val selectedCityCandidates = selectCityCandidates(cityCandidates)
         val selectedCities = selectedCityCandidates.map { candidate ->
             CityAttentionObservation(
@@ -61,12 +62,13 @@ object AgentObservationBuilder {
                 nearbyHostileCities = candidate.nearbyHostileCities,
                 reasons = candidate.reasons,
                 localFacts = candidate.localFacts,
+                topConstructionChoices = AgentCityOptionBuilder.rankConstructionChoices(candidate.city, 4).map { it.name },
                 cityOptionCandidates = cityOptionContext.observationsByCityKey["${candidate.city.location.x},${candidate.city.location.y}"]
                     ?: emptyList(),
             )
         }
 
-        val unitCandidates = allUnits.map { buildUnitCandidate(it, civInfo, visibleTargetCandidates) }
+        val unitCandidates = allUnits.map { buildUnitCandidate(it, civInfo, visibleTargetCandidates, peacefulGrowthWindow) }
         val selectedUnitCandidates = selectUnitCandidates(unitCandidates)
         val unitOptionContext = AgentUnitOptionBuilder.build(civInfo)
         val selectedUnits = selectedUnitCandidates.map { candidate ->
@@ -152,6 +154,7 @@ object AgentObservationBuilder {
                 unitCandidates = selectedUnitCandidates,
                 visibleTargetCandidates = visibleTargetCandidates,
                 opportunityFacts = opportunityFacts,
+                peacefulGrowthWindow = peacefulGrowthWindow,
             ),
             maxPriorityFacts,
         )
@@ -170,7 +173,15 @@ object AgentObservationBuilder {
                 quietUnits = (allUnits.size - selectedUnits.size).coerceAtLeast(0),
                 visibleTargetsOmitted = (visibleTargetCandidates.size - selectedTargets.size).coerceAtLeast(0),
                 lowerPriorityFactsOmitted = (
-                    buildPriorityFacts(civInfo, empireSummary, cityCandidates, unitCandidates, visibleTargetCandidates, opportunityFacts).size -
+                    buildPriorityFacts(
+                        civInfo,
+                        empireSummary,
+                        cityCandidates,
+                        unitCandidates,
+                        visibleTargetCandidates,
+                        opportunityFacts,
+                        peacefulGrowthWindow,
+                    ).size -
                         priorityFacts.size
                     ).coerceAtLeast(0),
                 lowerPriorityOpportunitiesOmitted = (
@@ -191,6 +202,7 @@ object AgentObservationBuilder {
         city: City,
         civInfo: Civilization,
         visibleTargetCandidates: List<VisibleTargetCandidate>,
+        peacefulGrowthWindow: Boolean,
     ): CityCandidate {
         val cityTile = city.getCenterTile()
         val productionPerTurn = city.cityStats.currentCityStats.production.roundToInt()
@@ -216,6 +228,8 @@ object AgentObservationBuilder {
         val facts = mutableListOf<ScoredFact>()
         val opportunities = mutableListOf<ScoredFact>()
         var score = 0
+        val rankedConstructionChoices = AgentCityOptionBuilder.rankConstructionChoices(city, 4)
+        val noWorkerExists = civInfo.units.getCivUnits().none { it.cache.hasUniqueToBuildImprovements }
 
         if (city.cityConstructions.currentConstructionName().isBlank()) {
             score += 95
@@ -234,6 +248,48 @@ object AgentObservationBuilder {
                 headline = "${city.name} can choose a new construction",
                 detail = "Pick a build from the curated construction options for this city.",
             )
+        }
+
+        if (peacefulGrowthWindow && nearbyHostileUnits == 0 && nearbyHostileCities == 0) {
+            rankedConstructionChoices.firstOrNull()?.let { topChoice ->
+                score += 55
+                reasons += "Peaceful opener should snowball"
+                opportunities += fact(
+                    priority = 135,
+                    category = "expand",
+                    severity = "warning",
+                    headline = "${city.name} should convert safety into growth",
+                    detail = "This calm opener favors decisive city development such as ${topChoice.name} instead of passive unit posture.",
+                )
+            }
+
+            if (noWorkerExists && rankedConstructionChoices.any { it.name == "Worker" }) {
+                score += 80
+                reasons += "Needs first worker"
+                facts += fact(
+                    priority = 155,
+                    category = "tiles",
+                    severity = "warning",
+                    headline = "${city.name} still needs the first worker",
+                    detail = "The capital has workable resource tiles, so getting a worker online quickly should be a high priority.",
+                )
+            }
+
+            if (civInfo.cities.size == 1 &&
+                city.population.population >= 2 &&
+                civInfo.getHappiness() > 0 &&
+                rankedConstructionChoices.any { it.name == "Settler" }
+            ) {
+                score += 75
+                reasons += "Can expand safely"
+                opportunities += fact(
+                    priority = 145,
+                    category = "expand",
+                    severity = "warning",
+                    headline = "${city.name} can expand to a second city soon",
+                    detail = "The opener is still calm, happiness is positive, and a settler is available to accelerate the empire.",
+                )
+            }
         }
 
         if (nearbyHostileUnits > 0 || nearbyHostileCities > 0) {
@@ -320,6 +376,7 @@ object AgentObservationBuilder {
         unit: MapUnit,
         civInfo: Civilization,
         visibleTargetCandidates: List<VisibleTargetCandidate>,
+        peacefulGrowthWindow: Boolean,
     ): UnitCandidate {
         val role = classifyUnitRole(unit)
         val threatRadius = if (unit.isMilitary()) 3 else 2
@@ -344,7 +401,7 @@ object AgentObservationBuilder {
         }
 
         if (unit.isExploring()) {
-            score += 10
+            score += if (peacefulGrowthWindow && unit.isMilitary() && nearbyHostileUnits == 0 && nearbyHostileCities == 0) 2 else 10
             reasons += "Exploring"
         }
 
@@ -396,6 +453,15 @@ object AgentObservationBuilder {
         if (unit.health < 70) {
             score += 18
             reasons += "Damaged"
+        }
+
+        if (peacefulGrowthWindow &&
+            unit.isMilitary() &&
+            nearbyHostileUnits == 0 &&
+            nearbyHostileCities == 0
+        ) {
+            score -= 18
+            localFacts += "Calm opener: military posturing is lower priority than city growth and expansion."
         }
 
         if (unit.hasMovement() && unit.isIdle()) {
@@ -543,6 +609,7 @@ object AgentObservationBuilder {
         unitCandidates: List<UnitCandidate>,
         visibleTargetCandidates: List<VisibleTargetCandidate>,
         opportunityFacts: List<ObservationFact>,
+        peacefulGrowthWindow: Boolean,
     ): List<ScoredFact> {
         val facts = mutableListOf<ScoredFact>()
 
@@ -573,6 +640,16 @@ object AgentObservationBuilder {
                 severity = "warning",
                 headline = "Some cities still need production choices",
                 detail = "${empireSummary.citiesNeedingProductionChoice} cities have no active construction queued.",
+            )
+        }
+
+        if (peacefulGrowthWindow && empireSummary.cityCount <= 1) {
+            facts += fact(
+                priority = 160,
+                category = "expand",
+                severity = "warning",
+                headline = "The opener is peaceful and should snowball now",
+                detail = "Use this quiet window for worker tempo, capital growth, and second-city expansion instead of passive military posture.",
             )
         }
 
@@ -695,8 +772,7 @@ object AgentObservationBuilder {
     }
 
     private fun buildConstructionOptions(city: City): List<String> {
-        val ranked = ConstructionAutomation(city.cityConstructions)
-            .getRankedConstructionChoices(limit = maxConstructionsPerCity)
+        val ranked = AgentCityOptionBuilder.rankConstructionChoices(city, maxConstructionsPerCity)
             .map { it.name }
             .toMutableList()
         val cityConstructions = city.cityConstructions
@@ -714,6 +790,18 @@ object AgentObservationBuilder {
             if (name !in ranked) ranked += name
         }
         return ranked.take(maxConstructionsPerCity)
+    }
+
+    private fun isPeacefulGrowthWindow(
+        civInfo: Civilization,
+        visibleTargetCandidates: List<VisibleTargetCandidate>,
+    ): Boolean {
+        if (civInfo.gameInfo.turns > 45) return false
+        if (civInfo.isAtWar()) return false
+        if (civInfo.getHappiness() < 0) return false
+        if (visibleTargetCandidates.any { it.isHostile }) return false
+        if (civInfo.getKnownCivs().any { !it.isBarbarian && !it.isCityState }) return false
+        return civInfo.cities.size <= 2
     }
 
     private fun collectAvailableUnitActions(unit: MapUnit): List<UnitAction> {

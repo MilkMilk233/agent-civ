@@ -60,7 +60,8 @@ object AgentPromptBuilder {
             - Trust Observation JSON over Memory JSON if they conflict.
             - Use Memory JSON to preserve continuity: keep strategicPosture consistent when still relevant, continue cityIntents and unitAssignments when the observation still supports them, and avoid repeating recentFailures.
             - Focus first on empireSummary, priorityFacts, citiesNeedingAttention, actionableUnits, visibleThreatsAndTargets, and opportunities.
-            - For city governance, each city in citiesNeedingAttention may include cityOptionCandidates for legal purchases, tile buys, and city focus changes. Use select_city_option only with those exact candidateId values.
+            - For city governance, each city in citiesNeedingAttention may include cityOptionCandidates for legal production changes, purchases, tile buys, and city focus changes. Use select_city_option only with those exact candidateId values.
+            - Cities may also list topConstructionChoices. When the opener is peaceful, city development is usually more important than passive unit posture.
             - For tactical control, actionableUnits may include unitOptionCandidates for grounded attack, settlement, and recovery choices. Use select_unit_option only with those exact candidateId values.
             - Treat omittedSummary as a sign that quieter state exists, but only act through the entities explicitly listed in the observation.
             - Use select_empire_option only with exact candidateId values from Empire Observation JSON.
@@ -68,10 +69,14 @@ object AgentPromptBuilder {
             - Diplomacy candidates may include declarations of friendship, embassy requests, open borders, research agreements, defensive pacts, or luxury exchanges. Use only the exact candidateId values already present.
             - Spy candidates may include specific city assignments or coup preparation. Use only the exact candidateId values already present.
             - Prefer select_city_option for city purchases, tile buys, and city focus changes instead of describing those actions in notes.
+            - If cityOptionCandidates include construction candidates such as citybuild:..., prefer those exact candidateId values over inventing or paraphrasing build changes.
             - Prefer select_unit_option for attacks, settler city-site moves, founding on the current tile, and recovery/fortify choices when unitOptionCandidates are present.
             - If an actionable unit includes legalActionCandidates, copy the candidate actionType exactly.
             - If a legalActionCandidate includes moveDestinationX/moveDestinationY, emit a unit_move to that tile before the unit_action.
             - For workers especially, do not invent action names like BuildFarm, BuildQuarry, ImproveWorkedTile, or similar paraphrases. Use only exact actionType values already present in unitActions or legalActionCandidates.
+            - During a peaceful early opener, prioritize worker tempo, capital growth, and safe expansion over focus micro, fortify, skip, or empty no-op turns.
+            - Do not spend a calm opener turn only on passive military posture when a city still has strong growth or expansion choices.
+            - Avoid repeating macro or focus changes that previously produced no state change unless the observation clearly shows a new reason they matter now.
             - Use only unit IDs, cities, action types, tiles, and constructions present in the observation.
             - Do not invent entities.
             - Prefer short, legal plans (0-25 commands).

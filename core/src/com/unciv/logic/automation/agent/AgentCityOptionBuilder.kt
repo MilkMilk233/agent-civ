@@ -5,12 +5,18 @@ import com.unciv.logic.city.City
 import com.unciv.logic.city.CityFocus
 import com.unciv.logic.civilization.Civilization
 import com.unciv.logic.map.tile.Tile
+import com.unciv.models.ruleset.Building
+import com.unciv.models.ruleset.IConstruction
 import com.unciv.models.ruleset.INonPerpetualConstruction
 import com.unciv.models.ruleset.tile.ResourceType
+import com.unciv.models.ruleset.unit.BaseUnit
+import com.unciv.models.ruleset.unique.GameContext
+import com.unciv.models.ruleset.unique.UniqueType
 import com.unciv.models.stats.Stat
 import kotlin.math.roundToInt
 
 object AgentCityOptionBuilder {
+    private const val maxConstructionCandidatesPerCity = 4
     private const val maxPurchaseCandidatesPerCity = 3
     private const val maxTilePurchaseCandidatesPerCity = 3
     private const val maxFocusCandidatesPerCity = 4
@@ -23,6 +29,10 @@ object AgentCityOptionBuilder {
             val cityKey = cityKey(city.location.x, city.location.y)
             val observations = observationsByCity.getOrPut(cityKey) { arrayListOf() }
 
+            buildConstructionCandidates(city).forEach { candidate ->
+                candidates[candidate.observation.candidateId] = candidate
+                observations += candidate.observation
+            }
             buildPurchaseCandidates(city).forEach { candidate ->
                 candidates[candidate.observation.candidateId] = candidate
                 observations += candidate.observation
@@ -41,6 +51,80 @@ object AgentCityOptionBuilder {
             candidates = candidates,
             observationsByCityKey = observationsByCity,
         )
+    }
+
+    internal fun rankConstructionChoices(
+        city: City,
+        limit: Int = maxConstructionCandidatesPerCity,
+    ): List<RankedConstructionChoice> {
+        val automation = ConstructionAutomation(city.cityConstructions)
+        val orderedNames = buildList {
+            addAll(automation.getRankedConstructionChoices(limit = limit * 3).map { it.name })
+            addAll(city.cityConstructions.getBuildableBuildings().map { it.name })
+            addAll(city.cityConstructions.getConstructableUnits().map { it.name })
+        }.distinct()
+
+        return orderedNames
+            .mapIndexedNotNull { index, name ->
+                val construction = runCatching { city.cityConstructions.getConstruction(name) }.getOrNull()
+                    ?: return@mapIndexedNotNull null
+                if (!construction.isBuildable(city.cityConstructions)) return@mapIndexedNotNull null
+                val score = scoreConstructionChoice(city, construction, index)
+                if (score <= 0) return@mapIndexedNotNull null
+                RankedConstructionChoice(
+                    name = name,
+                    score = score,
+                    detail = describeConstructionChoice(city, construction),
+                )
+            }
+            .sortedWith(compareByDescending<RankedConstructionChoice> { it.score }.thenBy { it.name })
+            .take(limit)
+    }
+
+    internal fun isPeacefulGrowthWindow(city: City): Boolean {
+        val civInfo = city.civ
+        if (civInfo.gameInfo.turns > 45) return false
+        if (civInfo.isAtWar()) return false
+        if (civInfo.getHappiness() < 0) return false
+        if (civInfo.getKnownCivs().any { !it.isBarbarian && !it.isCityState }) return false
+        return civInfo.cities.size <= 2
+    }
+
+    private fun buildConstructionCandidates(city: City): List<AgentCityRuntimeCandidate> {
+        return rankConstructionChoices(city, maxConstructionCandidatesPerCity)
+            .map { choice ->
+                val candidateId = "citybuild:${city.location.x},${city.location.y}:${choice.name}"
+                AgentCityRuntimeCandidate(
+                    observation = CityOptionCandidateObservation(
+                        candidateId = candidateId,
+                        category = "construction",
+                        title = "Queue ${choice.name}",
+                        detail = choice.detail,
+                    ),
+                    validate = { currentCiv ->
+                        val liveCity = currentCiv.cities.firstOrNull { it.location == city.location }
+                            ?: return@AgentCityRuntimeCandidate "City option rejected: city missing"
+                        val liveConstruction = runCatching {
+                            liveCity.cityConstructions.getConstruction(choice.name)
+                        }.getOrNull()
+                            ?: return@AgentCityRuntimeCandidate "City option rejected: construction is no longer available"
+                        if (!liveConstruction.isBuildable(liveCity.cityConstructions)) {
+                            return@AgentCityRuntimeCandidate "City option rejected: construction is no longer buildable"
+                        }
+                        null
+                    },
+                    execute = { currentCiv ->
+                        val liveCity = currentCiv.cities.firstOrNull { it.location == city.location } ?: return@AgentCityRuntimeCandidate false
+                        val liveConstruction = runCatching { liveCity.cityConstructions.getConstruction(choice.name) }.getOrNull()
+                            ?: return@AgentCityRuntimeCandidate false
+                        if (!liveConstruction.isBuildable(liveCity.cityConstructions)) return@AgentCityRuntimeCandidate false
+                        if (liveCity.cityConstructions.currentConstructionName() == choice.name) return@AgentCityRuntimeCandidate false
+                        liveCity.cityConstructions.setCurrentConstruction(choice.name)
+                        true
+                    },
+                    successMessage = "${city.name} switched production to ${choice.name}",
+                )
+            }
     }
 
     private fun buildPurchaseCandidates(city: City): List<AgentCityRuntimeCandidate> {
@@ -112,7 +196,6 @@ object AgentCityOptionBuilder {
                         val liveCity = currentCiv.cities.firstOrNull { it.location == city.location }
                             ?: return@AgentCityRuntimeCandidate "City option rejected: city missing"
                         val liveTile = currentCiv.gameInfo.tileMap[tile.position]
-                            ?: return@AgentCityRuntimeCandidate "City option rejected: tile missing"
                         if (!liveCity.expansion.canBuyTile(liveTile)) {
                             return@AgentCityRuntimeCandidate "City option rejected: tile can no longer be bought"
                         }
@@ -120,7 +203,7 @@ object AgentCityOptionBuilder {
                     },
                     execute = { currentCiv ->
                         val liveCity = currentCiv.cities.firstOrNull { it.location == city.location } ?: return@AgentCityRuntimeCandidate false
-                        val liveTile = currentCiv.gameInfo.tileMap[tile.position] ?: return@AgentCityRuntimeCandidate false
+                        val liveTile = currentCiv.gameInfo.tileMap[tile.position]
                         liveCity.expansion.buyTile(liveTile)
                         true
                     },
@@ -133,18 +216,19 @@ object AgentCityOptionBuilder {
     private fun buildFocusCandidates(city: City): List<AgentCityRuntimeCandidate> {
         val currentFocus = city.getCityFocus()
         val candidates = linkedSetOf<CityFocus>()
+        val peacefulGrowthWindow = isPeacefulGrowthWindow(city)
 
         if (city.population.getNumTurnsToStarvation() != null || city.foodForNextTurn() < 0) candidates += CityFocus.FoodFocus
         if (city.cityConstructions.currentConstructionName().isBlank() || city.getThreatScore() > 0) candidates += CityFocus.ProductionFocus
-        if (city.civ.gold < 100) candidates += CityFocus.GoldFocus
-        if (city.civ.gameInfo.isReligionEnabled() && city.cityStats.currentCityStats.faith > 0f) candidates += CityFocus.FaithFocus
+        if (!peacefulGrowthWindow && city.civ.gold < 100) candidates += CityFocus.GoldFocus
+        if (!peacefulGrowthWindow && city.civ.gameInfo.isReligionEnabled() && city.cityStats.currentCityStats.faith > 0f) candidates += CityFocus.FaithFocus
         if (city.cityStats.currentCityStats.science > 0f) candidates += CityFocus.ScienceFocus
-        if (city.cityStats.currentCityStats.culture > 0f) candidates += CityFocus.CultureFocus
+        if (!peacefulGrowthWindow && city.cityStats.currentCityStats.culture > 0f) candidates += CityFocus.CultureFocus
         candidates += CityFocus.NoFocus
 
         return candidates
             .filter { it != CityFocus.Manual && it != currentFocus }
-            .take(maxFocusCandidatesPerCity)
+            .take(if (peacefulGrowthWindow) 2 else maxFocusCandidatesPerCity)
             .map { focus ->
                 val candidateId = "cityfocus:${city.location.x},${city.location.y}:${focus.name}"
                 AgentCityRuntimeCandidate(
@@ -211,6 +295,90 @@ object AgentCityOptionBuilder {
         return pieces.joinToString(", ")
     }
 
+    private fun scoreConstructionChoice(
+        city: City,
+        construction: IConstruction,
+        baseIndex: Int,
+    ): Int {
+        val civInfo = city.civ
+        val peacefulGrowthWindow = isPeacefulGrowthWindow(city)
+        val noWorkerExists = civInfo.units.getCivUnits().none { it.cache.hasUniqueToBuildImprovements }
+        val singleCity = civInfo.cities.size == 1
+        val currentName = city.cityConstructions.currentConstructionName()
+
+        var score = 220 - baseIndex * 18
+        if (construction is Building && construction.isAnyWonder() && peacefulGrowthWindow && noWorkerExists) score -= 80
+        if (construction is BaseUnit && construction.isMilitary && peacefulGrowthWindow && singleCity) score -= 15
+        if (construction.name == currentName) score -= 40
+
+        when (construction) {
+            is BaseUnit -> {
+                if (construction.hasUnique(UniqueType.BuildImprovements, GameContext.IgnoreConditionals)) {
+                    score += if (noWorkerExists) 180 else 30
+                    if (peacefulGrowthWindow) score += 50
+                }
+                if (construction.isCityFounder()) {
+                    if (singleCity && peacefulGrowthWindow && city.population.population >= 2 && civInfo.getHappiness() > 0) {
+                        score += 150
+                    } else {
+                        score += 20
+                    }
+                }
+                if (construction.name == "Scout" && peacefulGrowthWindow && civInfo.units.getCivUnits().count { it.name == construction.name } == 0) {
+                    score += 25
+                }
+            }
+            is Building -> {
+                when (construction.name) {
+                    "Granary" -> if (peacefulGrowthWindow && city.population.population <= 3) score += 95
+                    "Monument" -> if (civInfo.gameInfo.turns <= 35) score += 70
+                    "Library" -> if (civInfo.gameInfo.turns >= 20) score += 45
+                    "Shrine" -> if (peacefulGrowthWindow) score -= 10
+                }
+            }
+        }
+
+        return score
+    }
+
+    private fun describeConstructionChoice(city: City, construction: IConstruction): String {
+        val civInfo = city.civ
+        val peacefulGrowthWindow = isPeacefulGrowthWindow(city)
+        val noWorkerExists = civInfo.units.getCivUnits().none { it.cache.hasUniqueToBuildImprovements }
+        val singleCity = civInfo.cities.size == 1
+
+        val reasons = arrayListOf<String>()
+        when (construction) {
+            is BaseUnit -> {
+                if (construction.hasUnique(UniqueType.BuildImprovements, GameContext.IgnoreConditionals) && noWorkerExists) {
+                    reasons += "No worker exists yet; this is a high-priority peaceful opener build"
+                }
+                if (construction.isCityFounder() && singleCity && peacefulGrowthWindow && city.population.population >= 2) {
+                    reasons += "Safe one-city opener; a second city accelerates the snowball"
+                }
+                if (construction.name == "Scout" && peacefulGrowthWindow) {
+                    reasons += "Extra map vision is still useful while the map is quiet"
+                }
+                if (construction.isMilitary && peacefulGrowthWindow && singleCity) {
+                    reasons += "Military value is lower than growth and expansion right now"
+                }
+            }
+            is Building -> {
+                when (construction.name) {
+                    "Granary" -> reasons += "Improves early growth and helps the capital scale"
+                    "Monument" -> reasons += "Speeds early culture and policy tempo"
+                    "Library" -> reasons += "Improves early science once the opener is stable"
+                }
+                if (construction.isAnyWonder() && peacefulGrowthWindow) {
+                    reasons += "Wonders are lower priority than worker/settler tempo in this opener"
+                }
+            }
+        }
+
+        if (reasons.isEmpty()) reasons += "Ranked city development option from current game state"
+        return reasons.joinToString(". ")
+    }
+
     private fun City.getThreatScore(): Int {
         val cityTile = getCenterTile()
         return civ.viewableTiles.count { tile ->
@@ -230,6 +398,12 @@ object AgentCityOptionBuilder {
         val validate: (Civilization) -> String?,
         val execute: (Civilization) -> Boolean,
         val successMessage: String,
+    )
+
+    internal data class RankedConstructionChoice(
+        val name: String,
+        val score: Int,
+        val detail: String,
     )
 
     private data class TilePurchaseCandidate(

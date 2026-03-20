@@ -142,7 +142,9 @@ object AgentMemoryManager {
         plan: AgentActionPlan?,
         turn: Int,
     ): StrategicPostureMemory {
+        val peacefulSnowballWindow = isPeacefulSnowballWindow(observation, turn)
         val mode = when {
+            peacefulSnowballWindow -> "peaceful_snowball"
             observation.empireSummary.visibleHostileUnits > 0 ||
                 observation.citiesNeedingAttention.any { it.nearbyHostileUnits > 0 || it.nearbyHostileCities > 0 } -> "defend_and_stabilize"
             observation.empireSummary.settlersReady > 0 ||
@@ -265,6 +267,15 @@ object AgentMemoryManager {
                 val parsed = parseCityOptionCandidateId(action.candidateId) ?: return@forEach
                 val city = cityByKey[cityKey(parsed.cityX, parsed.cityY)]
                 when (parsed.kind) {
+                    "citybuild" -> intentsByKey[cityKey(parsed.cityX, parsed.cityY)] = CityIntentMemory(
+                        cityX = parsed.cityX,
+                        cityY = parsed.cityY,
+                        cityName = city?.name ?: "(${parsed.cityX}, ${parsed.cityY})",
+                        intent = "develop_city",
+                        target = parsed.payload,
+                        reasons = ArrayList(listOf("Production plan selected") + (city?.reasons?.take(2) ?: emptyList())),
+                        staleAfterTurn = turn + cityIntentHorizonTurns,
+                    )
                     "citypurchase" -> intentsByKey[cityKey(parsed.cityX, parsed.cityY)] = CityIntentMemory(
                         cityX = parsed.cityX,
                         cityY = parsed.cityY,
@@ -372,6 +383,13 @@ object AgentMemoryManager {
             "hold position",
             "preserve",
             "automate",
+            "fortify",
+            "garrison",
+            "sciencefocus",
+            "goldfocus",
+            "culturefocus",
+            "foodfocus",
+            "faithfocus",
         )
         return lowSignalMarkers.none { it in lower }
     }
@@ -398,6 +416,17 @@ object AgentMemoryManager {
             unit.nearbyHostileUnits == 0 &&
             unit.nearbyHostileCities == 0 &&
             unit.health >= 100
+        ) {
+            return false
+        }
+
+        if (assignment.role == "hold_position" &&
+            unit != null &&
+            unit.nearbyHostileUnits == 0 &&
+            unit.nearbyHostileCities == 0 &&
+            unit.health >= 100 &&
+            unit.role in setOf("melee", "ranged", "siege", "naval_melee", "naval_ranged") &&
+            isPeacefulSnowballWindow(unit, turn = null)
         ) {
             return false
         }
@@ -523,5 +552,25 @@ object AgentMemoryManager {
     private fun ObservationFact.looksLikeImprovementOpportunity(): Boolean {
         val haystack = "${headline.lowercase()} ${detail.lowercase()} ${category.lowercase()}"
         return "improve" in haystack || "repair" in haystack || "resource" in haystack || "worker" in haystack
+    }
+
+    private fun isPeacefulSnowballWindow(observation: AgentObservation, turn: Int): Boolean {
+        if (turn > 45) return false
+        if (observation.empireSummary.isAtWar) return false
+        if (observation.empireSummary.visibleHostileUnits > 0) return false
+        if (observation.empireSummary.visibleForeignCities > 0) return false
+        if (observation.empireSummary.cityCount > 1) return false
+        if (observation.empireSummary.happiness < 0) return false
+        return observation.opportunities.any { it.looksLikeSettlementOpportunity() } ||
+            observation.opportunities.any { it.looksLikeImprovementOpportunity() } ||
+            observation.citiesNeedingAttention.any { city ->
+                city.topConstructionChoices.any { it == "Worker" || it == "Settler" || it == "Granary" || it == "Monument" }
+            }
+    }
+
+    private fun isPeacefulSnowballWindow(unit: ActionableUnitObservation, turn: Int?): Boolean {
+        if (turn != null && turn > 45) return false
+        if (unit.nearbyHostileUnits > 0 || unit.nearbyHostileCities > 0) return false
+        return true
     }
 }

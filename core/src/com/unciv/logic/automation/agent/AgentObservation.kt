@@ -70,6 +70,7 @@ data class CityAttentionObservation(
     val nearbyHostileCities: Int,
     val reasons: List<String>,
     val localFacts: List<String>,
+    val topConstructionChoices: List<String> = emptyList(),
     val cityOptionCandidates: List<CityOptionCandidateObservation> = emptyList(),
 )
 

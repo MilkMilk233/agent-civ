@@ -13,6 +13,7 @@ import com.unciv.logic.civilization.Civilization
 import com.unciv.logic.civilization.managers.ReligionState
 import com.unciv.models.ruleset.Policy
 import com.unciv.models.ruleset.tech.Technology
+import com.unciv.ui.screens.worldscreen.unit.actions.UnitActionsUpgrade
 import kotlin.math.roundToInt
 
 object AgentEmpireObservationBuilder {
@@ -196,16 +197,16 @@ object AgentEmpireObservationBuilder {
     private fun buildMacroCandidates(civInfo: Civilization): List<AgentEmpireRuntimeCandidate> {
         val candidates = arrayListOf<AgentEmpireRuntimeCandidate>()
 
-        if (civInfo.gold > 0) {
+        if (shouldOfferGoldMacro(civInfo)) {
             candidates += AgentEmpireRuntimeCandidate(
                 observation = AgentEmpireChoiceCandidateObservation(
                     candidateId = "macro:gold:auto",
                     category = "macro",
                     title = "Spend gold using empire heuristics",
-                    detail = "May upgrade units, rush current construction, or buy valuable nearby tiles when worthwhile.",
+                    detail = "May upgrade units or invest gold in empire-wide heuristics when a meaningful use is already available.",
                 ),
                 validate = { currentCiv ->
-                    if (currentCiv.gold > 0) null else "Empire option rejected: no gold is available"
+                    if (shouldOfferGoldMacro(currentCiv)) null else "Empire option rejected: no meaningful empire-wide gold spend is currently available"
                 },
                 execute = { currentCiv ->
                     val before = goldFingerprint(currentCiv)
@@ -239,6 +240,28 @@ object AgentEmpireObservationBuilder {
 
         candidates += buildBombardCandidates(civInfo)
         return candidates
+    }
+
+    private fun shouldOfferGoldMacro(civInfo: Civilization): Boolean {
+        if (civInfo.gold <= 0) return false
+        if (hasAffordableUnitUpgrade(civInfo)) return true
+        if (hasMeaningfulCityStateGoldAction(civInfo)) return true
+        return false
+    }
+
+    private fun hasAffordableUnitUpgrade(civInfo: Civilization): Boolean {
+        return civInfo.units.getCivUnits().any { unit ->
+            UnitActionsUpgrade.getUpgradeActions(unit).any { it.action != null }
+        }
+    }
+
+    private fun hasMeaningfulCityStateGoldAction(civInfo: Civilization): Boolean {
+        val knownCityStates = civInfo.getKnownCivs().filter { it.isCityState }
+        if (knownCityStates.none()) return false
+        if (civInfo.gold >= 330 && civInfo.getHappiness() > 0 && civInfo.hasUnique(com.unciv.models.ruleset.unique.UniqueType.CityStateCanBeBoughtForGold)) {
+            return true
+        }
+        return civInfo.gold >= 500
     }
 
     private fun buildBombardCandidates(civInfo: Civilization): List<AgentEmpireRuntimeCandidate> {
