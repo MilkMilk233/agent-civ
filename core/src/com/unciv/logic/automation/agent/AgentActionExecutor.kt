@@ -252,7 +252,7 @@ class AgentActionExecutor {
                         continue
                     }
 
-                    val context = AgentUnitOptionBuilder.build(civInfo)
+                    val context = AgentUnitOptionBuilder.build(civInfo, civInfo.agentMemory)
                     val candidate = context.candidates[action.candidateId]
                     if (candidate == null) {
                         rejected++

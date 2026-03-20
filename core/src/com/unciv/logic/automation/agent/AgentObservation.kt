@@ -70,8 +70,21 @@ data class CityAttentionObservation(
     val nearbyHostileCities: Int,
     val reasons: List<String>,
     val localFacts: List<String>,
+    val constructionProgress: ConstructionProgressObservation? = null,
     val topConstructionChoices: List<String> = emptyList(),
     val cityOptionCandidates: List<CityOptionCandidateObservation> = emptyList(),
+)
+
+@Serializable
+data class ConstructionProgressObservation(
+    val intent: String? = null,
+    val target: String? = null,
+    val turnsLeft: Int? = null,
+    val workDone: Int? = null,
+    val workRemaining: Int? = null,
+    val status: String,
+    val progressNote: String,
+    val switchCost: String,
 )
 
 @Serializable
@@ -103,6 +116,18 @@ data class ActionableUnitObservation(
     val nearbyHostileCities: Int,
     val reasons: List<String>,
     val localFacts: List<String>,
+    val assignmentProgress: UnitAssignmentProgressObservation? = null,
+)
+
+@Serializable
+data class UnitAssignmentProgressObservation(
+    val role: String,
+    val targetX: Int? = null,
+    val targetY: Int? = null,
+    val detail: String? = null,
+    val status: String,
+    val progressNote: String,
+    val switchCost: String,
 )
 
 @Serializable

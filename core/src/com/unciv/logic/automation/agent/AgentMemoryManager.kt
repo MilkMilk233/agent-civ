@@ -257,6 +257,7 @@ object AgentMemoryManager {
                     intent = intent,
                     target = action.constructionName,
                     reasons = ArrayList(city?.reasons?.take(3) ?: emptyList()),
+                    lastProgressTurn = turn,
                     staleAfterTurn = turn + cityIntentHorizonTurns,
                 )
             }
@@ -274,6 +275,7 @@ object AgentMemoryManager {
                         intent = "develop_city",
                         target = parsed.payload,
                         reasons = ArrayList(listOf("Production plan selected") + (city?.reasons?.take(2) ?: emptyList())),
+                        lastProgressTurn = turn,
                         staleAfterTurn = turn + cityIntentHorizonTurns,
                     )
                     "citypurchase" -> intentsByKey[cityKey(parsed.cityX, parsed.cityY)] = CityIntentMemory(
@@ -283,6 +285,7 @@ object AgentMemoryManager {
                         intent = "invest_with_gold",
                         target = parsed.payload,
                         reasons = ArrayList(listOf("Gold purchase selected") + (city?.reasons?.take(2) ?: emptyList())),
+                        lastProgressTurn = turn,
                         staleAfterTurn = turn + cityIntentHorizonTurns,
                     )
                     "cityfocus" -> intentsByKey[cityKey(parsed.cityX, parsed.cityY)] = CityIntentMemory(
@@ -292,6 +295,7 @@ object AgentMemoryManager {
                         intent = "city_focus",
                         target = parsed.payload,
                         reasons = ArrayList(listOf("City focus adjusted") + (city?.reasons?.take(2) ?: emptyList())),
+                        lastProgressTurn = turn,
                         staleAfterTurn = turn + cityIntentHorizonTurns,
                     )
                 }
@@ -306,13 +310,16 @@ object AgentMemoryManager {
         turn: Int,
     ): ArrayList<UnitAssignmentMemory> {
         val unitById = observation.actionableUnits.associateBy { it.id }
+        val unitOptionByCandidateId = observation.actionableUnits
+            .flatMap { it.unitOptionCandidates }
+            .associateBy { it.candidateId }
         val assignmentsByUnitId = linkedMapOf<Int, UnitAssignmentMemory>()
         val commandsByUnit = linkedMapOf<Int, MutableList<AgentActionCommand>>()
 
         for (action in plan.actions.sortedBy { it.priority }) {
             when (action) {
                 is AgentActionCommand.SelectUnitOption -> {
-                    val assignment = deriveUnitOptionAssignment(action.candidateId, unitById, turn) ?: continue
+                    val assignment = deriveUnitOptionAssignment(action.candidateId, unitById, unitOptionByCandidateId, turn) ?: continue
                     assignmentsByUnitId[assignment.unitId] = assignment
                 }
                 is AgentActionCommand.UnitMove -> commandsByUnit.getOrPut(action.unitId) { arrayListOf() }.add(action)
@@ -365,6 +372,7 @@ object AgentMemoryManager {
             targetX = targetX,
             targetY = targetY,
             detail = normalized.ifBlank { if (targetX != null && targetY != null) "Move to ($targetX, $targetY)" else null },
+            lastProgressTurn = turn,
             staleAfterTurn = turn + unitAssignmentHorizonTurns,
         )
     }
@@ -437,10 +445,12 @@ object AgentMemoryManager {
     private fun deriveUnitOptionAssignment(
         candidateId: String,
         unitById: Map<Int, ActionableUnitObservation>,
+        candidateObservations: Map<String, UnitOptionCandidateObservation>,
         turn: Int,
     ): UnitAssignmentMemory? {
         val parsed = parseUnitOptionCandidateId(candidateId) ?: return null
         val unit = unitById[parsed.unitId]
+        val observation = candidateObservations[candidateId]
         val assignment = when (parsed.kind) {
             "unitattack" -> UnitAssignmentMemory(
                 unitId = parsed.unitId,
@@ -448,7 +458,8 @@ object AgentMemoryManager {
                 role = "attack_target",
                 targetX = parsed.targetX,
                 targetY = parsed.targetY,
-                detail = "Grounded attack option",
+                detail = observation?.detail ?: "Grounded attack option",
+                lastProgressTurn = turn,
                 staleAfterTurn = turn + unitAssignmentHorizonTurns,
             )
             "unitsettle" -> UnitAssignmentMemory(
@@ -457,7 +468,18 @@ object AgentMemoryManager {
                 role = "settle_city_site",
                 targetX = parsed.targetX,
                 targetY = parsed.targetY,
-                detail = "Grounded city-site option",
+                detail = observation?.detail ?: "Grounded city-site option",
+                lastProgressTurn = turn,
+                staleAfterTurn = turn + unitAssignmentHorizonTurns,
+            )
+            "unitworkerimprove", "unitworkerreposition" -> UnitAssignmentMemory(
+                unitId = parsed.unitId,
+                unitName = unit?.name ?: "",
+                role = "improve_tile",
+                targetX = parsed.targetX,
+                targetY = parsed.targetY,
+                detail = observation?.detail ?: observation?.title ?: "Grounded worker job",
+                lastProgressTurn = turn,
                 staleAfterTurn = turn + unitAssignmentHorizonTurns,
             )
             "unitspecial" -> classifyAssignment(unit, parsed.actionType, unit?.x, unit?.y, turn)
@@ -506,6 +528,27 @@ object AgentMemoryManager {
                 )
             }
             "unitsettle" -> {
+                if (parts.size != 3) return null
+                val target = parseCoords(parts[2]) ?: return null
+                ParsedUnitOption(
+                    kind = parts[0],
+                    unitId = unitId,
+                    targetX = target.first,
+                    targetY = target.second,
+                )
+            }
+            "unitworkerimprove" -> {
+                if (parts.size < 4) return null
+                val target = parseCoords(parts[2]) ?: return null
+                ParsedUnitOption(
+                    kind = parts[0],
+                    unitId = unitId,
+                    targetX = target.first,
+                    targetY = target.second,
+                    actionType = parts.getOrNull(3),
+                )
+            }
+            "unitworkerreposition" -> {
                 if (parts.size != 3) return null
                 val target = parseCoords(parts[2]) ?: return null
                 ParsedUnitOption(

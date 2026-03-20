@@ -34,13 +34,29 @@ object AgentEmpireObservationBuilder {
         (researchCandidates + policyCandidates + macroCandidates + diplomacyCandidates + spyCandidates).forEach { candidate ->
             candidateMap[candidate.observation.candidateId] = candidate
         }
+        val currentResearch = civInfo.tech.currentTechnologyName()
+        val currentResearchProgress = currentResearch?.let { civInfo.tech.researchOfTech(it) }
+        val currentResearchCost = currentResearch?.let { civInfo.tech.costOfTech(it) }
+        val currentResearchTurnsLeft = currentResearch?.let {
+            if (civInfo.stats.statsForNextTurn.science <= 0f) null else civInfo.tech.turnsToTech(it).toIntOrNull()
+        }
+        val currentResearchStatus = when {
+            currentResearch == null -> "needs_research_choice"
+            currentResearchTurnsLeft != null && currentResearchTurnsLeft <= 2 -> "nearly_complete"
+            currentResearchProgress != null && currentResearchProgress > 0 -> "in_progress"
+            else -> "queued"
+        }
 
         val observation = AgentEmpireObservation(
             turn = civInfo.gameInfo.turns,
             civName = civInfo.civName,
             strategicPosture = memory.strategicPosture.mode,
             isAtWar = civInfo.isAtWar(),
-            currentResearch = civInfo.tech.currentTechnologyName(),
+            currentResearch = currentResearch,
+            currentResearchTurnsLeft = currentResearchTurnsLeft,
+            currentResearchProgress = currentResearchProgress,
+            currentResearchCost = currentResearchCost,
+            currentResearchStatus = currentResearchStatus,
             freeTechs = civInfo.tech.freeTechs,
             storedCulture = civInfo.policies.storedCulture,
             freePolicies = civInfo.policies.freePolicies,

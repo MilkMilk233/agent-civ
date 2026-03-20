@@ -3244,26 +3244,6 @@
       return counts;
     }
 
-    function inferPlannedDomainCounts(actions) {
-      const counts = Object.fromEntries(CONTROL_DOMAINS.map(domain => [domain, 0]));
-      for (const action of listOrEmpty(actions)) {
-        const type = String(action?.type || action?.actionType || action?.kind || '');
-        const candidateId = String(action?.candidateId || '');
-        let domain = null;
-        if (type === 'select_empire_option') {
-          domain = candidateId.startsWith('diplo:') || candidateId.startsWith('trade:') || candidateId.startsWith('spy:')
-            ? 'diplomacy'
-            : 'empire';
-        } else if (type === 'select_city_option' || type === 'city_choose_construction') {
-          domain = 'city';
-        } else if (type === 'select_unit_option' || type === 'unit_move' || type === 'unit_action') {
-          domain = 'unit';
-        }
-        if (domain) counts[domain] = (counts[domain] || 0) + 1;
-      }
-      return counts;
-    }
-
     function normalizeOutcomeDomainSummary(items) {
       const rows = listOrEmpty(items)
         .filter(item => item && typeof item === 'object' && item.domain)
@@ -3279,29 +3259,6 @@
         if (!seen.has(domain)) rows.push({ domain, planned: 0, executed: 0, rejected: 0 });
       }
       return rows;
-    }
-
-    function deriveDomainSupportData(observationData, empireObservationData) {
-      const cities = observationCities(observationData);
-      const units = observationUnits(observationData);
-      return {
-        supportedDomains: CONTROL_DOMAINS.slice(),
-        availableCandidatesByDomain: {
-          empire:
-            empireResearchCandidates(empireObservationData).length
-            + empirePolicyCandidates(empireObservationData).length
-            + empireMacroCandidates(empireObservationData).length,
-          city:
-            cities.reduce((sum, city) => sum + listOrEmpty(city.cityOptionCandidates).length, 0)
-            + cities.filter(city => listOrEmpty(city.availableConstructions).length > 0).length,
-          unit:
-            units.reduce((sum, unit) => sum + listOrEmpty(unit.legalActionCandidates).length + listOrEmpty(unit.unitOptionCandidates).length, 0)
-            + units.filter(unit => unit.hasMovement).length,
-          diplomacy:
-            empireDiplomacyCandidates(empireObservationData).length
-            + empireSpyCandidates(empireObservationData).length,
-        },
-      };
     }
 
     function activeSupportedDomains(domainSupport) {
@@ -3876,10 +3833,7 @@
       const rawResponse = detailValue(responseEvent, 'rawResponse') || detailValue(parseErrorEvent, 'rawResponse') || null;
       const parsedPlanJson = detailValue(planParsedEvent, 'parsedPlan') || null;
 
-      const parsedPlan = (
-        tryParseJsonString(parsedPlanJson)
-        || tryParseJsonString(rawResponse)
-      );
+      const parsedPlan = tryParseJsonString(parsedPlanJson);
 
       const actions = Array.isArray(parsedPlan && parsedPlan.actions) ? parsedPlan.actions : [];
       const notes = detailValue(planParsedEvent, 'notes') || (parsedPlan && parsedPlan.notes) || null;
@@ -3934,11 +3888,13 @@
       const observationData = parseObservationData(turnStartEvent);
       const empireObservationData = parseEmpireObservationData(turnStartEvent);
       const memoryData = parseMemoryData(turnStartEvent);
-      const domainSupport = parseDomainSupportData(turnStartEvent) || deriveDomainSupportData(observationData, empireObservationData);
+      const domainSupport = parseDomainSupportData(turnStartEvent) || {
+        supportedDomains: CONTROL_DOMAINS.slice(),
+        availableCandidatesByDomain: Object.fromEntries(CONTROL_DOMAINS.map(domain => [domain, 0])),
+      };
       const plannedDomainCounts = normalizeDomainCounts(
         parsePlannedDomainCountsData(outcomeEvent)
         || parsePlannedDomainCountsData(latestValidationEvent)
-        || inferPlannedDomainCounts(actions)
       );
       const outcomeDomainSummary = normalizeOutcomeDomainSummary(
         parseOutcomeDomainSummaryData(outcomeEvent).length
@@ -4367,6 +4323,27 @@
       const visibleOpportunities = opportunities.slice(0, showAll ? opportunities.length : 5);
       const visibleEmpireFacts = empireFacts.slice(0, showAll ? empireFacts.length : 4);
       const visibleEmpireCandidates = empireCandidates.slice(0, showAll ? empireCandidates.length : 8);
+      const researchProgressCard = empireObservation.currentResearch
+        ? renderEntityCard(
+            `Research · ${empireObservation.currentResearch}`,
+            [
+              empireObservation.currentResearchTurnsLeft !== null && empireObservation.currentResearchTurnsLeft !== undefined
+                ? `${empireObservation.currentResearchTurnsLeft} turns left`
+                : null,
+              empireObservation.currentResearchProgress !== null && empireObservation.currentResearchProgress !== undefined && empireObservation.currentResearchCost
+                ? `${empireObservation.currentResearchProgress}/${empireObservation.currentResearchCost} science invested`
+                : null,
+            ].filter(Boolean).join(' · ') || 'Research is already in progress',
+            [
+              empireObservation.currentResearchStatus ? String(empireObservation.currentResearchStatus).replace(/_/g, ' ') : null,
+              empireObservation.freeTechs ? `${empireObservation.freeTechs} free techs` : null,
+            ].filter(Boolean),
+          )
+        : renderEntityCard(
+            'Research',
+            'No research is currently queued.',
+            ['needs research choice'],
+          );
 
       const observationStats = [
         renderObservationStat('Cities', run.observation.cities ?? '-', 'Cities currently in the empire'),
@@ -4395,9 +4372,21 @@
         const growthText = city.turnsToStarvation !== null && city.turnsToStarvation !== undefined
           ? `Starves in ${city.turnsToStarvation}`
           : (city.turnsToGrowth !== null && city.turnsToGrowth !== undefined ? `Grows in ${city.turnsToGrowth}` : 'Stable growth');
+        const progress = city && typeof city.constructionProgress === 'object' ? city.constructionProgress : null;
         return renderEntityCard(
           city.name || `City (${city.x}, ${city.y})`,
-          `Pop ${city.population ?? '?'} · ${city.foodPerTurn ?? '?'} food/turn · ${city.productionPerTurn ?? '?'} prod/turn · ${growthText}`,
+          [
+            `Pop ${city.population ?? '?'} · ${city.foodPerTurn ?? '?'} food/turn · ${city.productionPerTurn ?? '?'} prod/turn · ${growthText}`,
+            progress
+              ? [
+                  city.currentConstruction ? `Building ${city.currentConstruction}` : null,
+                  progress.turnsLeft !== null && progress.turnsLeft !== undefined ? `${progress.turnsLeft} turns left` : null,
+                  progress.workDone !== null && progress.workDone !== undefined && progress.workRemaining !== null && progress.workRemaining !== undefined
+                    ? `${progress.workDone} invested / ${progress.workRemaining} remaining`
+                    : null,
+                ].filter(Boolean).join(' · ')
+              : null,
+          ].filter(Boolean).join(' | '),
           [
             `(${city.x}, ${city.y})`,
             `strength ${city.cityStrength ?? '?'}`,
@@ -4406,6 +4395,10 @@
             city.isPuppet ? 'puppet' : null,
             city.isGarrisoned ? 'garrisoned' : 'no garrison',
             city.nearbyHostileUnits ? `${city.nearbyHostileUnits} hostile units nearby` : null,
+            progress && progress.status ? `progress ${String(progress.status).replace(/_/g, ' ')}` : null,
+            progress && progress.switchCost ? `switch cost ${progress.switchCost}` : null,
+            progress && progress.target ? `intent ${progress.target}` : null,
+            progress && progress.progressNote ? progress.progressNote : null,
             city.cityOptionCandidates?.length ? `${city.cityOptionCandidates.length} city options` : null,
             ...trimList(city.reasons, 3),
             ...trimList(city.localFacts, 2),
@@ -4415,21 +4408,81 @@
         );
       });
 
-      const unitCards = visibleUnits.map(unit => renderEntityCard(
-        `${String(unit.role || 'unit').replace(/_/g, ' ')} · ${unit.name || 'Unit'} #${unit.id ?? '?'}`,
-        `At (${unit.x ?? '?'}, ${unit.y ?? '?'}) · ${unit.health ?? '?'} hp · ${unit.movementPoints || 'movement ?'}${unit.strength ? ` · str ${unit.strength}` : ''}${unit.rangedStrength ? ` · rng ${unit.rangedStrength}` : ''}`,
-        [
-          `reachable ${listOrEmpty(unit.reachableTiles).length}`,
-          unit.range ? `range ${unit.range}` : null,
-          unit.nearbyHostileUnits ? `${unit.nearbyHostileUnits} hostile units nearby` : null,
-          unit.legalActionCandidates?.length ? `${unit.legalActionCandidates.length} legal actions` : null,
-          unit.unitOptionCandidates?.length ? `${unit.unitOptionCandidates.length} grounded options` : null,
-          ...trimList(unit.reasons, 3),
-          ...trimList(unit.localFacts, 3),
-          ...trimList(listOrEmpty(unit.unitOptionCandidates).map(candidate => candidate.title), 2),
-          ...trimList(unit.unitActions, 3),
-        ].filter(Boolean),
-      ));
+      const unitCards = visibleUnits.map(unit => {
+        const progress = unit && typeof unit.assignmentProgress === 'object' ? unit.assignmentProgress : null;
+        return renderEntityCard(
+          `${String(unit.role || 'unit').replace(/_/g, ' ')} · ${unit.name || 'Unit'} #${unit.id ?? '?'}`,
+          [
+            `At (${unit.x ?? '?'}, ${unit.y ?? '?'}) · ${unit.health ?? '?'} hp · ${unit.movementPoints || 'movement ?'}${unit.strength ? ` · str ${unit.strength}` : ''}${unit.rangedStrength ? ` · rng ${unit.rangedStrength}` : ''}`,
+            progress
+              ? [
+                  progress.detail || `Assignment ${String(progress.role || 'unknown').replace(/_/g, ' ')}`,
+                  progress.targetX !== null && progress.targetX !== undefined && progress.targetY !== null && progress.targetY !== undefined
+                    ? `target (${progress.targetX}, ${progress.targetY})`
+                    : null,
+                ].filter(Boolean).join(' · ')
+              : null,
+          ].filter(Boolean).join(' | '),
+          [
+            `reachable ${listOrEmpty(unit.reachableTiles).length}`,
+            unit.range ? `range ${unit.range}` : null,
+            unit.nearbyHostileUnits ? `${unit.nearbyHostileUnits} hostile units nearby` : null,
+            progress && progress.status ? `progress ${String(progress.status).replace(/_/g, ' ')}` : null,
+            progress && progress.switchCost ? `switch cost ${progress.switchCost}` : null,
+            progress && progress.progressNote ? progress.progressNote : null,
+            unit.legalActionCandidates?.length ? `${unit.legalActionCandidates.length} legal actions` : null,
+            unit.unitOptionCandidates?.length ? `${unit.unitOptionCandidates.length} grounded options` : null,
+            ...trimList(unit.reasons, 3),
+            ...trimList(unit.localFacts, 3),
+            ...trimList(listOrEmpty(unit.unitOptionCandidates).map(candidate => candidate.title), 2),
+            ...trimList(unit.unitActions, 3),
+          ].filter(Boolean),
+        );
+      });
+
+      const progressCards = [
+        researchProgressCard,
+        ...visibleCities
+          .filter(city => city && typeof city.constructionProgress === 'object')
+          .map(city => {
+            const progress = city.constructionProgress;
+            return renderEntityCard(
+              `${city.name || `City (${city.x}, ${city.y})`} build progress`,
+              [
+                city.currentConstruction ? `Building ${city.currentConstruction}` : 'No active construction',
+                progress.turnsLeft !== null && progress.turnsLeft !== undefined ? `${progress.turnsLeft} turns left` : null,
+                progress.workDone !== null && progress.workDone !== undefined && progress.workRemaining !== null && progress.workRemaining !== undefined
+                  ? `${progress.workDone} invested / ${progress.workRemaining} remaining`
+                  : null,
+              ].filter(Boolean).join(' · '),
+              [
+                progress.status ? String(progress.status).replace(/_/g, ' ') : null,
+                progress.switchCost ? `switch cost ${progress.switchCost}` : null,
+                progress.target ? `intent ${progress.target}` : null,
+                progress.progressNote || null,
+              ].filter(Boolean),
+            );
+          }),
+        ...visibleUnits
+          .filter(unit => unit && typeof unit.assignmentProgress === 'object')
+          .map(unit => {
+            const progress = unit.assignmentProgress;
+            return renderEntityCard(
+              `${unit.name || 'Unit'} #${unit.id ?? '?'} assignment`,
+              [
+                progress.detail || String(progress.role || 'assignment').replace(/_/g, ' '),
+                progress.targetX !== null && progress.targetX !== undefined && progress.targetY !== null && progress.targetY !== undefined
+                  ? `target (${progress.targetX}, ${progress.targetY})`
+                  : null,
+              ].filter(Boolean).join(' · '),
+              [
+                progress.status ? String(progress.status).replace(/_/g, ' ') : null,
+                progress.switchCost ? `switch cost ${progress.switchCost}` : null,
+                progress.progressNote || null,
+              ].filter(Boolean),
+            );
+          }),
+      ];
 
       const targetCards = visibleTargets.map(target => renderEntityCard(
         `${target.name || target.kind || 'Target'} · ${target.civName || 'Unknown civ'}`,
@@ -4464,6 +4517,10 @@
         <div class="info-section">
           <div class="section-subtitle">Domain control surface</div>
           <div class="observation-grid">${domainStats.join('')}</div>
+        </div>
+        <div class="info-section">
+          <div class="section-subtitle">Progress this turn</div>
+          <div class="entity-columns">${progressCards.join('')}</div>
         </div>
         <div class="info-section">
           <div class="section-subtitle">Observation checks</div>

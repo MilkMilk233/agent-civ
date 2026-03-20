@@ -15,8 +15,9 @@ object AgentTurnAutomation {
             return
         }
 
-        val observation = AgentObservationBuilder.build(civInfo)
-        val memory = AgentMemoryManager.prepareForTurn(civInfo, observation)
+        val initialObservation = AgentObservationBuilder.build(civInfo)
+        val memory = AgentMemoryManager.prepareForTurn(civInfo, initialObservation)
+        val observation = AgentObservationBuilder.build(civInfo, memory)
         val observationJson = AgentPromptBuilder.observationJson(observation)
         val empireObservation = AgentEmpireObservationBuilder.build(civInfo, memory).observation
         val empireObservationJson = AgentPromptBuilder.empireObservationJson(empireObservation)
@@ -57,6 +58,8 @@ object AgentTurnAutomation {
                 "empireMacroCandidates" to empireObservation.macroCandidates.size.toString(),
                 "empireDiplomacyCandidates" to empireObservation.diplomacyCandidates.size.toString(),
                 "empireSpyCandidates" to empireObservation.spyCandidates.size.toString(),
+                "currentResearch" to (empireObservation.currentResearch ?: ""),
+                "currentResearchTurnsLeft" to (empireObservation.currentResearchTurnsLeft?.toString() ?: ""),
             ),
         )
         var retryContext: AgentRetryContext? = null

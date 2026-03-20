@@ -60,9 +60,12 @@ object AgentPromptBuilder {
             - Trust Observation JSON over Memory JSON if they conflict.
             - Use Memory JSON to preserve continuity: keep strategicPosture consistent when still relevant, continue cityIntents and unitAssignments when the observation still supports them, and avoid repeating recentFailures.
             - Focus first on empireSummary, priorityFacts, citiesNeedingAttention, actionableUnits, visibleThreatsAndTargets, and opportunities.
+            - Empire Observation JSON may include currentResearchTurnsLeft/currentResearchProgress/currentResearchStatus. Treat a nearly-complete research choice as already in flight unless a free-tech choice or missing research queue requires action.
             - For city governance, each city in citiesNeedingAttention may include cityOptionCandidates for legal production changes, purchases, tile buys, and city focus changes. Use select_city_option only with those exact candidateId values.
+            - Cities may include constructionProgress. If a build is already underway and especially if it is nearly complete or still matches memory intent, prefer finishing it instead of switching production.
             - Cities may also list topConstructionChoices. When the opener is peaceful, city development is usually more important than passive unit posture.
-            - For tactical control, actionableUnits may include unitOptionCandidates for grounded attack, settlement, and recovery choices. Use select_unit_option only with those exact candidateId values.
+            - For tactical control, actionableUnits may include unitOptionCandidates for grounded attack, settlement, worker, and recovery choices. Use select_unit_option only with those exact candidateId values.
+            - Actionable units may include assignmentProgress. If a worker or settler is already moving toward a valid assignment or is already on the target tile, prefer finishing that assignment over chasing a new opportunity.
             - Treat omittedSummary as a sign that quieter state exists, but only act through the entities explicitly listed in the observation.
             - Use select_empire_option only with exact candidateId values from Empire Observation JSON.
             - Empire Observation JSON is the only source of legal empire-level options. Do not invent research, policy, religion, gold, bombardment, diplomacy, trade, or spy commands outside those candidateIds.
@@ -70,12 +73,16 @@ object AgentPromptBuilder {
             - Spy candidates may include specific city assignments or coup preparation. Use only the exact candidateId values already present.
             - Prefer select_city_option for city purchases, tile buys, and city focus changes instead of describing those actions in notes.
             - If cityOptionCandidates include construction candidates such as citybuild:..., prefer those exact candidateId values over inventing or paraphrasing build changes.
-            - Prefer select_unit_option for attacks, settler city-site moves, founding on the current tile, and recovery/fortify choices when unitOptionCandidates are present.
+            - Prefer select_unit_option for attacks, settler city-site moves, worker job moves, worker improvements, founding on the current tile, and recovery/fortify choices when unitOptionCandidates are present.
             - If an actionable unit includes legalActionCandidates, copy the candidate actionType exactly.
             - If a legalActionCandidate includes moveDestinationX/moveDestinationY, emit a unit_move to that tile before the unit_action.
+            - For workers especially, prefer select_unit_option candidateIds over raw unit_action whenever worker unitOptionCandidates are present.
             - For workers especially, do not invent action names like BuildFarm, BuildQuarry, ImproveWorkedTile, or similar paraphrases. Use only exact actionType values already present in unitActions or legalActionCandidates.
+            - Do not use Sleep, Skip, or Automate as the default way to finish a worker turn when a grounded worker move or improvement candidate is available.
+            - If a worker assignment is already in progress, switching away should require a clearly stronger reason than simply noticing another good tile elsewhere.
             - During a peaceful early opener, prioritize worker tempo, capital growth, and safe expansion over focus micro, fortify, skip, or empty no-op turns.
             - Do not spend a calm opener turn only on passive military posture when a city still has strong growth or expansion choices.
+            - If a city is already building Worker, Settler, Granary, or Monument in a peaceful opener, do not switch away lightly once production has been invested.
             - Avoid repeating macro or focus changes that previously produced no state change unless the observation clearly shows a new reason they matter now.
             - Use only unit IDs, cities, action types, tiles, and constructions present in the observation.
             - Do not invent entities.

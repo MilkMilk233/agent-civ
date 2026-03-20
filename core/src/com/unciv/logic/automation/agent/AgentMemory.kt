@@ -38,9 +38,10 @@ data class CityIntentMemory(
     var intent: String = "",
     var target: String? = null,
     var reasons: ArrayList<String> = arrayListOf(),
+    var lastProgressTurn: Int = 0,
     var staleAfterTurn: Int = 0,
 ) : IsPartOfGameInfoSerialization {
-    constructor() : this(0, 0, "", "", null, arrayListOf(), 0)
+    constructor() : this(0, 0, "", "", null, arrayListOf(), 0, 0)
 }
 
 @Serializable
@@ -51,9 +52,10 @@ data class UnitAssignmentMemory(
     var targetX: Int? = null,
     var targetY: Int? = null,
     var detail: String? = null,
+    var lastProgressTurn: Int = 0,
     var staleAfterTurn: Int = 0,
 ) : IsPartOfGameInfoSerialization {
-    constructor() : this(0, "", "", null, null, null, 0)
+    constructor() : this(0, "", "", null, null, null, 0, 0)
 }
 
 @Serializable

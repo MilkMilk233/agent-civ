@@ -8,9 +8,9 @@ import com.unciv.logic.civilization.Civilization
 import com.unciv.logic.map.mapunit.MapUnit
 import com.unciv.logic.map.tile.Tile
 import com.unciv.models.UnitAction
+import com.unciv.models.UnitActionType
 import com.unciv.models.ruleset.PerpetualConstruction
 import com.unciv.models.ruleset.tile.ResourceType
-import com.unciv.models.ruleset.unique.GameContext
 import com.unciv.ui.screens.worldscreen.unit.actions.UnitActions
 import kotlin.math.roundToInt
 
@@ -24,7 +24,7 @@ object AgentObservationBuilder {
     private const val maxReachableTilesPerUnit = 14
     private const val maxLocalFactsPerEntity = 4
 
-    fun build(civInfo: Civilization): AgentObservation {
+    fun build(civInfo: Civilization, memory: AgentMemory = civInfo.agentMemory): AgentObservation {
         civInfo.updateStatsForNextTurn()
         civInfo.cities.forEach { it.cityStats.update(updateCivStats = false) }
 
@@ -36,7 +36,7 @@ object AgentObservationBuilder {
         val cityOptionContext = AgentCityOptionBuilder.build(civInfo)
         val cityCandidates = civInfo.cities
             .sortedWith(compareBy<City> { it.name }.thenBy { it.location.toString() })
-            .map { buildCityCandidate(it, civInfo, visibleTargetCandidates, peacefulGrowthWindow) }
+            .map { buildCityCandidate(it, civInfo, visibleTargetCandidates, peacefulGrowthWindow, memory) }
         val selectedCityCandidates = selectCityCandidates(cityCandidates)
         val selectedCities = selectedCityCandidates.map { candidate ->
             CityAttentionObservation(
@@ -62,15 +62,16 @@ object AgentObservationBuilder {
                 nearbyHostileCities = candidate.nearbyHostileCities,
                 reasons = candidate.reasons,
                 localFacts = candidate.localFacts,
+                constructionProgress = buildConstructionProgress(candidate.city, memory),
                 topConstructionChoices = AgentCityOptionBuilder.rankConstructionChoices(candidate.city, 4).map { it.name },
                 cityOptionCandidates = cityOptionContext.observationsByCityKey["${candidate.city.location.x},${candidate.city.location.y}"]
                     ?: emptyList(),
             )
         }
 
-        val unitCandidates = allUnits.map { buildUnitCandidate(it, civInfo, visibleTargetCandidates, peacefulGrowthWindow) }
+        val unitCandidates = allUnits.map { buildUnitCandidate(it, civInfo, visibleTargetCandidates, peacefulGrowthWindow, memory) }
         val selectedUnitCandidates = selectUnitCandidates(unitCandidates)
-        val unitOptionContext = AgentUnitOptionBuilder.build(civInfo)
+        val unitOptionContext = AgentUnitOptionBuilder.build(civInfo, memory)
         val selectedUnits = selectedUnitCandidates.map { candidate ->
             val unit = candidate.unit
             val availableActions = collectAvailableUnitActions(unit)
@@ -95,6 +96,7 @@ object AgentObservationBuilder {
                     unit = unit,
                     role = candidate.role,
                     availableActions = availableActions,
+                    memory = memory,
                 ),
                 unitOptionCandidates = unitOptionContext.observationsByUnitId[unit.id] ?: emptyList(),
                 reachableTiles = buildReachableTiles(unit),
@@ -102,6 +104,11 @@ object AgentObservationBuilder {
                 nearbyHostileCities = candidate.nearbyHostileCities,
                 reasons = candidate.reasons,
                 localFacts = candidate.localFacts,
+                assignmentProgress = buildUnitAssignmentProgress(
+                    unit = unit,
+                    memory = memory,
+                    unitOptionCandidates = unitOptionContext.observationsByUnitId[unit.id] ?: emptyList(),
+                ),
             )
         }
 
@@ -203,6 +210,7 @@ object AgentObservationBuilder {
         civInfo: Civilization,
         visibleTargetCandidates: List<VisibleTargetCandidate>,
         peacefulGrowthWindow: Boolean,
+        memory: AgentMemory,
     ): CityCandidate {
         val cityTile = city.getCenterTile()
         val productionPerTurn = city.cityStats.currentCityStats.production.roundToInt()
@@ -354,6 +362,17 @@ object AgentObservationBuilder {
             reasons += "Capital oversight"
         }
 
+        buildConstructionProgress(city, memory)?.let { progress ->
+            if (progress.status == "nearly_complete") score += 28
+            if (progress.status == "following_intent") score += 18
+            localFacts += progress.progressNote
+            reasons += when (progress.status) {
+                "nearly_complete" -> "Finish current build"
+                "following_intent" -> "Continuing city plan"
+                else -> "City progress in flight"
+            }
+        }
+
         return CityCandidate(
             city = city,
             score = score,
@@ -377,6 +396,7 @@ object AgentObservationBuilder {
         civInfo: Civilization,
         visibleTargetCandidates: List<VisibleTargetCandidate>,
         peacefulGrowthWindow: Boolean,
+        memory: AgentMemory,
     ): UnitCandidate {
         val role = classifyUnitRole(unit)
         val threatRadius = if (unit.isMilitary()) 3 else 2
@@ -420,7 +440,7 @@ object AgentObservationBuilder {
         if (role == "worker" && unit.hasMovement()) {
             score += 40
             reasons += "Improvement unit"
-            val workerJobs = findWorkerJobs(unit)
+            val workerJobs = AgentWorkerJobPlanner.findWorkerJobs(unit, currentAssignment = findUnitAssignment(memory, unit.id))
             if (workerJobs.isNotEmpty()) {
                 localFacts += workerJobs.map { it.description }
                 val topJob = workerJobs.first()
@@ -435,6 +455,17 @@ object AgentObservationBuilder {
                 facts += workerFact
                 opportunities += workerFact
                 score += 35 + topJob.priority
+            }
+        }
+
+        buildUnitAssignmentProgress(unit, memory, emptyList())?.let { progress ->
+            localFacts += progress.progressNote
+            if (progress.status == "ready_to_finish") {
+                score += 32
+                reasons += "Ready to finish assignment"
+            } else if (progress.status == "moving_to_target") {
+                score += 18
+                reasons += "Committed assignment in progress"
             }
         }
 
@@ -815,18 +846,34 @@ object AgentObservationBuilder {
         unit: MapUnit,
         role: String,
         availableActions: List<UnitAction>,
+        memory: AgentMemory,
     ): List<LegalActionCandidateObservation> {
         if (role != "worker") return emptyList()
 
-        val actionTypes = availableActions.map { it.type.name }.toSet()
-        val preferredCurrentAction = preferredCurrentWorkerAction(availableActions)
-        val hasAutomate = "Automate" in actionTypes
-        val isAutomated = unit.isAutomated() || "StopAutomation" in actionTypes
+        val preferredCurrentAction = AgentWorkerJobPlanner.preferredCurrentAction(availableActions)
 
-        return findWorkerJobs(unit)
+        return AgentWorkerJobPlanner.findWorkerJobs(unit, currentAssignment = findUnitAssignment(memory, unit.id))
             .mapNotNull { job ->
                 val isCurrentTile = unit.getTile().position.x == job.tileX && unit.getTile().position.y == job.tileY
                 when {
+                    isCurrentTile && job.isRepair -> LegalActionCandidateObservation(
+                        actionType = UnitActionType.Repair.name,
+                        title = if (job.isInProgress) "Continue repair" else "Repair current tile",
+                        targetX = job.tileX,
+                        targetY = job.tileY,
+                        rationale = job.description,
+                    )
+                    isCurrentTile && job.improvementName != null -> LegalActionCandidateObservation(
+                        actionType = UnitActionType.ConstructImprovement.name,
+                        title = if (job.isInProgress) {
+                            "Continue [${job.improvementName}]"
+                        } else {
+                            "Start [${job.improvementName}]"
+                        },
+                        targetX = job.tileX,
+                        targetY = job.tileY,
+                        rationale = job.description,
+                    )
                     isCurrentTile && preferredCurrentAction != null -> LegalActionCandidateObservation(
                         actionType = preferredCurrentAction.type.name,
                         title = preferredCurrentAction.title,
@@ -834,20 +881,6 @@ object AgentObservationBuilder {
                         targetY = job.tileY,
                         rationale = job.description,
                     )
-                    hasAutomate -> LegalActionCandidateObservation(
-                        actionType = "Automate",
-                        title = "Automate",
-                        moveDestinationX = job.tileX.takeIf { !isCurrentTile },
-                        moveDestinationY = job.tileY.takeIf { !isCurrentTile },
-                        targetX = job.tileX,
-                        targetY = job.tileY,
-                        rationale = if (isCurrentTile) {
-                            "Use Automate on the current tile so the worker can handle: ${job.description}"
-                        } else {
-                            "Move to (${job.tileX}, ${job.tileY}) then use Automate so the worker can handle: ${job.description}"
-                        },
-                    )
-                    isAutomated && isCurrentTile -> null
                     else -> null
                 }
             }
@@ -864,14 +897,6 @@ object AgentObservationBuilder {
             .take(4)
     }
 
-    private fun preferredCurrentWorkerAction(availableActions: List<UnitAction>): UnitAction? {
-        val preferredTypes = listOf("Repair", "CreateImprovement", "ConstructImprovement", "ConnectRoad")
-        return preferredTypes
-            .asSequence()
-            .mapNotNull { preferred -> availableActions.firstOrNull { it.type.name == preferred } }
-            .firstOrNull()
-    }
-
     private fun buildReachableTiles(unit: MapUnit): List<TileRef> {
         return unit.movement.getDistanceToTiles().keys
             .asSequence()
@@ -879,6 +904,123 @@ object AgentObservationBuilder {
             .distinct()
             .take(maxReachableTilesPerUnit)
             .toList()
+    }
+
+    private fun findCityIntent(memory: AgentMemory, city: City): CityIntentMemory? {
+        return memory.cityIntents.firstOrNull { it.cityX == city.location.x && it.cityY == city.location.y }
+    }
+
+    private fun findUnitAssignment(memory: AgentMemory, unitId: Int): UnitAssignmentMemory? {
+        return memory.unitAssignments.firstOrNull { it.unitId == unitId }
+    }
+
+    private fun buildConstructionProgress(
+        city: City,
+        memory: AgentMemory,
+    ): ConstructionProgressObservation? {
+        val currentName = city.cityConstructions.currentConstructionName()
+        val cityIntent = findCityIntent(memory, city)
+        if (currentName.isBlank() && cityIntent == null) return null
+        if (currentName.isBlank()) {
+            return ConstructionProgressObservation(
+                intent = cityIntent?.intent,
+                target = cityIntent?.target,
+                status = "needs_choice",
+                progressNote = cityIntent?.target?.let { "No construction is queued even though memory was carrying $it." }
+                    ?: "No construction is currently queued for this city.",
+                switchCost = "low",
+            )
+        }
+
+        val turnsLeft = city.cityConstructions.turnsToConstruction(currentName)
+        val workDone = city.cityConstructions.getWorkDone(currentName)
+        val workRemaining = city.cityConstructions.getRemainingWork(currentName)
+        val intentMatches = cityIntent?.target == currentName
+        val status = when {
+            turnsLeft <= 2 -> if (intentMatches) "nearly_complete" else "committed"
+            intentMatches -> "following_intent"
+            cityIntent?.target != null && cityIntent.target != currentName -> "drifted_from_intent"
+            else -> "in_progress"
+        }
+        val progressNote = when (status) {
+            "nearly_complete" -> "$currentName is already underway and should finish in $turnsLeft turns."
+            "following_intent" -> "$currentName matches the carried city intent and is still in progress."
+            "drifted_from_intent" -> "Memory expected ${cityIntent?.target}, but the city is currently building $currentName."
+            else -> "$currentName is the active build with $workDone production invested and $workRemaining remaining."
+        }
+        val switchCost = when {
+            turnsLeft <= 2 -> "high"
+            workDone > 0 || intentMatches -> "medium"
+            else -> "low"
+        }
+        return ConstructionProgressObservation(
+            intent = cityIntent?.intent,
+            target = cityIntent?.target,
+            turnsLeft = turnsLeft,
+            workDone = workDone,
+            workRemaining = workRemaining,
+            status = status,
+            progressNote = progressNote,
+            switchCost = switchCost,
+        )
+    }
+
+    private fun buildUnitAssignmentProgress(
+        unit: MapUnit,
+        memory: AgentMemory,
+        unitOptionCandidates: List<UnitOptionCandidateObservation>,
+    ): UnitAssignmentProgressObservation? {
+        val assignment = findUnitAssignment(memory, unit.id) ?: return null
+        val onTarget = assignment.targetX != null &&
+            assignment.targetY != null &&
+            unit.getTile().position.x == assignment.targetX &&
+            unit.getTile().position.y == assignment.targetY
+        val matchingCandidate = unitOptionCandidates.any { candidateMatchesAssignment(it.candidateId, assignment) }
+        val readyToFinish = unitOptionCandidates.any { candidate ->
+            candidate.candidateId.startsWith("unitworkerimprove:${unit.id}:${assignment.targetX},${assignment.targetY}:") ||
+                candidate.candidateId == "unitsettle:${unit.id}:${assignment.targetX},${assignment.targetY}" ||
+                candidate.candidateId.startsWith("unitspecial:${unit.id}:")
+        }
+        val status = when {
+            onTarget && readyToFinish -> "ready_to_finish"
+            onTarget -> "on_target"
+            matchingCandidate -> "moving_to_target"
+            else -> "assignment_at_risk"
+        }
+        val progressNote = when (status) {
+            "ready_to_finish" -> "This unit is already in position to finish its carried assignment."
+            "on_target" -> "This unit is on the assigned target tile; prefer finishing the current job over switching away."
+            "moving_to_target" -> "This unit is already committed to a carried assignment and still has a grounded route toward it."
+            else -> "This unit had a carried assignment, but the current turn no longer surfaces a matching grounded option."
+        }
+        val switchCost = when {
+            assignment.role in setOf("improve_tile", "settle_city_site") && status != "assignment_at_risk" -> "high"
+            assignment.role in setOf("attack_target", "heal_and_hold", "hold_position") -> "medium"
+            else -> "low"
+        }
+        return UnitAssignmentProgressObservation(
+            role = assignment.role,
+            targetX = assignment.targetX,
+            targetY = assignment.targetY,
+            detail = assignment.detail,
+            status = status,
+            progressNote = progressNote,
+            switchCost = switchCost,
+        )
+    }
+
+    private fun candidateMatchesAssignment(candidateId: String, assignment: UnitAssignmentMemory): Boolean {
+        return when {
+            candidateId.startsWith("unitworkerimprove:${assignment.unitId}:${assignment.targetX},${assignment.targetY}:") -> true
+            candidateId == "unitworkerreposition:${assignment.unitId}:${assignment.targetX},${assignment.targetY}" -> true
+            candidateId == "unitsettle:${assignment.unitId}:${assignment.targetX},${assignment.targetY}" -> true
+            candidateId.startsWith("unitattack:${assignment.unitId}:") &&
+                assignment.targetX != null &&
+                assignment.targetY != null &&
+                candidateId.endsWith(":${assignment.targetX},${assignment.targetY}") -> true
+            candidateId.startsWith("unitspecial:${assignment.unitId}:") -> assignment.targetX == null && assignment.targetY == null
+            else -> false
+        }
     }
 
     private fun collectCityResourceAlerts(city: City): List<String> {
@@ -930,65 +1072,6 @@ object AgentObservationBuilder {
             headline = "${unit.name} #${unit.id} has a viable city site",
             detail = "Best visible site is (${bestTile.position.x}, ${bestTile.position.y}) with rank ${bestTiles.bestTileRank.roundToInt()}${if (siteFacts.isNotEmpty()) " (${siteFacts.joinToString(", ")})" else ""}.",
         )
-    }
-
-    private fun findWorkerJobs(unit: MapUnit): List<WorkerJob> {
-        if (!unit.cache.hasUniqueToBuildImprovements || !unit.hasMovement()) return emptyList()
-        val civInfo = unit.civ
-        val candidateTiles = sequenceOf(unit.getTile()) + unit.movement.getDistanceToTiles().keys.asSequence()
-        return candidateTiles
-            .distinct()
-            .mapNotNull { tile -> buildWorkerJob(unit, civInfo, tile) }
-            .sortedByDescending { it.priority }
-            .take(2)
-            .toList()
-    }
-
-    private fun buildWorkerJob(unit: MapUnit, civInfo: Civilization, tile: Tile): WorkerJob? {
-        if (tile.getOwner() != civInfo) return null
-
-        if (tile.isPillaged()) {
-            val repairName = tile.getImprovementToRepair()?.name ?: "tile infrastructure"
-            return WorkerJob(
-                priority = 90,
-                tileX = tile.position.x,
-                tileY = tile.position.y,
-                description = "$repairName at (${tile.position.x}, ${tile.position.y}) is pillaged and needs repair.",
-            )
-        }
-
-        val resource = tile.tileResource
-        if (resource != null && civInfo.canSeeResource(resource) && !tile.providesResources(civInfo)) {
-            val context = GameContext(civInfo = civInfo, unit = unit, tile = tile)
-            val improvementName = resource.getImprovingImprovement(tile, context)
-            if (improvementName != null) {
-                val improvement = civInfo.gameInfo.ruleset.tileImprovements[improvementName]
-                if (improvement != null && unit.canBuildImprovement(improvement, tile)) {
-                    val priority = when (resource.resourceType) {
-                        ResourceType.Luxury -> 85
-                        ResourceType.Strategic -> 75
-                        ResourceType.Bonus -> 45
-                    }
-                    return WorkerJob(
-                        priority = priority,
-                        tileX = tile.position.x,
-                        tileY = tile.position.y,
-                        description = "${resource.name} at (${tile.position.x}, ${tile.position.y}) is a strong worker target (${improvementName}).",
-                    )
-                }
-            }
-        }
-
-        if (tile.isWorked() && !tile.isCityCenter() && tile.getUnpillagedTileImprovement() == null) {
-            return WorkerJob(
-                priority = 35,
-                tileX = tile.position.x,
-                tileY = tile.position.y,
-                description = "The worked tile at (${tile.position.x}, ${tile.position.y}) is unimproved and worth worker attention.",
-            )
-        }
-
-        return null
     }
 
     private fun classifyUnitRole(unit: MapUnit): String {
@@ -1069,13 +1152,6 @@ object AgentObservationBuilder {
     private data class ScoredFact(
         val priority: Int,
         val observation: ObservationFact,
-    )
-
-    private data class WorkerJob(
-        val priority: Int,
-        val tileX: Int,
-        val tileY: Int,
-        val description: String,
     )
 
     private data class CityCandidate(

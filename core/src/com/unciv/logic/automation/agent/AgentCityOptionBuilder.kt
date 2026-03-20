@@ -99,7 +99,13 @@ object AgentCityOptionBuilder {
                         candidateId = candidateId,
                         category = "construction",
                         title = "Queue ${choice.name}",
-                        detail = choice.detail,
+                        detail = buildString {
+                            append(choice.detail)
+                            currentConstructionProgressText(city, choice.name)?.let {
+                                append(". ")
+                                append(it)
+                            }
+                        },
                     ),
                     validate = { currentCiv ->
                         val liveCity = currentCiv.cities.firstOrNull { it.location == city.location }
@@ -305,11 +311,21 @@ object AgentCityOptionBuilder {
         val noWorkerExists = civInfo.units.getCivUnits().none { it.cache.hasUniqueToBuildImprovements }
         val singleCity = civInfo.cities.size == 1
         val currentName = city.cityConstructions.currentConstructionName()
+        val currentTurnsLeft = currentName.takeIf { it.isNotBlank() }?.let { city.cityConstructions.turnsToConstruction(it) }
+        val currentWorkDone = currentName.takeIf { it.isNotBlank() }?.let { city.cityConstructions.getWorkDone(it) } ?: 0
 
         var score = 220 - baseIndex * 18
         if (construction is Building && construction.isAnyWonder() && peacefulGrowthWindow && noWorkerExists) score -= 80
         if (construction is BaseUnit && construction.isMilitary && peacefulGrowthWindow && singleCity) score -= 15
         if (construction.name == currentName) score -= 40
+        if (currentName.isNotBlank() && construction.name != currentName) {
+            if (currentWorkDone > 0) score -= 30
+            if (currentTurnsLeft != null && currentTurnsLeft <= 2) score -= 95
+            else if (currentTurnsLeft != null && currentTurnsLeft <= 5) score -= 45
+            if (peacefulGrowthWindow && currentName in setOf("Worker", "Settler", "Granary", "Monument")) {
+                score -= 35
+            }
+        }
 
         when (construction) {
             is BaseUnit -> {
@@ -346,6 +362,7 @@ object AgentCityOptionBuilder {
         val peacefulGrowthWindow = isPeacefulGrowthWindow(city)
         val noWorkerExists = civInfo.units.getCivUnits().none { it.cache.hasUniqueToBuildImprovements }
         val singleCity = civInfo.cities.size == 1
+        val currentProgress = currentConstructionProgressText(city, construction.name)
 
         val reasons = arrayListOf<String>()
         when (construction) {
@@ -376,7 +393,21 @@ object AgentCityOptionBuilder {
         }
 
         if (reasons.isEmpty()) reasons += "Ranked city development option from current game state"
+        currentProgress?.let { reasons += it }
         return reasons.joinToString(". ")
+    }
+
+    private fun currentConstructionProgressText(city: City, candidateName: String): String? {
+        val currentName = city.cityConstructions.currentConstructionName()
+        if (currentName.isBlank() || currentName == candidateName) return null
+        val turnsLeft = city.cityConstructions.turnsToConstruction(currentName)
+        val workDone = city.cityConstructions.getWorkDone(currentName)
+        val remaining = city.cityConstructions.getRemainingWork(currentName)
+        return when {
+            turnsLeft <= 2 -> "Switching away would abandon $currentName with only $turnsLeft turns left ($workDone invested, $remaining remaining)"
+            workDone > 0 -> "Switching away would reset progress on $currentName ($workDone invested, $remaining remaining)"
+            else -> null
+        }
     }
 
     private fun City.getThreatScore(): Int {
