@@ -2216,6 +2216,16 @@
       }
     }
 
+    function structuredJsonDetailState(event, key) {
+      const raw = detailValue(event, key);
+      if (typeof raw !== 'string') return { raw: null, parsed: null, truncated: false };
+      const parsed = tryParseJsonString(raw);
+      const trimmed = raw.trim();
+      const looksJson = trimmed.startsWith('{') || trimmed.startsWith('[');
+      const truncated = !parsed && looksJson && raw.length >= 20000;
+      return { raw, parsed, truncated };
+    }
+
     function toWholeNumber(value) {
       if (value === null || value === undefined || value === '') return null;
       const num = Number(value);
@@ -3076,8 +3086,7 @@
     const CONTROL_DOMAINS = ['empire', 'city', 'unit', 'diplomacy'];
 
     function parseStructuredJsonDetail(event, key) {
-      const raw = detailValue(event, key);
-      return raw ? tryParseJsonString(raw) : null;
+      return structuredJsonDetailState(event, key).parsed;
     }
 
     function parseCsvDetail(event, key) {
@@ -3393,10 +3402,28 @@
       return (runLike.rejectedActions ?? 0) / planned;
     }
 
-    function buildObservationChecks(observationData, empireObservationData, domainSupportData) {
+    function buildObservationChecks(observationData, empireObservationData, domainSupportData, options = {}) {
+      const partialSnapshot = options.partialSnapshot === true;
+      const truncatedSnapshot = options.truncatedSnapshot === true;
       if (!observationData) {
         return [
-          { tone: 'critical', title: 'Observation missing', text: 'No structured observation snapshot was captured for this turn.' },
+          partialSnapshot
+            ? {
+                tone: 'warning',
+                title: 'Partial live snapshot',
+                text: 'This turn_start observation is not present in the currently loaded live event window. The turn is only partially available in the dashboard right now.',
+              }
+            : truncatedSnapshot
+              ? {
+                  tone: 'critical',
+                  title: 'Observation truncated',
+                  text: 'A structured observation was captured for this turn, but the live event payload was cut off before the full JSON reached the dashboard.',
+                }
+            : {
+                tone: 'critical',
+                title: 'Observation missing',
+                text: 'No structured observation snapshot was captured for this turn.',
+              },
         ];
       }
 
@@ -3554,7 +3581,9 @@
         return {
           issues: [
             ...issues,
-            { tone: 'warning', title: 'No observation snapshot', text: 'Plan cannot be validated against structured observation data.' },
+            run.truncatedObservationSnapshot
+              ? { tone: 'warning', title: 'Observation payload truncated', text: 'Plan cannot be fully validated because the captured observation JSON was cut off before the dashboard could parse it.' }
+              : { tone: 'warning', title: 'No observation snapshot', text: 'Plan cannot be validated against structured observation data.' },
           ],
           actionChecks: [],
         };
@@ -3885,8 +3914,12 @@
         statusLabel = 'Live';
       }
 
-      const observationData = parseObservationData(turnStartEvent);
-      const empireObservationData = parseEmpireObservationData(turnStartEvent);
+      const observationState = structuredJsonDetailState(turnStartEvent, 'observationJson');
+      const empireObservationState = structuredJsonDetailState(turnStartEvent, 'empireObservationJson');
+      const observationData = observationState.parsed && typeof observationState.parsed === 'object' ? observationState.parsed : null;
+      const empireObservationData = empireObservationState.parsed && typeof empireObservationState.parsed === 'object' && !Array.isArray(empireObservationState.parsed)
+        ? empireObservationState.parsed
+        : null;
       const memoryData = parseMemoryData(turnStartEvent);
       const domainSupport = parseDomainSupportData(turnStartEvent) || {
         supportedDomains: CONTROL_DOMAINS.slice(),
@@ -3938,7 +3971,12 @@
         recentFailures: numberFromDetail(memoryOutcomeEvent, 'memoryRecentFailures'),
       };
       const illegalActionRate = computeIllegalActionRate({ plannedActions, actions, executedActions, rejectedActions });
-      const observationChecks = buildObservationChecks(observationData, empireObservationData, domainSupport);
+      const partialSnapshot = !turnStartEvent && events.length > 0;
+      const truncatedObservationSnapshot = !!turnStartEvent && (observationState.truncated || empireObservationState.truncated);
+      const observationChecks = buildObservationChecks(observationData, empireObservationData, domainSupport, {
+        partialSnapshot,
+        truncatedSnapshot: truncatedObservationSnapshot,
+      });
       const planValidation = validatePlanAgainstObservation({
         observationData,
         empireObservationData,
@@ -4045,6 +4083,8 @@
         actionChecks: planValidation.actionChecks,
         planSummary,
         topConcern,
+        partialSnapshot,
+        truncatedObservationSnapshot,
         illegalActionRate,
         searchBlob,
         eventCount: events.length,
@@ -4108,7 +4148,7 @@
           <div class="card-meta">
             <span class="meta-chip">${esc(run.provider || 'planner pending')}</span>
             <span class="meta-chip">${esc(activeSupportedDomains(run.domainSupport).length ? `${activeSupportedDomains(run.domainSupport).length} domains` : 'no domains')}</span>
-            <span class="meta-chip">${esc(run.observationSummary.issueCount ? `${run.observationSummary.issueCount} obs flags` : 'obs ok')}</span>
+            <span class="meta-chip">${esc(run.partialSnapshot ? 'partial snapshot' : (run.truncatedObservationSnapshot ? 'obs truncated' : (run.observationSummary.issueCount ? `${run.observationSummary.issueCount} obs flags` : 'obs ok')))}</span>
             <span class="meta-chip">${esc(run.intentionalNoOp ? 'intentional no-op' : (run.planSummary.issueCount ? `${run.planSummary.issueCount} plan flags` : (run.planParsedEvent || run.actions.length ? 'plan ok' : 'plan pending')))}</span>
             <span class="meta-chip">${esc(run.retryCount ? `${run.retryCount} retries` : 'no retries')}</span>
             <span class="meta-chip">${esc(run.llmLatencyMs ? formatDuration(run.llmLatencyMs) : 'latency -')}</span>
@@ -4195,7 +4235,7 @@
       const activeDomains = activeSupportedDomains(run.domainSupport);
       const plannedDomains = CONTROL_DOMAINS.filter(domain => (run.plannedDomainCounts[domain] || 0) > 0);
       const summaryCards = [
-        renderMiniCard('Observation', run.observationSummary.issueCount ? `${run.observationSummary.issueCount} flags` : 'Looks sane', run.observationSummary.note),
+        renderMiniCard('Observation', run.partialSnapshot ? 'Partial snapshot' : (run.truncatedObservationSnapshot ? 'Observation truncated' : (run.observationSummary.issueCount ? `${run.observationSummary.issueCount} flags` : 'Looks sane')), run.observationSummary.note),
         renderMiniCard(
           'Memory',
           run.memory.mode ? String(run.memory.mode).replace(/_/g, ' ') : 'Fresh turn',
@@ -4511,8 +4551,25 @@
         ].filter(Boolean),
       ));
 
-      stagesMetaEl.textContent = `Curated brief · ${run.observationSummary.issueCount ? `${run.observationSummary.issueCount} flags` : 'looks sane'} · ${activeSupportedDomains(run.domainSupport).length} active domains · ${formatDateTime(run.turnStartEvent ? run.turnStartEvent.epochMs : run.lastEpochMs)}`;
+      stagesMetaEl.textContent = `Curated brief · ${run.partialSnapshot ? 'partial live snapshot' : (run.truncatedObservationSnapshot ? 'observation truncated' : (run.observationSummary.issueCount ? `${run.observationSummary.issueCount} flags` : 'looks sane'))} · ${activeSupportedDomains(run.domainSupport).length} active domains · ${formatDateTime(run.turnStartEvent ? run.turnStartEvent.epochMs : run.lastEpochMs)}`;
       stageGridEl.innerHTML = `
+        ${run.partialSnapshot ? `
+          <div class="info-section">
+            <div class="check-list">${renderCheckCard({
+              tone: 'warning',
+              title: 'Partial live snapshot',
+              text: 'This turn_start event has rolled out of the current live buffer, so the dashboard only has later events for this turn. Switch to Stored replay after the run or keep a larger live buffer to inspect the full observation.',
+            })}</div>
+          </div>
+        ` : run.truncatedObservationSnapshot ? `
+          <div class="info-section">
+            <div class="check-list">${renderCheckCard({
+              tone: 'critical',
+              title: 'Observation truncated in live buffer',
+              text: 'The turn_start event exists, but its structured observation JSON was clipped by the backend detail-size cap before the dashboard received it. Future runs will be preserved after restarting with the patched server.',
+            })}</div>
+          </div>
+        ` : ''}
         <div class="observation-grid">${observationStats.join('')}</div>
         <div class="info-section">
           <div class="section-subtitle">Domain control surface</div>
@@ -4906,7 +4963,7 @@
     }
 
     async function loadLiveSnapshot() {
-      const response = await fetch('/api/snapshot?limit=500', { cache: 'no-store' });
+      const response = await fetch('/api/snapshot?limit=2000', { cache: 'no-store' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       STATE.snapshot = await response.json();
       STATE.replay = null;

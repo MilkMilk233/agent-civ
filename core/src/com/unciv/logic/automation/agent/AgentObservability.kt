@@ -6,9 +6,25 @@ import kotlinx.serialization.json.Json
 import java.util.concurrent.atomic.AtomicLong
 
 object AgentObservability {
-    private const val maxEvents = 500
+    private val maxEvents =
+        (System.getenv("UNCIV_AGENT_OBS_MAX_EVENTS") ?: "4000")
+            .toIntOrNull()
+            ?.coerceIn(500, 20000)
+            ?: 4000
     private const val maxDetailValueLength = 20000
+    private const val maxStructuredDetailValueLength = 200000
     private const val maxMessageLength = 2000
+    private val largeDetailKeys = setOf(
+        "observationJson",
+        "empireObservationJson",
+        "memoryJson",
+        "prompt",
+        "rawResponse",
+        "parsedPlan",
+        "failedPlanJson",
+        "retryContextJson",
+        "validationFailuresJson",
+    )
 
     private val lock = Any()
     private val nextId = AtomicLong(1)
@@ -40,7 +56,15 @@ object AgentObservability {
             details = details
                 .entries
                 .take(30)
-                .associate { it.key.take(80) to it.value.take(maxDetailValueLength) },
+                .associate { entry ->
+                    val key = entry.key.take(80)
+                    val maxLength = if (key in largeDetailKeys || key.endsWith("Json")) {
+                        maxStructuredDetailValueLength
+                    } else {
+                        maxDetailValueLength
+                    }
+                    key to entry.value.take(maxLength)
+                },
         )
 
         val activeListeners = synchronized(lock) {
@@ -75,6 +99,8 @@ object AgentObservability {
     fun snapshotJson(limit: Int = 200): String {
         return json.encodeToString(snapshot(limit))
     }
+
+    fun maxBufferedEvents(): Int = maxEvents
 
     fun clear() {
         synchronized(lock) {

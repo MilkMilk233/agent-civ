@@ -197,10 +197,12 @@ object AgentObservabilityServer {
     }
 
     private fun parseSnapshotLimit(exchange: HttpExchange): Int {
+        val maxLimit = AgentObservability.maxBufferedEvents()
+        val defaultLimit = minOf(2000, maxLimit)
         return queryParam(exchange, "limit")
             ?.toIntOrNull()
-            ?.coerceIn(1, 500)
-            ?: 500
+            ?.coerceIn(1, maxLimit)
+            ?: defaultLimit
     }
 
     private fun readBody(exchange: HttpExchange): String {
