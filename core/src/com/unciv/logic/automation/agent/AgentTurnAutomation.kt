@@ -15,15 +15,70 @@ object AgentTurnAutomation {
             return
         }
 
-        val initialObservation = AgentObservationBuilder.build(civInfo)
-        val memory = AgentMemoryManager.prepareForTurn(civInfo, initialObservation)
-        val observation = AgentObservationBuilder.build(civInfo, memory)
-        val observationJson = AgentPromptBuilder.observationJson(observation)
-        val empireObservation = AgentEmpireObservationBuilder.build(civInfo, memory).observation
-        val empireObservationJson = AgentPromptBuilder.empireObservationJson(empireObservation)
-        val memoryJson = AgentMemoryManager.memoryJson(memory)
-        val supportSnapshot = AgentTurnDiagnostics.supportSnapshot(observation, empireObservation)
-        val supportSnapshotJson = AgentTurnDiagnostics.supportSnapshotJson(supportSnapshot)
+        val seedMemory = civInfo.agentMemory.clone()
+        val initialObservation = AgentObservationBuilder.build(civInfo, seedMemory)
+        val initialEmpireObservation = AgentEmpireObservationBuilder.build(civInfo, seedMemory).observation
+        var memory = AgentMemoryManager.prepareForTurn(civInfo, initialObservation, initialEmpireObservation)
+        var observation = AgentObservationBuilder.build(civInfo, memory)
+        var empireObservation = AgentEmpireObservationBuilder.build(civInfo, memory).observation
+        var strategistRefreshCount = 0
+
+        AgentMemoryManager.shouldRefreshStrategist(memory, observation, empireObservation)?.let { refreshRequest ->
+            AgentObservability.record(
+                type = "strategist_refresh_requested",
+                message = "Refreshing strategist roadmap before tactical planning",
+                civName = civInfo.civName,
+                turn = civInfo.gameInfo.turns,
+                details = mapOf(
+                    "urgency" to refreshRequest.urgency,
+                    "reason" to refreshRequest.reason,
+                ),
+            )
+            val strategicPlan = AgentPlanProviderFactory.provider.buildStrategicRoadmap(
+                memory = memory,
+                observation = observation,
+                empireObservation = empireObservation,
+                civInfo = civInfo,
+                refreshRequest = refreshRequest,
+            )
+            if (strategicPlan != null) {
+                memory = AgentMemoryManager.applyStrategicRoadmap(memory, observation, empireObservation, refreshRequest, strategicPlan)
+                civInfo.agentMemory = memory.clone()
+                observation = AgentObservationBuilder.build(civInfo, memory)
+                empireObservation = AgentEmpireObservationBuilder.build(civInfo, memory).observation
+                strategistRefreshCount += 1
+                AgentObservability.record(
+                    type = "strategist_roadmap_applied",
+                    message = "Strategist roadmap updated before tactical planning",
+                    civName = civInfo.civName,
+                    turn = civInfo.gameInfo.turns,
+                    details = mapOf(
+                        "urgency" to refreshRequest.urgency,
+                        "reason" to refreshRequest.reason,
+                        "roadmapJson" to AgentMemoryManager.roadmapJson(memory.strategicRoadmap),
+                        "notes" to (strategicPlan.notes ?: ""),
+                    ),
+                )
+            } else {
+                AgentObservability.record(
+                    type = "strategist_roadmap_missing",
+                    message = "Strategist refresh produced no roadmap; keeping prior roadmap",
+                    civName = civInfo.civName,
+                    turn = civInfo.gameInfo.turns,
+                    details = mapOf(
+                        "urgency" to refreshRequest.urgency,
+                        "reason" to refreshRequest.reason,
+                    ),
+                )
+            }
+        }
+
+        var observationJson = AgentPromptBuilder.observationJson(observation)
+        var empireObservationJson = AgentPromptBuilder.empireObservationJson(empireObservation)
+        var memoryJson = AgentMemoryManager.memoryJson(memory)
+        var plannerBriefJson = AgentPromptBuilder.plannerBriefJson(memory, observation, empireObservation)
+        var supportSnapshot = AgentTurnDiagnostics.supportSnapshot(observation, empireObservation)
+        var supportSnapshotJson = AgentTurnDiagnostics.supportSnapshotJson(supportSnapshot)
         AgentObservability.record(
             type = "turn_start",
             message = "Built observation for AI agent turn",
@@ -49,9 +104,12 @@ object AgentTurnAutomation {
                 "memoryCityIntents" to memory.cityIntents.size.toString(),
                 "memoryUnitAssignments" to memory.unitAssignments.size.toString(),
                 "memoryRecentFailures" to memory.recentFailures.size.toString(),
+                "strategistRefreshCount" to strategistRefreshCount.toString(),
                 "memoryJson" to memoryJson,
+                "strategicRoadmapJson" to AgentMemoryManager.roadmapJson(memory.strategicRoadmap),
                 "observationJson" to observationJson,
                 "empireObservationJson" to empireObservationJson,
+                "plannerBriefJson" to plannerBriefJson,
                 "domainSupportJson" to supportSnapshotJson,
                 "empireResearchCandidates" to empireObservation.researchCandidates.size.toString(),
                 "empirePolicyCandidates" to empireObservation.policyCandidates.size.toString(),
@@ -80,6 +138,60 @@ object AgentTurnAutomation {
                 selectedPlan = plan
                 fallbackReason = "Planner requested legacy handoff"
                 break
+            }
+
+            plan.strategistRefreshRequest?.let { request ->
+                if (strategistRefreshCount < 2) {
+                    val approvedRefresh = AgentMemoryManager.shouldHonorTacticalStrategistRefresh(memory, observation, empireObservation, request)
+                    if (approvedRefresh != null) {
+                        AgentObservability.record(
+                            type = "strategist_refresh_requested_by_tactical",
+                            message = "Tactical planner requested an emergency strategist refresh",
+                            civName = civInfo.civName,
+                            turn = civInfo.gameInfo.turns,
+                            details = mapOf(
+                                "attempt" to planningAttempts.toString(),
+                                "urgency" to approvedRefresh.urgency,
+                                "reason" to approvedRefresh.reason,
+                                "planJson" to AgentPromptBuilder.planJson(plan),
+                            ),
+                        )
+                        val strategicPlan = AgentPlanProviderFactory.provider.buildStrategicRoadmap(
+                            memory = memory,
+                            observation = observation,
+                            empireObservation = empireObservation,
+                            civInfo = civInfo,
+                            refreshRequest = approvedRefresh,
+                        )
+                        if (strategicPlan != null) {
+                            memory = AgentMemoryManager.applyStrategicRoadmap(memory, observation, empireObservation, approvedRefresh, strategicPlan)
+                            civInfo.agentMemory = memory.clone()
+                            observation = AgentObservationBuilder.build(civInfo, memory)
+                            empireObservation = AgentEmpireObservationBuilder.build(civInfo, memory).observation
+                            observationJson = AgentPromptBuilder.observationJson(observation)
+                            empireObservationJson = AgentPromptBuilder.empireObservationJson(empireObservation)
+                            memoryJson = AgentMemoryManager.memoryJson(memory)
+                            plannerBriefJson = AgentPromptBuilder.plannerBriefJson(memory, observation, empireObservation)
+                            supportSnapshot = AgentTurnDiagnostics.supportSnapshot(observation, empireObservation)
+                            supportSnapshotJson = AgentTurnDiagnostics.supportSnapshotJson(supportSnapshot)
+                            strategistRefreshCount += 1
+                            retryContext = null
+                            AgentObservability.record(
+                                type = "strategist_roadmap_applied",
+                                message = "Strategist roadmap updated after tactical emergency refresh",
+                                civName = civInfo.civName,
+                                turn = civInfo.gameInfo.turns,
+                                details = mapOf(
+                                    "urgency" to approvedRefresh.urgency,
+                                    "reason" to approvedRefresh.reason,
+                                    "roadmapJson" to AgentMemoryManager.roadmapJson(memory.strategicRoadmap),
+                                    "notes" to (strategicPlan.notes ?: ""),
+                                ),
+                            )
+                            continue
+                        }
+                    }
+                }
             }
 
             val validation = executor.validate(civInfo, plan)
@@ -148,6 +260,7 @@ object AgentTurnAutomation {
             val updatedMemory = AgentMemoryManager.updateAfterTurn(
                 civInfo = civInfo,
                 observation = observation,
+                empireObservation = empireObservation,
                 startingMemory = memory,
                 plan = null,
                 report = null,
@@ -176,6 +289,7 @@ object AgentTurnAutomation {
             val updatedMemory = AgentMemoryManager.updateAfterTurn(
                 civInfo = civInfo,
                 observation = observation,
+                empireObservation = empireObservation,
                 startingMemory = memory,
                 plan = selectedPlan,
                 report = null,
@@ -208,6 +322,7 @@ object AgentTurnAutomation {
             val updatedMemory = AgentMemoryManager.updateAfterTurn(
                 civInfo = civInfo,
                 observation = observation,
+                empireObservation = empireObservation,
                 startingMemory = memory,
                 plan = selectedPlan,
                 report = null,
@@ -238,6 +353,7 @@ object AgentTurnAutomation {
             val updatedMemory = AgentMemoryManager.updateAfterTurn(
                 civInfo = civInfo,
                 observation = observation,
+                empireObservation = empireObservation,
                 startingMemory = memory,
                 plan = selectedPlan,
                 report = null,
@@ -279,6 +395,7 @@ object AgentTurnAutomation {
             val updatedMemory = AgentMemoryManager.updateAfterTurn(
                 civInfo = civInfo,
                 observation = observation,
+                empireObservation = empireObservation,
                 startingMemory = memory,
                 plan = selectedPlan,
                 report = null,
@@ -309,6 +426,7 @@ object AgentTurnAutomation {
             val updatedMemory = AgentMemoryManager.updateAfterTurn(
                 civInfo = civInfo,
                 observation = observation,
+                empireObservation = empireObservation,
                 startingMemory = memory,
                 plan = selectedPlan,
                 report = report,
@@ -340,6 +458,7 @@ object AgentTurnAutomation {
         val updatedMemory = AgentMemoryManager.updateAfterTurn(
             civInfo = civInfo,
             observation = observation,
+            empireObservation = empireObservation,
             startingMemory = memory,
             plan = selectedPlan,
             report = report,
@@ -375,6 +494,9 @@ object AgentTurnAutomation {
         "memoryCityIntents" to memory.cityIntents.size.toString(),
         "memoryUnitAssignments" to memory.unitAssignments.size.toString(),
         "memoryRecentFailures" to memory.recentFailures.size.toString(),
+        "memoryRoadmapDoctrine" to memory.strategicRoadmap.doctrine,
+        "memoryRoadmapWinPath" to (memory.strategicRoadmap.winPath ?: ""),
+        "strategicRoadmapJson" to AgentMemoryManager.roadmapJson(memory.strategicRoadmap),
     )
 
     private fun domainDetails(

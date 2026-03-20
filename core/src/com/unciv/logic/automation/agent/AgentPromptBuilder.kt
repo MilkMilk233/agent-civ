@@ -12,6 +12,10 @@ object AgentPromptBuilder {
     fun memoryJson(memory: AgentMemory): String = json.encodeToString(memory)
     fun observationJson(observation: AgentObservation): String = json.encodeToString(observation)
     fun empireObservationJson(observation: AgentEmpireObservation): String = json.encodeToString(observation)
+    fun plannerBrief(memory: AgentMemory, observation: AgentObservation, empireObservation: AgentEmpireObservation): AgentPlannerBrief =
+        AgentStrategicGovernor.buildPlannerBrief(memory, observation, empireObservation)
+    fun plannerBriefJson(memory: AgentMemory, observation: AgentObservation, empireObservation: AgentEmpireObservation): String =
+        json.encodeToString(plannerBrief(memory, observation, empireObservation))
     fun planJson(plan: AgentActionPlan): String = json.encodeToString(plan)
     fun retryContextJson(retryContext: AgentRetryContext): String = json.encodeToString(retryContext)
 
@@ -22,8 +26,7 @@ object AgentPromptBuilder {
         retryContext: AgentRetryContext? = null,
     ): String {
         val memoryJson = memoryJson(memory)
-        val observationJson = observationJson(observation)
-        val empireObservationJson = empireObservationJson(empireObservation)
+        val plannerBriefJson = plannerBriefJson(memory, observation, empireObservation)
         val retryBlock = retryContext?.let {
             """
             Retry context:
@@ -37,7 +40,7 @@ object AgentPromptBuilder {
             """.trimIndent()
         } ?: ""
         return """
-            You are an AI strategy planner for a turn-based 4X game.
+            You are an AI strategy planner for Unciv using the standard Civ V - Gods & Kings style ruleset.
             Produce JSON only, with no markdown or prose.
             The JSON must match this schema exactly:
             {
@@ -51,40 +54,33 @@ object AgentPromptBuilder {
                 {"type":"end_turn","priority":999}
               ],
               "handoffToLegacyAI": false,
+              "strategistRefreshRequest": {"urgency":"emergency","reason":"optional"},
               "notes": "optional"
             }
             Rules:
-            - Memory JSON captures current strategic intent carried over from earlier turns. It may be stale.
-            - Observation JSON is a curated tactical current-turn brief, not a full save dump.
-            - Empire Observation JSON contains current empire-wide choices such as research, policies, faith/gold spending, city bombardment, diplomacy/trade offers, and spy assignments.
-            - Trust Observation JSON over Memory JSON if they conflict.
-            - Use Memory JSON to preserve continuity: keep strategicPosture consistent when still relevant, continue cityIntents and unitAssignments when the observation still supports them, and avoid repeating recentFailures.
-            - Focus first on empireSummary, priorityFacts, citiesNeedingAttention, actionableUnits, visibleThreatsAndTargets, and opportunities.
-            - Empire Observation JSON may include currentResearchTurnsLeft/currentResearchProgress/currentResearchStatus. Treat a nearly-complete research choice as already in flight unless a free-tech choice or missing research queue requires action.
-            - For city governance, each city in citiesNeedingAttention may include cityOptionCandidates for legal production changes, purchases, tile buys, and city focus changes. Use select_city_option only with those exact candidateId values.
-            - Cities may include constructionProgress. If a build is already underway and especially if it is nearly complete or still matches memory intent, prefer finishing it instead of switching production.
-            - Cities may also list topConstructionChoices. When the opener is peaceful, city development is usually more important than passive unit posture.
-            - For tactical control, actionableUnits may include unitOptionCandidates for grounded attack, settlement, worker, and recovery choices. Use select_unit_option only with those exact candidateId values.
-            - Actionable units may include assignmentProgress. If a worker or settler is already moving toward a valid assignment or is already on the target tile, prefer finishing that assignment over chasing a new opportunity.
-            - Treat omittedSummary as a sign that quieter state exists, but only act through the entities explicitly listed in the observation.
-            - Use select_empire_option only with exact candidateId values from Empire Observation JSON.
-            - Empire Observation JSON is the only source of legal empire-level options. Do not invent research, policy, religion, gold, bombardment, diplomacy, trade, or spy commands outside those candidateIds.
-            - Diplomacy candidates may include declarations of friendship, embassy requests, open borders, research agreements, defensive pacts, or luxury exchanges. Use only the exact candidateId values already present.
-            - Spy candidates may include specific city assignments or coup preparation. Use only the exact candidateId values already present.
-            - Prefer select_city_option for city purchases, tile buys, and city focus changes instead of describing those actions in notes.
-            - If cityOptionCandidates include construction candidates such as citybuild:..., prefer those exact candidateId values over inventing or paraphrasing build changes.
-            - Prefer select_unit_option for attacks, settler city-site moves, worker job moves, worker improvements, founding on the current tile, and recovery/fortify choices when unitOptionCandidates are present.
-            - If an actionable unit includes legalActionCandidates, copy the candidate actionType exactly.
-            - If a legalActionCandidate includes moveDestinationX/moveDestinationY, emit a unit_move to that tile before the unit_action.
-            - For workers especially, prefer select_unit_option candidateIds over raw unit_action whenever worker unitOptionCandidates are present.
-            - For workers especially, do not invent action names like BuildFarm, BuildQuarry, ImproveWorkedTile, or similar paraphrases. Use only exact actionType values already present in unitActions or legalActionCandidates.
-            - Do not use Sleep, Skip, or Automate as the default way to finish a worker turn when a grounded worker move or improvement candidate is available.
-            - If a worker assignment is already in progress, switching away should require a clearly stronger reason than simply noticing another good tile elsewhere.
-            - During a peaceful early opener, prioritize worker tempo, capital growth, and safe expansion over focus micro, fortify, skip, or empty no-op turns.
-            - Do not spend a calm opener turn only on passive military posture when a city still has strong growth or expansion choices.
-            - If a city is already building Worker, Settler, Granary, or Monument in a peaceful opener, do not switch away lightly once production has been invested.
-            - Avoid repeating macro or focus changes that previously produced no state change unless the observation clearly shows a new reason they matter now.
-            - Use only unit IDs, cities, action types, tiles, and constructions present in the observation.
+            - Memory JSON carries tactical continuity plus the current strategist roadmap.
+            - Planner Brief JSON is the tactical turn brief built from the current game state. It is the current truth for planning.
+            - Trust Planner Brief JSON over Memory JSON if they conflict on current-turn facts.
+            - This project targets the standard Unciv main game, not mod-specific mechanics. Use normal Civ V strategic priors confidently when reasoning about openings, expansion, military timing, science, culture, and victory races.
+            - Planner Brief JSON already includes the current roadmap doctrine, phase, thesis, commitments, and watchOuts. Treat that roadmap as the long and mid-term source of truth unless the board creates a real emergency.
+            - Use only the surfaced legal candidate actions and exact action types from the brief. Do not invent unsupported commands or mod mechanics.
+            - Use Memory JSON for continuity when the current brief still supports it: city intents, unit assignments, recent failures, and roadmap consistency.
+            - Plan like a strong tactical player serving the roadmap. Let criticalAlerts, progressInMotion, threatHighlights, and the current roadmap commitments drive the turn.
+            - The planner brief already compressed noise. Do not let routine worker upkeep crowd out rival threats, military floor problems, gold overflow, or important city tempo choices.
+            - Use select_empire_option only with candidateId values from empireChoices. Never invent research, policy, diplomacy, religion, gold, bombardment, or spy commands outside those candidates.
+            - Repeated diplomacy that does not materially improve the game state is low priority.
+            - Use select_city_option only with candidateId values from cityHighlights.cityOptionCandidates.
+            - If a city already has meaningful construction progress, especially on a nearly complete or strategically correct build, prefer finishing it over switching.
+            - In peaceful or duel setups, city tempo usually matters more than passive military posture or focus micro.
+            - Use select_unit_option only with candidateId values from unitHighlights.unitOptionCandidates.
+            - If a unit includes legalActionCandidates, copy the actionType exactly. If a legalActionCandidate includes moveDestinationX/moveDestinationY, emit unit_move first and then unit_action.
+            - If a unit has assignmentProgress, prefer finishing the current assignment over chasing a new local opportunity unless there is a clearly stronger strategic reason to switch.
+            - For workers, prefer grounded worker candidateIds over raw unit_action, never invent worker action names, and do not default to Sleep, Skip, or Automate when a real worker move or improvement option exists.
+            - In a peaceful opener, prioritize worker tempo, capital growth, and safe expansion. Do not spend the turn only on passive unit posture when strong city or expansion choices exist.
+            - In the mid and late game, do not float large gold reserves when meaningful purchases, upgrades, or other tempo gains are available.
+            - Avoid repeating actions that previously produced no state change unless the current brief shows a new reason they matter now.
+            - Use strategistRefreshRequest only for a real strategic emergency: the roadmap assumptions are broken by war, a critical rival surge, a collapse in the current plan, or another major shift that should trigger an immediate strategist review.
+            - Use only unit IDs, cities, action types, tiles, and constructions present in Planner Brief JSON.
             - Do not invent entities.
             - Prefer short, legal plans (0-25 commands).
             - If the best move is to intentionally do nothing this turn, return an empty actions list with handoffToLegacyAI=false and explain why in notes.
@@ -92,10 +88,8 @@ object AgentPromptBuilder {
             Memory JSON:
             $memoryJson
             ${if (retryBlock.isNotBlank()) "$retryBlock\n" else ""}
-            Empire Observation JSON:
-            $empireObservationJson
-            Observation JSON:
-            $observationJson
+            Planner Brief JSON:
+            $plannerBriefJson
         """.trimIndent()
     }
 }

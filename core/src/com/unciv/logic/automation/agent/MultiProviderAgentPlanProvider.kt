@@ -64,6 +64,88 @@ class MultiProviderAgentPlanProvider(
         }
     }
 
+    override fun buildStrategicRoadmap(
+        memory: AgentMemory,
+        observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+        civInfo: Civilization,
+        refreshRequest: AgentStrategistRefreshRequest,
+    ): AgentStrategicPlan? = runBlocking {
+        throwIfCancelled()
+        val strategistBriefJson = AgentStrategistPromptBuilder.strategistBriefJson(memory, observation, empireObservation, refreshRequest)
+        val prompt = AgentStrategistPromptBuilder.build(memory, observation, empireObservation, refreshRequest)
+        AgentObservability.record(
+            type = "strategist_llm_request",
+            message = "Sending strategist prompt to LLM provider",
+            civName = civInfo.civName,
+            turn = civInfo.gameInfo.turns,
+            details = mapOf(
+                "provider" to provider.name,
+                "model" to model,
+                "baseUrl" to baseUrl,
+                "requestTimeoutMs" to requestTimeoutMs.toString(),
+                "connectTimeoutMs" to connectTimeoutMs.toString(),
+                "socketTimeoutMs" to socketTimeoutMs.toString(),
+                "maxAttempts" to maxAttempts.toString(),
+                "memoryJson" to AgentPromptBuilder.memoryJson(memory),
+                "empireObservationJson" to AgentPromptBuilder.empireObservationJson(empireObservation),
+                "strategistBriefJson" to strategistBriefJson,
+                "refreshRequestJson" to json.encodeToString(refreshRequest),
+                "prompt" to prompt,
+            ),
+        )
+
+        val planText = requestStructuredText(prompt, civInfo.civName, civInfo.gameInfo.turns, eventPrefix = "strategist")
+            ?: return@runBlocking null
+        throwIfCancelled()
+
+        AgentObservability.record(
+            type = "strategist_llm_response",
+            message = "Received raw strategist LLM response",
+            civName = civInfo.civName,
+            turn = civInfo.gameInfo.turns,
+            details = mapOf(
+                "provider" to provider.name,
+                "model" to model,
+                "rawResponse" to planText,
+            ),
+        )
+
+        try {
+            val parsedPlan = json.decodeFromString<AgentStrategicPlan>(planText)
+            AgentObservability.record(
+                type = "strategist_llm_plan_parsed",
+                message = "Structured strategist roadmap decoded successfully",
+                civName = civInfo.civName,
+                turn = civInfo.gameInfo.turns,
+                details = mapOf(
+                    "doctrine" to parsedPlan.roadmap.doctrine,
+                    "winPath" to (parsedPlan.roadmap.winPath ?: ""),
+                    "phase" to parsedPlan.roadmap.phase,
+                    "reviewInTurns" to parsedPlan.roadmap.reviewInTurns.toString(),
+                    "notes" to (parsedPlan.notes ?: ""),
+                    "parsedPlan" to json.encodeToString(parsedPlan),
+                ),
+            )
+            parsedPlan
+        } catch (ex: SerializationException) {
+            Log.debug("AI (agent): strategist output decoding failed, provider=%s", provider)
+            Log.debug("AI (agent): strategist decode exception", ex)
+            AgentObservability.record(
+                type = "strategist_llm_parse_error",
+                message = "Failed to decode strategist roadmap",
+                civName = civInfo.civName,
+                turn = civInfo.gameInfo.turns,
+                details = mapOf(
+                    "provider" to provider.name,
+                    "error" to (ex.message ?: ex::class.simpleName.orEmpty()),
+                    "rawResponse" to planText,
+                ),
+            )
+            null
+        }
+    }
+
     override fun buildPlan(
         memory: AgentMemory,
         observation: AgentObservation,
@@ -73,6 +155,7 @@ class MultiProviderAgentPlanProvider(
     ): AgentActionPlan? = runBlocking {
         throwIfCancelled()
         val prompt = AgentPromptBuilder.build(memory, observation, empireObservation, retryContext)
+        val plannerBriefJson = AgentPromptBuilder.plannerBriefJson(memory, observation, empireObservation)
         AgentObservability.record(
             type = "llm_request",
             message = "Sending prompt to LLM provider",
@@ -88,6 +171,7 @@ class MultiProviderAgentPlanProvider(
                 "maxAttempts" to maxAttempts.toString(),
                 "memoryJson" to AgentPromptBuilder.memoryJson(memory),
                 "empireObservationJson" to AgentPromptBuilder.empireObservationJson(empireObservation),
+                "plannerBriefJson" to plannerBriefJson,
                 "retryAttempt" to (retryContext?.retryAttempt?.toString() ?: "0"),
                 "retryMax" to (retryContext?.maxRetries?.toString() ?: "0"),
                 "retryContextJson" to (retryContext?.let { AgentPromptBuilder.retryContextJson(it) } ?: ""),
@@ -95,12 +179,7 @@ class MultiProviderAgentPlanProvider(
             ),
         )
 
-        val planText = when {
-            isGatewayBaseUrl(baseUrl) -> requestOpenAiCompatible(prompt, civInfo.civName, civInfo.gameInfo.turns)
-            provider == LlmProvider.Google -> requestGoogleDirect(prompt, civInfo.civName, civInfo.gameInfo.turns)
-            provider == LlmProvider.Anthropic -> requestAnthropicDirect(prompt, civInfo.civName, civInfo.gameInfo.turns)
-            else -> requestOpenAiCompatible(prompt, civInfo.civName, civInfo.gameInfo.turns)
-        } ?: return@runBlocking null
+        val planText = requestStructuredText(prompt, civInfo.civName, civInfo.gameInfo.turns) ?: return@runBlocking null
         throwIfCancelled()
 
         AgentObservability.record(
@@ -145,6 +224,20 @@ class MultiProviderAgentPlanProvider(
                 ),
             )
             null
+        }
+    }
+
+    private suspend fun requestStructuredText(
+        prompt: String,
+        civName: String,
+        turn: Int,
+        eventPrefix: String = "",
+    ): String? {
+        return when {
+            isGatewayBaseUrl(baseUrl) -> requestOpenAiCompatible(prompt, civName, turn, eventPrefix = eventPrefix)
+            provider == LlmProvider.Google -> requestGoogleDirect(prompt, civName, turn, eventPrefix = eventPrefix)
+            provider == LlmProvider.Anthropic -> requestAnthropicDirect(prompt, civName, turn, eventPrefix = eventPrefix)
+            else -> requestOpenAiCompatible(prompt, civName, turn, eventPrefix = eventPrefix)
         }
     }
 

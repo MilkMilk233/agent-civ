@@ -1,5 +1,6 @@
 package com.unciv.logic.automation.agent
 
+import com.unciv.Constants
 import com.unciv.logic.automation.civilization.ReligionAutomation
 import com.unciv.logic.automation.civilization.UseGoldAutomation
 import com.unciv.logic.automation.unit.UnitAutomation
@@ -11,19 +12,25 @@ import com.unciv.logic.battle.TargetHelper
 import com.unciv.logic.city.City
 import com.unciv.logic.civilization.Civilization
 import com.unciv.logic.civilization.managers.ReligionState
+import com.unciv.models.ruleset.Milestone
+import com.unciv.models.ruleset.Victory
 import com.unciv.models.ruleset.Policy
 import com.unciv.models.ruleset.tech.Technology
+import com.unciv.ui.screens.victoryscreen.RankingType
 import com.unciv.ui.screens.worldscreen.unit.actions.UnitActionsUpgrade
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 object AgentEmpireObservationBuilder {
     private const val maxResearchCandidates = 6
     private const val maxPolicyCandidates = 6
+    private const val maxVictoryThreats = 2
 
     internal fun build(civInfo: Civilization, memory: AgentMemory): AgentEmpirePlanningContext {
         civInfo.updateStatsForNextTurn()
         civInfo.cities.forEach { it.cityStats.update(updateCivStats = false) }
 
+        val gameContext = buildPublicGameContext(civInfo)
         val researchCandidates = buildResearchCandidates(civInfo)
         val policyCandidates = buildPolicyCandidates(civInfo)
         val macroCandidates = buildMacroCandidates(civInfo)
@@ -46,12 +53,30 @@ object AgentEmpireObservationBuilder {
             currentResearchProgress != null && currentResearchProgress > 0 -> "in_progress"
             else -> "queued"
         }
+        val enabledVictories = enabledVictories(civInfo)
+        val preferredVictoryTypes = civInfo.getPreferredVictoryTypes().filter { it != Constants.neutralVictoryType }
+        val roadmap = memory.strategicRoadmap.takeIf { it.doctrine.isNotBlank() }
+        val victoryPlan = chooseVictoryPlan(civInfo, enabledVictories, preferredVictoryTypes)
+        val victoryThreats = buildVictoryThreats(civInfo, enabledVictories, victoryPlan)
+        val displayedVictoryGoal = roadmap?.winPath ?: victoryPlan?.victory?.name
+        val displayedVictoryFocus = roadmap?.winPath?.let(::defaultFocusForRoadmapWinPath) ?: victoryPlan?.focus?.name
 
         val observation = AgentEmpireObservation(
             turn = civInfo.gameInfo.turns,
             civName = civInfo.civName,
             strategicPosture = memory.strategicPosture.mode,
             isAtWar = civInfo.isAtWar(),
+            gameContext = gameContext,
+            enabledVictoryTypes = enabledVictories.map { it.name },
+            preferredVictoryTypes = preferredVictoryTypes,
+            victoryGoal = displayedVictoryGoal,
+            victoryFocus = displayedVictoryFocus,
+            heuristicVictoryGoal = victoryPlan?.victory?.name,
+            heuristicVictoryFocus = victoryPlan?.focus?.name,
+            victoryNextMilestone = victoryPlan?.nextMilestone?.uniqueDescription,
+            victoryProgressCompleted = victoryPlan?.completedMilestones ?: 0,
+            victoryProgressTotal = victoryPlan?.totalMilestones ?: 0,
+            victoryThreats = victoryThreats,
             currentResearch = currentResearch,
             currentResearchTurnsLeft = currentResearchTurnsLeft,
             currentResearchProgress = currentResearchProgress,
@@ -64,7 +89,18 @@ object AgentEmpireObservationBuilder {
             religionState = civInfo.religionManager.religionState.name,
             gold = civInfo.gold,
             happiness = civInfo.getHappiness(),
-            macroFacts = buildMacroFacts(civInfo, researchCandidates, policyCandidates, macroCandidates, diplomacyCandidates, spyCandidates),
+            macroFacts = buildMacroFacts(
+                civInfo,
+                roadmap,
+                gameContext,
+                victoryPlan,
+                victoryThreats,
+                researchCandidates,
+                policyCandidates,
+                macroCandidates,
+                diplomacyCandidates,
+                spyCandidates,
+            ),
             researchCandidates = researchCandidates.map { it.observation },
             policyCandidates = policyCandidates.map { it.observation },
             macroCandidates = macroCandidates.map { it.observation },
@@ -74,6 +110,55 @@ object AgentEmpireObservationBuilder {
         return AgentEmpirePlanningContext(
             observation = observation,
             candidates = candidateMap,
+        )
+    }
+
+    private fun buildPublicGameContext(civInfo: Civilization): AgentPublicGameContextObservation {
+        val gameParameters = civInfo.gameInfo.gameParameters
+        val mapParameters = civInfo.gameInfo.tileMap.mapParameters
+        val majorCivCount = gameParameters.players.count { it.chosenCiv != Constants.spectator }
+        val knownMajorCivs = civInfo.getKnownCivs().count { it.isMajorCiv() && !it.isDefeated() }
+        val duelLike = majorCivCount <= 2
+        val contactComplete = knownMajorCivs >= (majorCivCount - 1).coerceAtLeast(0)
+        val mapSizeName = mapParameters.mapSize.name
+        val mapTypeName = mapParameters.type
+        val explorationValue = when {
+            contactComplete && duelLike -> "low"
+            contactComplete -> if (mapSizeName in setOf("Tiny", "Small")) "low" else "medium"
+            duelLike || mapTypeName.equals("Pangaea", ignoreCase = true) -> "high"
+            else -> "medium"
+        }
+        val expansionWindow = when {
+            duelLike && mapSizeName == "Tiny" -> "narrow"
+            mapSizeName in setOf("Tiny", "Small") -> "medium"
+            else -> "wide"
+        }
+        val archetype = listOf(
+            mapSizeName.lowercase(),
+            if (duelLike) "duel" else "${majorCivCount}p",
+            mapTypeName.lowercase(),
+            if (gameParameters.numberOfCityStates == 0) "no_city_states" else "city_states",
+            if (gameParameters.noBarbarians) "no_barbs" else "barbs",
+        ).joinToString("_")
+            .replace(' ', '_')
+
+        return AgentPublicGameContextObservation(
+            rulesetName = civInfo.gameInfo.gameParameters.baseRuleset,
+            mapSize = mapSizeName,
+            mapType = mapTypeName,
+            mapShape = mapParameters.shape,
+            gameSpeed = civInfo.gameInfo.speed.name,
+            majorCivCount = majorCivCount,
+            cityStateCount = gameParameters.numberOfCityStates,
+            barbariansEnabled = !gameParameters.noBarbarians,
+            ruinsEnabled = !mapParameters.noRuins,
+            strategicBalance = mapParameters.getStrategicBalance(),
+            legendaryStart = mapParameters.getLegendaryStart(),
+            duelLike = duelLike,
+            contactComplete = contactComplete,
+            explorationValue = explorationValue,
+            expansionWindow = expansionWindow,
+            archetype = archetype,
         )
     }
 
@@ -331,8 +416,141 @@ object AgentEmpireObservationBuilder {
         return candidates
     }
 
+    private data class VictoryPlanSummary(
+        val victory: Victory,
+        val nextMilestone: Milestone?,
+        val focus: Victory.Focus,
+        val completedMilestones: Int,
+        val totalMilestones: Int,
+        val score: Double,
+    )
+
+    private fun enabledVictories(civInfo: Civilization): List<Victory> {
+        val enabled = civInfo.gameInfo.gameParameters.victoryTypes
+        return civInfo.gameInfo.ruleset.victories.values
+            .filter { it.name != Constants.neutralVictoryType && it.name in enabled }
+    }
+
+    private fun chooseVictoryPlan(
+        civInfo: Civilization,
+        victories: List<Victory>,
+        preferredVictoryTypes: List<String>,
+    ): VictoryPlanSummary? {
+        return victories
+            .map { victory -> summarizeVictoryPlan(civInfo, victory, preferredVictoryTypes) }
+            .maxByOrNull { it.score }
+    }
+
+    private fun summarizeVictoryPlan(
+        civInfo: Civilization,
+        victory: Victory,
+        preferredVictoryTypes: List<String>,
+    ): VictoryPlanSummary {
+        val nextMilestone = civInfo.victoryManager.getNextMilestone(victory)
+        val completedMilestones = civInfo.victoryManager.amountMilestonesCompleted(victory)
+        val totalMilestones = max(1, victory.milestoneObjects.size)
+        val focus = nextMilestone?.getFocus(civInfo) ?: Victory.Focus.Score
+        val progressWeight = completedMilestones * 12.0 / totalMilestones
+        val preferredWeight = if (victory.name in preferredVictoryTypes) 4.0 else 0.0
+        val focusWeight = victoryFocusWeight(civInfo, focus)
+        return VictoryPlanSummary(
+            victory = victory,
+            nextMilestone = nextMilestone,
+            focus = focus,
+            completedMilestones = completedMilestones,
+            totalMilestones = totalMilestones,
+            score = progressWeight + preferredWeight + focusWeight,
+        )
+    }
+
+    private fun victoryFocusWeight(civInfo: Civilization, focus: Victory.Focus): Double = when (focus) {
+        Victory.Focus.Science -> civInfo.getStatForRanking(RankingType.Technologies) * 0.6 +
+            civInfo.stats.statsForNextTurn.science.toDouble() * 0.05
+        Victory.Focus.Culture -> civInfo.getStatForRanking(RankingType.Culture) * 1.0 +
+            civInfo.stats.statsForNextTurn.culture.toDouble() * 0.08
+        Victory.Focus.Military -> civInfo.getStatForRanking(RankingType.Force) * 0.01
+        Victory.Focus.CityStates -> civInfo.gold * 0.002 + civInfo.getKnownCivs().count { it.isCityState } * 0.5
+        Victory.Focus.Faith -> civInfo.religionManager.storedFaith * 0.01
+        Victory.Focus.Gold -> civInfo.gold * 0.003 + civInfo.getStatForRanking(RankingType.Gold) * 0.002
+        Victory.Focus.Production -> civInfo.stats.statsForNextTurn.production.toDouble() * 0.05
+        Victory.Focus.Score -> civInfo.getStatForRanking(RankingType.Score) * 0.01
+    }
+
+    private fun buildVictoryThreats(
+        civInfo: Civilization,
+        victories: List<Victory>,
+        ourPlan: VictoryPlanSummary?,
+    ): List<AgentVictoryThreatObservation> {
+        val ourScore = civInfo.getStatForRanking(RankingType.Score)
+        val ourForce = civInfo.getStatForRanking(RankingType.Force)
+        val ourTech = civInfo.getStatForRanking(RankingType.Technologies)
+        val rivals = civInfo.getKnownCivs()
+            .filter { it.isMajorCiv() && !it.isDefeated() && it != civInfo }
+
+        return rivals
+            .map { rival ->
+                val rivalPlan = chooseVictoryPlan(rival, victories, rival.getPreferredVictoryTypes())
+                val likelyPlan = rivalPlan ?: return@map null
+                val ourComparableProgress = ourPlan
+                    ?.takeIf { it.victory.name == likelyPlan.victory.name }
+                    ?.completedMilestones
+                    ?: 0
+                val scoreDelta = rival.getStatForRanking(RankingType.Score) - ourScore
+                val forceDelta = rival.getStatForRanking(RankingType.Force) - ourForce
+                val technologyDelta = rival.getStatForRanking(RankingType.Technologies) - ourTech
+                val progressDelta = likelyPlan.completedMilestones - ourComparableProgress
+                val threatScore = progressDelta * 5 +
+                    technologyDelta * 2 +
+                    (if (scoreDelta > 0) 2 else 0) +
+                    (if (forceDelta > max(ourForce / 3, 30)) 2 else 0) +
+                    (if (ourPlan != null && likelyPlan.victory.name == ourPlan.victory.name) 1 else 0)
+                val threatLevel = when {
+                    threatScore >= 10 -> "critical"
+                    threatScore >= 5 -> "warning"
+                    else -> "info"
+                }
+                AgentVictoryThreatObservation(
+                    civName = rival.civName,
+                    likelyVictoryType = likelyPlan.victory.name,
+                    focus = likelyPlan.focus.name,
+                    nextMilestone = likelyPlan.nextMilestone?.uniqueDescription,
+                    completedMilestones = likelyPlan.completedMilestones,
+                    totalMilestones = likelyPlan.totalMilestones,
+                    scoreDeltaVsUs = scoreDelta,
+                    forceDeltaVsUs = forceDelta,
+                    technologyDeltaVsUs = technologyDelta,
+                    threatLevel = threatLevel,
+                    detail = buildString {
+                        append("${rival.civName} looks likeliest to pursue ${likelyPlan.victory.name}.")
+                        if (technologyDelta > 0) append(" Tech lead +$technologyDelta.")
+                        if (scoreDelta > 0) append(" Score lead +$scoreDelta.")
+                        if (forceDelta > 0) append(" Force lead +$forceDelta.")
+                        likelyPlan.nextMilestone?.let { append(" Next milestone: ${it.uniqueDescription}.") }
+                    },
+                )
+            }
+            .filterNotNull()
+            .sortedWith(
+                compareByDescending<AgentVictoryThreatObservation> {
+                    when (it.threatLevel) {
+                        "critical" -> 3
+                        "warning" -> 2
+                        else -> 1
+                    }
+                }.thenByDescending { it.technologyDeltaVsUs ?: 0 }
+                    .thenByDescending { it.scoreDeltaVsUs ?: 0 }
+                    .thenBy { it.civName }
+            )
+            .take(maxVictoryThreats)
+            .toList()
+    }
+
     private fun buildMacroFacts(
         civInfo: Civilization,
+        roadmap: AgentStrategicRoadmapMemory?,
+        gameContext: AgentPublicGameContextObservation,
+        victoryPlan: VictoryPlanSummary?,
+        victoryThreats: List<AgentVictoryThreatObservation>,
         researchCandidates: List<AgentEmpireRuntimeCandidate>,
         policyCandidates: List<AgentEmpireRuntimeCandidate>,
         macroCandidates: List<AgentEmpireRuntimeCandidate>,
@@ -340,6 +558,82 @@ object AgentEmpireObservationBuilder {
         spyCandidates: List<AgentEmpireRuntimeCandidate> = emptyList(),
     ): List<ObservationFact> {
         val facts = mutableListOf<ObservationFact>()
+        if (roadmap != null && roadmap.doctrine.isNotBlank()) {
+            facts += ObservationFact(
+                category = "roadmap",
+                severity = "info",
+                headline = "Current strategist roadmap: ${roadmap.winPath ?: roadmap.doctrine}",
+                detail = roadmap.thesis ?: "Follow the current roadmap unless the board creates an emergency that justifies a strategic refresh.",
+            )
+        } else if (victoryPlan != null) {
+            facts += ObservationFact(
+                category = "victory",
+                severity = "info",
+                headline = "Current best victory path: ${victoryPlan.victory.name}",
+                detail = buildString {
+                    append("Focus ${victoryPlan.focus.name.lowercase()}")
+                    append(", progress ${victoryPlan.completedMilestones}/${victoryPlan.totalMilestones}")
+                    victoryPlan.nextMilestone?.let { append(", next milestone: ${it.uniqueDescription}") }
+                },
+            )
+        }
+        victoryThreats.firstOrNull()?.let { threat ->
+            facts += ObservationFact(
+                category = "victory",
+                severity = threat.threatLevel,
+                headline = "${threat.civName} is the main rival",
+                detail = threat.detail,
+            )
+        }
+        val knownMajorCivs = civInfo.getKnownCivs().count { it.isMajorCiv() && !it.isDefeated() }
+        if (gameContext.contactComplete && gameContext.duelLike) {
+            facts += ObservationFact(
+                category = "contact",
+                severity = "info",
+                headline = "Full rival contact is already established",
+                detail = "This duel map has no unseen major civs left. Scouting now matters more for map control and positioning than for discovery.",
+            )
+        } else if (civInfo.gameInfo.turns >= 80 && knownMajorCivs <= 1) {
+            facts += ObservationFact(
+                category = "contact",
+                severity = "warning",
+                headline = "World contact is still very limited",
+                detail = "You know only $knownMajorCivs major civ${if (knownMajorCivs == 1) "" else "s"} this late. Meeting more civs matters for trade, diplomacy, and threat awareness.",
+            )
+        }
+        if (gameContext.duelLike) {
+            facts += ObservationFact(
+                category = "setup",
+                severity = "info",
+                headline = "This match is a duel-style setup",
+                detail = "${gameContext.mapSize} ${gameContext.mapType} with ${gameContext.cityStateCount} city-states. Long-horizon tempo, expansion timing, and direct rival pressure matter more than broad diplomacy.",
+            )
+        }
+        if (!civInfo.isAtWar() && civInfo.gameInfo.turns >= 100 && civInfo.cities.size <= 3) {
+            facts += ObservationFact(
+                category = "expansion",
+                severity = "warning",
+                headline = "Empire is small for a peaceful late-game race",
+                detail = "Only ${civInfo.cities.size} cities are supporting the current victory race. Consider faster growth, stronger investment, or more expansion.",
+            )
+        }
+        val force = civInfo.getStatForRanking(RankingType.Force)
+        if (!civInfo.isAtWar() && civInfo.cities.size >= 3 && force < max(60, civInfo.cities.size * 35)) {
+            facts += ObservationFact(
+                category = "war",
+                severity = "warning",
+                headline = "Military floor looks too low",
+                detail = "A ${civInfo.cities.size}-city empire with force $force is vulnerable and may fail to contest rival victory plans.",
+            )
+        }
+        if (civInfo.gold >= 1000) {
+            facts += ObservationFact(
+                category = "economy",
+                severity = "warning",
+                headline = "Large gold reserve should be converted into tempo",
+                detail = "You are floating ${civInfo.gold} gold. Prefer meaningful city purchases, upgrades, or other tempo gains over hoarding.",
+            )
+        }
         if (researchCandidates.isNotEmpty()) {
             facts += ObservationFact(
                 category = "research",
@@ -399,7 +693,7 @@ object AgentEmpireObservationBuilder {
                 detail = "${spyCandidates.size} spy candidates are available for reassignment or coup planning.",
             )
         }
-        return facts.take(6)
+        return facts.take(8)
     }
 
     private fun shouldOfferReligionMacro(civInfo: Civilization): Boolean {
@@ -434,3 +728,10 @@ object AgentEmpireObservationBuilder {
         ).joinToString("|")
     }
 }
+    private fun defaultFocusForRoadmapWinPath(winPath: String): String = when (winPath.lowercase()) {
+        "scientific" -> Victory.Focus.Science.name
+        "cultural" -> Victory.Focus.Culture.name
+        "domination" -> Victory.Focus.Military.name
+        "diplomatic" -> Victory.Focus.CityStates.name
+        else -> Victory.Focus.Score.name
+    }

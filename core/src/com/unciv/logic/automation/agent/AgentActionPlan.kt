@@ -7,6 +7,7 @@ import kotlinx.serialization.Serializable
 data class AgentActionPlan(
     val actions: List<AgentActionCommand> = emptyList(),
     val handoffToLegacyAI: Boolean = false,
+    val strategistRefreshRequest: AgentStrategistRefreshRequest? = null,
     val notes: String? = null,
 )
 

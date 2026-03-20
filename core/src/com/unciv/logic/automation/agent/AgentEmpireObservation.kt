@@ -9,6 +9,17 @@ data class AgentEmpireObservation(
     val civName: String,
     val strategicPosture: String,
     val isAtWar: Boolean,
+    val gameContext: AgentPublicGameContextObservation,
+    val enabledVictoryTypes: List<String>,
+    val preferredVictoryTypes: List<String>,
+    val victoryGoal: String? = null,
+    val victoryFocus: String? = null,
+    val heuristicVictoryGoal: String? = null,
+    val heuristicVictoryFocus: String? = null,
+    val victoryNextMilestone: String? = null,
+    val victoryProgressCompleted: Int = 0,
+    val victoryProgressTotal: Int = 0,
+    val victoryThreats: List<AgentVictoryThreatObservation> = emptyList(),
     val currentResearch: String? = null,
     val currentResearchTurnsLeft: Int? = null,
     val currentResearchProgress: Int? = null,
@@ -30,11 +41,46 @@ data class AgentEmpireObservation(
 )
 
 @Serializable
+data class AgentPublicGameContextObservation(
+    val rulesetName: String,
+    val mapSize: String,
+    val mapType: String,
+    val mapShape: String,
+    val gameSpeed: String,
+    val majorCivCount: Int,
+    val cityStateCount: Int,
+    val barbariansEnabled: Boolean,
+    val ruinsEnabled: Boolean,
+    val strategicBalance: Boolean,
+    val legendaryStart: Boolean,
+    val duelLike: Boolean,
+    val contactComplete: Boolean,
+    val explorationValue: String,
+    val expansionWindow: String,
+    val archetype: String,
+)
+
+@Serializable
 data class AgentEmpireChoiceCandidateObservation(
     val candidateId: String,
     val category: String,
     val title: String,
     val detail: String,
+)
+
+@Serializable
+data class AgentVictoryThreatObservation(
+    val civName: String,
+    val likelyVictoryType: String,
+    val focus: String,
+    val nextMilestone: String? = null,
+    val completedMilestones: Int = 0,
+    val totalMilestones: Int = 0,
+    val scoreDeltaVsUs: Int? = null,
+    val forceDeltaVsUs: Int? = null,
+    val technologyDeltaVsUs: Int? = null,
+    val threatLevel: String = "info",
+    val detail: String = "",
 )
 
 internal data class AgentEmpirePlanningContext(

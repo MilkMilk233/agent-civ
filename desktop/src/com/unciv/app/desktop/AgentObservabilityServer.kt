@@ -31,15 +31,26 @@ object AgentObservabilityServer {
         httpServer.executor = Executors.newSingleThreadExecutor()
 
         httpServer.createContext("/") { exchange ->
-            when (exchange.requestURI.path) {
-                "/" -> respond(exchange, 200, htmlPage, "text/html; charset=utf-8")
-                "/api/snapshot" -> respond(
+            val path = exchange.requestURI.path
+            when {
+                path == "/" -> respond(exchange, 200, htmlPage, "text/html; charset=utf-8")
+                path == "/agent-dashboard" || path == "/agent-dashboard/" -> respondResource(
+                    exchange,
+                    resourcePath = "agent-dashboard/index.html",
+                    contentType = "text/html; charset=utf-8",
+                )
+                path.startsWith("/agent-dashboard/") -> respondResource(
+                    exchange,
+                    resourcePath = path.removePrefix("/"),
+                    contentType = contentTypeForResource(path),
+                )
+                path == "/api/snapshot" -> respond(
                     exchange,
                     200,
                     AgentObservability.snapshotJson(parseSnapshotLimit(exchange)),
                     "application/json; charset=utf-8",
                 )
-                "/api/history/batches" -> respond(
+                path == "/api/history/batches" -> respond(
                     exchange,
                     200,
                     AgentEvaluationJson.json.encodeToString(run {
@@ -48,19 +59,19 @@ object AgentObservabilityServer {
                     }),
                     "application/json; charset=utf-8",
                 )
-                "/api/history/runner/status" -> respond(
+                path == "/api/history/runner/status" -> respond(
                     exchange,
                     200,
                     AgentEvaluationJson.json.encodeToString(AgentBatchRunnerService.status()),
                     "application/json; charset=utf-8",
                 )
-                "/api/history/runner/template" -> respond(
+                path == "/api/history/runner/template" -> respond(
                     exchange,
                     200,
                     AgentBatchRunnerService.templateConfigJson(),
                     "application/json; charset=utf-8",
                 )
-                "/api/history/runner/options" -> {
+                path == "/api/history/runner/options" -> {
                     val response = runCatching { AgentBatchRunnerService.formOptions() }
                     response.fold(
                         onSuccess = { options ->
@@ -81,7 +92,7 @@ object AgentObservabilityServer {
                         },
                     )
                 }
-                "/api/history/runner/start" -> {
+                path == "/api/history/runner/start" -> {
                     if (exchange.requestMethod.uppercase() != "POST") {
                         respond(exchange, 405, """{"error":"Method not allowed"}""", "application/json; charset=utf-8")
                     } else {
@@ -111,7 +122,7 @@ object AgentObservabilityServer {
                         }
                     }
                 }
-                "/api/history/runner/cancel" -> {
+                path == "/api/history/runner/cancel" -> {
                     if (exchange.requestMethod.uppercase() != "POST") {
                         respond(exchange, 405, """{"error":"Method not allowed"}""", "application/json; charset=utf-8")
                     } else {
@@ -136,7 +147,7 @@ object AgentObservabilityServer {
                         )
                     }
                 }
-                "/api/history/matches" -> {
+                path == "/api/history/matches" -> {
                     val batchId = queryParam(exchange, "batchId")
                     if (batchId.isNullOrBlank()) {
                         respond(exchange, 400, """{"error":"Missing batchId"}""", "application/json; charset=utf-8")
@@ -152,7 +163,7 @@ object AgentObservabilityServer {
                         )
                     }
                 }
-                "/api/history/replay" -> {
+                path == "/api/history/replay" -> {
                     val batchId = queryParam(exchange, "batchId")
                     val matchId = queryParam(exchange, "matchId")
                     if (batchId.isNullOrBlank() || matchId.isNullOrBlank()) {
@@ -218,6 +229,33 @@ object AgentObservabilityServer {
                 if (parts.firstOrNull() != name) return@firstNotNullOfOrNull null
                 parts.getOrNull(1)
             }
+    }
+
+    private fun respondResource(exchange: HttpExchange, resourcePath: String, contentType: String) {
+        val bytes = AgentObservabilityServer::class.java
+            .getResourceAsStream("/$resourcePath")
+            ?.use { it.readBytes() }
+
+        if (bytes == null) {
+            respond(exchange, 404, "Not found", "text/plain; charset=utf-8")
+            return
+        }
+
+        exchange.responseHeaders.add("Content-Type", contentType)
+        exchange.responseHeaders.add("Cache-Control", "no-store")
+        exchange.responseHeaders.add("Access-Control-Allow-Origin", "*")
+        exchange.sendResponseHeaders(200, bytes.size.toLong())
+        exchange.responseBody.use { output -> output.write(bytes) }
+    }
+
+    private fun contentTypeForResource(path: String): String = when {
+        path.endsWith(".html") -> "text/html; charset=utf-8"
+        path.endsWith(".js") -> "application/javascript; charset=utf-8"
+        path.endsWith(".css") -> "text/css; charset=utf-8"
+        path.endsWith(".json") -> "application/json; charset=utf-8"
+        path.endsWith(".svg") -> "image/svg+xml"
+        path.endsWith(".png") -> "image/png"
+        else -> "text/plain; charset=utf-8"
     }
 
     private val htmlPage: String by lazy {

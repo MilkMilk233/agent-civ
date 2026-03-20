@@ -183,6 +183,8 @@ MultiplayerFiles/
 node_modules/
 package-lock.json
 package.json
+!desktop/web/agent-dashboard/package.json
+!desktop/web/agent-dashboard/package-lock.json
 
 # Unsorted additions
 # Detekt

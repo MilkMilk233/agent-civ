@@ -6,14 +6,25 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class AgentMemory(
     var strategicPosture: StrategicPostureMemory = StrategicPostureMemory(),
+    var strategicRoadmap: AgentStrategicRoadmapMemory = AgentStrategicRoadmapMemory(),
     var cityIntents: ArrayList<CityIntentMemory> = arrayListOf(),
     var unitAssignments: ArrayList<UnitAssignmentMemory> = arrayListOf(),
     var recentFailures: ArrayList<RecentFailureMemory> = arrayListOf(),
 ) : IsPartOfGameInfoSerialization {
-    constructor() : this(StrategicPostureMemory(), arrayListOf(), arrayListOf(), arrayListOf())
+    constructor() : this(StrategicPostureMemory(), AgentStrategicRoadmapMemory(), arrayListOf(), arrayListOf(), arrayListOf())
 
     fun clone(): AgentMemory = AgentMemory(
-        strategicPosture = strategicPosture.copy(focus = ArrayList(strategicPosture.focus)),
+        strategicPosture = strategicPosture.copy(
+            focus = ArrayList(strategicPosture.focus),
+            commitments = ArrayList(strategicPosture.commitments),
+            watchOuts = ArrayList(strategicPosture.watchOuts),
+        ),
+        strategicRoadmap = strategicRoadmap.copy(
+            midTermGoals = ArrayList(strategicRoadmap.midTermGoals),
+            mustMaintain = ArrayList(strategicRoadmap.mustMaintain),
+            watchOuts = ArrayList(strategicRoadmap.watchOuts),
+            switchTriggers = ArrayList(strategicRoadmap.switchTriggers),
+        ),
         cityIntents = ArrayList(cityIntents.map { it.copy(reasons = ArrayList(it.reasons)) }),
         unitAssignments = ArrayList(unitAssignments.map { it.copy() }),
         recentFailures = ArrayList(recentFailures.map { it.copy() }),
@@ -24,10 +35,19 @@ data class AgentMemory(
 data class StrategicPostureMemory(
     var mode: String = "",
     var focus: ArrayList<String> = arrayListOf(),
+    var gameArchetype: String? = null,
+    var doctrine: String? = null,
+    var phase: String = "",
+    var victoryGoal: String? = null,
+    var rivalCiv: String? = null,
+    var rivalVictoryGoal: String? = null,
+    var turnThesis: String? = null,
+    var commitments: ArrayList<String> = arrayListOf(),
+    var watchOuts: ArrayList<String> = arrayListOf(),
     var sinceTurn: Int = 0,
     var lastUpdatedTurn: Int = 0,
 ) : IsPartOfGameInfoSerialization {
-    constructor() : this("", arrayListOf(), 0, 0)
+    constructor() : this("", arrayListOf(), null, null, "", null, null, null, null, arrayListOf(), arrayListOf(), 0, 0)
 }
 
 @Serializable
