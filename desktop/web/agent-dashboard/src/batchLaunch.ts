@@ -58,13 +58,13 @@ export function createDefaultLaunchForm(options: RunnerFormOptions | null): Batc
   const civs = ruleset.civilizations.filter((civ) => civ !== "Random");
 
   return {
-    name: "agent-vs-legacy-smoke",
-    games: 4,
-    maxTurns: 250,
+    name: "small-loop-1",
+    games: 1,
+    maxTurns: 330,
     seedStart: 2000,
-    pairMatchesBySeed: true,
-    saveFinalGames: true,
-    saveOnlyInterestingGames: true,
+    pairMatchesBySeed: false,
+    saveFinalGames: false,
+    saveOnlyInterestingGames: false,
     baseRuleset: resolved.defaultBaseRuleset,
     difficulty: ruleset.difficulties.includes("Settler") ? "Settler" : ruleset.difficulties[0] ?? "Settler",
     speed: ruleset.speeds.includes("Quick") ? "Quick" : ruleset.speeds[0] ?? "Quick",

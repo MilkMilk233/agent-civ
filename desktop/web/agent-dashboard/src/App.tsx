@@ -170,7 +170,7 @@ export default function App() {
       <header className="topbar">
         <div>
           <p className="eyebrow">Unciv Agent Observability</p>
-          <h1>7071 Dashboard</h1>
+          <h1>Observability Dashboard</h1>
           <p className="hero-copy">
             Launch batches, watch live turns, and inspect strategist and tactical behavior without digging through raw files.
           </p>
