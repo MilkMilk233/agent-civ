@@ -24,6 +24,7 @@ object AgentUnitOptionBuilder {
     private const val maxSettlerCandidatesPerUnit = 2
     private const val maxWorkerCandidatesPerUnit = 3
     private const val maxExploreCandidatesPerUnit = 2
+    private const val maxDirectActionCandidatesPerUnit = 3
 
     internal fun build(civInfo: Civilization, memory: AgentMemory): AgentUnitOptionContext {
         val candidates = LinkedHashMap<String, AgentUnitRuntimeCandidate>()
@@ -49,6 +50,10 @@ object AgentUnitOptionBuilder {
                 observations += candidate.observation
             }
             buildRecoveryCandidates(unit).forEach { candidate ->
+                candidates[candidate.observation.candidateId] = candidate
+                observations += candidate.observation
+            }
+            buildDirectActionCandidates(unit, availableActions).forEach { candidate ->
                 candidates[candidate.observation.candidateId] = candidate
                 observations += candidate.observation
             }
@@ -269,6 +274,66 @@ object AgentUnitOptionBuilder {
                 successMessage = "${unit.name} set to ${recoveryAction.name}",
             )
         )
+    }
+
+    private fun buildDirectActionCandidates(
+        unit: MapUnit,
+        availableActions: List<UnitAction>,
+    ): List<AgentUnitRuntimeCandidate> {
+        return availableActions
+            .asSequence()
+            .filter { it.action != null }
+            .filter { isSurfacedDirectActionType(it.type) }
+            .filterNot { action ->
+                action.type in setOf(UnitActionType.Fortify, UnitActionType.FortifyUntilHealed, UnitActionType.Sleep, UnitActionType.SleepUntilHealed) &&
+                    unit.health < 100
+            }
+            .distinctBy { "${it.type.name}:${it.title}" }
+            .sortedByDescending { scoreDirectAction(unit, it) }
+            .take(maxDirectActionCandidatesPerUnit)
+            .map { action ->
+                val titleToken = action.title.hashCode().toUInt().toString(16)
+                val candidateId = "unitspecial:${unit.id}:${action.type.name}:$titleToken"
+                AgentUnitRuntimeCandidate(
+                    observation = UnitOptionCandidateObservation(
+                        candidateId = candidateId,
+                        category = directActionCategory(action.type),
+                        title = "${unit.name} #${unit.id} ${action.title}",
+                        detail = describeDirectAction(unit, action),
+                    ),
+                    validate = { currentCiv ->
+                        val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id }
+                            ?: return@AgentUnitRuntimeCandidate "Unit option rejected: unit missing"
+                        val liveAction = findMatchingAction(liveUnit, action.type, action.title)
+                            ?: return@AgentUnitRuntimeCandidate "Unit option rejected: action is no longer available"
+                        if (liveAction.action == null) return@AgentUnitRuntimeCandidate "Unit option rejected: action cannot execute right now"
+                        null
+                    },
+                    execute = { currentCiv ->
+                        val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id } ?: return@AgentUnitRuntimeCandidate false
+                        val beforePosition = liveUnit.getTile().position
+                        val beforeHealth = liveUnit.health
+                        val beforeMovement = liveUnit.currentMovement
+                        val beforeGold = liveUnit.civ.gold
+                        val beforeResearch = liveUnit.civ.tech.currentTechnologyName()
+                        val beforeResearchProgress = liveUnit.civ.tech.researchOfTech(beforeResearch)
+                        val liveAction = findMatchingAction(liveUnit, action.type, action.title) ?: return@AgentUnitRuntimeCandidate false
+                        liveAction.action?.invoke()
+                        val actionStillAvailable = !liveUnit.isDestroyed && findMatchingAction(liveUnit, action.type, action.title) != null
+                        liveUnit.isDestroyed ||
+                            liveUnit.getTile().position != beforePosition ||
+                            liveUnit.health != beforeHealth ||
+                            liveUnit.currentMovement != beforeMovement ||
+                            liveUnit.civ.gold != beforeGold ||
+                            liveUnit.civ.tech.currentTechnologyName() != beforeResearch ||
+                            liveUnit.civ.tech.researchOfTech(liveUnit.civ.tech.currentTechnologyName()) != beforeResearchProgress ||
+                            isActionNowCurrentState(liveUnit, action.type) ||
+                            !actionStillAvailable
+                    },
+                    successMessage = "${unit.name} used ${action.title}",
+                )
+            }
+            .toList()
     }
 
     private fun buildWorkerCandidates(
@@ -518,6 +583,14 @@ object AgentUnitOptionBuilder {
         actionType: UnitActionType,
         actionTitle: String,
     ): UnitAction? {
+        return findMatchingAction(unit, actionType, actionTitle)
+    }
+
+    private fun findMatchingAction(
+        unit: MapUnit,
+        actionType: UnitActionType,
+        actionTitle: String,
+    ): UnitAction? {
         return UnitActions.getUnitActions(unit)
             .firstOrNull { it.action != null && it.type == actionType && it.title == actionTitle }
             ?: UnitActions.getUnitActions(unit)
@@ -541,6 +614,96 @@ object AgentUnitOptionBuilder {
         val context = GameContext(civInfo = unit.civ, unit = unit, tile = tile)
         return unit.canBuildImprovement(improvement, tile) &&
             tile.improvementFunctions.canBuildImprovement(improvement, context)
+    }
+
+    private fun isSurfacedDirectActionType(actionType: UnitActionType): Boolean {
+        return actionType in setOf(
+            UnitActionType.Upgrade,
+            UnitActionType.Pillage,
+            UnitActionType.StopExploration,
+            UnitActionType.HurryResearch,
+            UnitActionType.HurryPolicy,
+            UnitActionType.HurryWonder,
+            UnitActionType.HurryBuilding,
+            UnitActionType.ConductTradeMission,
+            UnitActionType.CreateImprovement,
+            UnitActionType.TriggerUnique,
+            UnitActionType.Fortify,
+            UnitActionType.FortifyUntilHealed,
+            UnitActionType.Sleep,
+            UnitActionType.SleepUntilHealed,
+        )
+    }
+
+    private fun directActionCategory(actionType: UnitActionType): String {
+        return when (actionType) {
+            UnitActionType.Upgrade -> "upgrade"
+            UnitActionType.Pillage -> "combat"
+            UnitActionType.StopExploration -> "explore"
+            UnitActionType.HurryResearch,
+            UnitActionType.HurryPolicy,
+            UnitActionType.HurryWonder,
+            UnitActionType.HurryBuilding,
+            UnitActionType.ConductTradeMission,
+            UnitActionType.CreateImprovement,
+            UnitActionType.TriggerUnique,
+                -> "great_person"
+            else -> "special"
+        }
+    }
+
+    private fun describeDirectAction(unit: MapUnit, action: UnitAction): String {
+        return when (action.type) {
+            UnitActionType.Upgrade -> "Spend gold to upgrade this unit immediately if the upgrade is available."
+            UnitActionType.Pillage -> "Pillage the current tile for immediate war tempo, healing, or disruption."
+            UnitActionType.StopExploration -> "Stop automated exploration and return the unit to direct control."
+            UnitActionType.HurryResearch -> "Consume this great person for an immediate science burst."
+            UnitActionType.HurryPolicy -> "Consume this great person for an immediate culture burst."
+            UnitActionType.HurryWonder -> "Consume this great person to rush the current wonder in this city."
+            UnitActionType.HurryBuilding -> "Consume this great person to rush the current construction in this city."
+            UnitActionType.ConductTradeMission -> "Use this great merchant for gold and city-state influence."
+            UnitActionType.CreateImprovement -> "Consume this unit to create a permanent great-person improvement on this tile."
+            UnitActionType.TriggerUnique -> "Use the unit's special one-shot ability now."
+            UnitActionType.Fortify -> "Fortify this unit in place."
+            UnitActionType.FortifyUntilHealed -> "Fortify and keep healing until healthy."
+            UnitActionType.Sleep -> "Put this unit to sleep without moving."
+            UnitActionType.SleepUntilHealed -> "Sleep and keep healing until healthy."
+            else -> "${unit.name} can use ${action.title}."
+        }
+    }
+
+    private fun scoreDirectAction(unit: MapUnit, action: UnitAction): Int {
+        var score = when (action.type) {
+            UnitActionType.HurryResearch -> 120
+            UnitActionType.HurryPolicy -> 105
+            UnitActionType.HurryWonder,
+            UnitActionType.HurryBuilding -> 110
+            UnitActionType.ConductTradeMission -> 100
+            UnitActionType.CreateImprovement -> 95
+            UnitActionType.TriggerUnique -> 90
+            UnitActionType.Upgrade -> 85
+            UnitActionType.Pillage -> 75
+            UnitActionType.StopExploration -> 45
+            UnitActionType.FortifyUntilHealed,
+            UnitActionType.SleepUntilHealed -> 40
+            UnitActionType.Fortify,
+            UnitActionType.Sleep -> 25
+            else -> 20
+        }
+        if (unit.health < 60 && action.type in setOf(UnitActionType.FortifyUntilHealed, UnitActionType.SleepUntilHealed)) score += 25
+        if (unit.health == 100 && action.type in setOf(UnitActionType.FortifyUntilHealed, UnitActionType.SleepUntilHealed)) score -= 20
+        return score
+    }
+
+    private fun isActionNowCurrentState(unit: MapUnit, actionType: UnitActionType): Boolean {
+        return when (actionType) {
+            UnitActionType.StopExploration -> !unit.isExploring()
+            UnitActionType.Fortify -> unit.isFortified() && !unit.isActionUntilHealed()
+            UnitActionType.FortifyUntilHealed -> unit.isFortifyingUntilHealed()
+            UnitActionType.Sleep -> unit.isSleeping() && !unit.isActionUntilHealed()
+            UnitActionType.SleepUntilHealed -> unit.isSleepingUntilHealed()
+            else -> false
+        }
     }
 
     internal data class AgentUnitOptionContext(

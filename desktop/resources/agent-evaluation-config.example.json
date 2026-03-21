@@ -7,7 +7,7 @@
   "saveFinalGames": false,
   "saveOnlyInterestingGames": false,
   "gameParameters": {
-    "baseRuleset": "Civ V - Gods & Kings",
+    "baseRuleset": "Civ V - Vanilla",
     "difficulty": "Settler",
     "speed": "Quick",
     "numberOfCityStates": 0,

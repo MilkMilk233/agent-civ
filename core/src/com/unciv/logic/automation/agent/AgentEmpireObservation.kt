@@ -28,8 +28,6 @@ data class AgentEmpireObservation(
     val freeTechs: Int,
     val storedCulture: Int,
     val freePolicies: Int,
-    val storedFaith: Int,
-    val religionState: String,
     val gold: Int,
     val happiness: Int,
     val macroFacts: List<ObservationFact>,
@@ -37,7 +35,6 @@ data class AgentEmpireObservation(
     val policyCandidates: List<AgentEmpireChoiceCandidateObservation>,
     val macroCandidates: List<AgentEmpireChoiceCandidateObservation>,
     val diplomacyCandidates: List<AgentEmpireChoiceCandidateObservation>,
-    val spyCandidates: List<AgentEmpireChoiceCandidateObservation>,
 )
 
 @Serializable

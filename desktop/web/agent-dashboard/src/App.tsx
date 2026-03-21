@@ -365,11 +365,8 @@ function LaunchModal({
             <div className="field-grid">
               <label>
                 Ruleset
-                <select value={form.baseRuleset} onChange={(event) => onChange("baseRuleset", event.target.value)}>
-                  {options.baseRulesets.map((ruleset) => (
-                    <option key={ruleset} value={ruleset}>{ruleset}</option>
-                  ))}
-                </select>
+                <div className="static-field">{selectedRuleset.name}</div>
+                <p className="field-hint">Agent evaluation is locked to Vanilla-only mode.</p>
               </label>
               <ChoiceGroup
                 label="Difficulty"
@@ -1020,7 +1017,6 @@ function EmpireChoicesSection({
     { label: "Policies", items: objectArray(choices?.policyChoices) },
     { label: "Macro", items: objectArray(choices?.macroChoices) },
     { label: "Diplomacy", items: objectArray(choices?.diplomacyChoices) },
-    { label: "Spies", items: objectArray(choices?.spyChoices) },
   ].filter((section) => section.items.length);
 
   return (

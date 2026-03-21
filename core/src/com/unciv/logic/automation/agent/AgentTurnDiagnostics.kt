@@ -35,7 +35,7 @@ enum class AgentControlDomain(val wireName: String) {
         private fun fromEmpireCandidateId(candidateId: String?): AgentControlDomain {
             return when {
                 candidateId == null -> Empire
-                candidateId.startsWith("diplo:") || candidateId.startsWith("trade:") || candidateId.startsWith("spy:") -> Diplomacy
+                candidateId.startsWith("diplo:") || candidateId.startsWith("trade:") -> Diplomacy
                 else -> Empire
             }
         }
@@ -73,8 +73,7 @@ object AgentTurnDiagnostics {
                     empireObservation.policyCandidates.size +
                     empireObservation.macroCandidates.count {
                         !it.candidateId.startsWith("diplo:") &&
-                            !it.candidateId.startsWith("trade:") &&
-                            !it.candidateId.startsWith("spy:")
+                            !it.candidateId.startsWith("trade:")
                     }
                 ),
             AgentControlDomain.City.wireName to (
@@ -86,8 +85,7 @@ object AgentTurnDiagnostics {
                     observation.actionableUnits.count { it.hasMovement }
                 ),
             AgentControlDomain.Diplomacy.wireName to (
-                empireObservation.diplomacyCandidates.size +
-                    empireObservation.spyCandidates.size
+                empireObservation.diplomacyCandidates.size
                 ),
         )
         return AgentDomainSupportSnapshot(

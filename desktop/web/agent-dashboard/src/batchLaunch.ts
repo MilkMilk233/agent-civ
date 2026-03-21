@@ -24,16 +24,18 @@ export interface BatchLaunchFormState {
   legendaryStart: boolean;
 }
 
+const VANILLA_RULESET = "Civ V - Vanilla";
+
 const fallbackOptions: RunnerFormOptions = {
-  defaultBaseRuleset: "Civ V - Gods & Kings",
-  baseRulesets: ["Civ V - Gods & Kings"],
+  defaultBaseRuleset: VANILLA_RULESET,
+  baseRulesets: [VANILLA_RULESET],
   playerTypes: ["AI_AGENT", "AI"],
   rulesets: [
     {
-      name: "Civ V - Gods & Kings",
+      name: VANILLA_RULESET,
       difficulties: ["Settler", "Chieftain", "Warlord", "Prince", "King", "Emperor", "Immortal", "Deity"],
       speeds: ["Quick", "Standard", "Epic", "Marathon"],
-      civilizations: ["Random", "Germany", "Persia", "Rome", "Babylon", "England", "Korea", "Poland"],
+      civilizations: ["Random", "America", "Babylon", "Egypt", "England", "France", "Germany", "Persia", "Rome"],
     },
   ],
   mapTypes: ["Pangaea", "Continents", "Archipelago", "Fractal", "Lakes"],
@@ -48,7 +50,14 @@ const fallbackOptions: RunnerFormOptions = {
 };
 
 export function getRunnerOptions(options: RunnerFormOptions | null): RunnerFormOptions {
-  return options ?? fallbackOptions;
+  const resolved = options ?? fallbackOptions;
+  const vanillaRuleset = resolved.rulesets.find((entry) => entry.name === VANILLA_RULESET) ?? fallbackOptions.rulesets[0];
+  return {
+    ...resolved,
+    defaultBaseRuleset: vanillaRuleset.name,
+    baseRulesets: [vanillaRuleset.name],
+    rulesets: [vanillaRuleset],
+  };
 }
 
 export function createDefaultLaunchForm(options: RunnerFormOptions | null): BatchLaunchFormState {

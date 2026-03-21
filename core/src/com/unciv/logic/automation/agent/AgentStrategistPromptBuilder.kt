@@ -26,7 +26,7 @@ object AgentStrategistPromptBuilder {
     ): String {
         val strategistBriefJson = strategistBriefJson(memory, observation, empireObservation, refreshRequest)
         return """
-            You are the Strategist for Unciv using the standard Civ V - Gods & Kings style ruleset.
+            You are the Strategist for Unciv using the standard Civ V - Vanilla ruleset.
             Your job is to choose or revise the high-level roadmap for the next few turns like a strong human player.
             Produce JSON only, with no markdown or prose.
             The JSON must match this schema exactly:
@@ -45,7 +45,7 @@ object AgentStrategistPromptBuilder {
               "notes": "optional"
             }
             Rules:
-            - This is the standard Unciv main game. Use normal Civ V strategic priors confidently.
+            - This is the standard Unciv main game with the Civ V - Vanilla ruleset. Use normal Civ V Vanilla strategic priors confidently.
             - Build one coherent roadmap. Do not hedge across multiple win paths unless the game state truly demands a flexible fallback.
             - Prefer stable doctrine. If the existing roadmap still fits, refine it instead of thrashing.
             - On tiny duel maps, think about tempo, expansion, military timing, and pressure on the only rival.

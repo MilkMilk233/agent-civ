@@ -19,6 +19,7 @@ object AgentCityOptionBuilder {
     private const val maxConstructionCandidatesPerCity = 4
     private const val maxPurchaseCandidatesPerCity = 3
     private const val maxTilePurchaseCandidatesPerCity = 3
+    private const val maxGrowthCandidatesPerCity = 1
     private const val maxFocusCandidatesPerCity = 4
 
     internal fun build(civInfo: Civilization): AgentCityOptionContext {
@@ -38,6 +39,10 @@ object AgentCityOptionBuilder {
                 observations += candidate.observation
             }
             buildTilePurchaseCandidates(city).forEach { candidate ->
+                candidates[candidate.observation.candidateId] = candidate
+                observations += candidate.observation
+            }
+            buildGrowthCandidates(city).forEach { candidate ->
                 candidates[candidate.observation.candidateId] = candidate
                 observations += candidate.observation
             }
@@ -227,7 +232,6 @@ object AgentCityOptionBuilder {
         if (city.population.getNumTurnsToStarvation() != null || city.foodForNextTurn() < 0) candidates += CityFocus.FoodFocus
         if (city.cityConstructions.currentConstructionName().isBlank() || city.getThreatScore() > 0) candidates += CityFocus.ProductionFocus
         if (!peacefulGrowthWindow && city.civ.gold < 100) candidates += CityFocus.GoldFocus
-        if (!peacefulGrowthWindow && city.civ.gameInfo.isReligionEnabled() && city.cityStats.currentCityStats.faith > 0f) candidates += CityFocus.FaithFocus
         if (city.cityStats.currentCityStats.science > 0f) candidates += CityFocus.ScienceFocus
         if (!peacefulGrowthWindow && city.cityStats.currentCityStats.culture > 0f) candidates += CityFocus.CultureFocus
         candidates += CityFocus.NoFocus
@@ -250,9 +254,6 @@ object AgentCityOptionBuilder {
                         if (liveCity.getCityFocus() == focus) {
                             return@AgentCityRuntimeCandidate "City option rejected: city focus is already ${focus.name}"
                         }
-                        if (focus == CityFocus.FaithFocus && !currentCiv.gameInfo.isReligionEnabled()) {
-                            return@AgentCityRuntimeCandidate "City option rejected: faith focus is unavailable without religion"
-                        }
                         null
                     },
                     execute = { currentCiv ->
@@ -265,6 +266,52 @@ object AgentCityOptionBuilder {
                     successMessage = "${city.name} focus set to ${focus.name}",
                 )
             }
+    }
+
+    private fun buildGrowthCandidates(city: City): List<AgentCityRuntimeCandidate> {
+        val avoidGrowth = city.avoidGrowth
+        val candidateId = if (avoidGrowth) {
+            "citygrowth:${city.location.x},${city.location.y}:allow"
+        } else {
+            "citygrowth:${city.location.x},${city.location.y}:avoid"
+        }
+        val title = if (avoidGrowth) {
+            "Allow growth in ${city.name}"
+        } else {
+            "Enable Avoid Growth in ${city.name}"
+        }
+        val detail = if (avoidGrowth) {
+            "City is currently preventing growth. Re-enable normal food storage and citizen allocation."
+        } else {
+            "Prevent growth and reassign citizens toward non-food yields when that better fits the current plan."
+        }
+        return listOf(
+            AgentCityRuntimeCandidate(
+                observation = CityOptionCandidateObservation(
+                    candidateId = candidateId,
+                    category = "growth",
+                    title = title,
+                    detail = detail,
+                ),
+                validate = { currentCiv ->
+                    val liveCity = currentCiv.cities.firstOrNull { it.location == city.location }
+                        ?: return@AgentCityRuntimeCandidate "City option rejected: city missing"
+                    if (liveCity.avoidGrowth == avoidGrowth) null else "City option rejected: growth mode already changed"
+                },
+                execute = { currentCiv ->
+                    val liveCity = currentCiv.cities.firstOrNull { it.location == city.location } ?: return@AgentCityRuntimeCandidate false
+                    if (liveCity.avoidGrowth != avoidGrowth) return@AgentCityRuntimeCandidate false
+                    liveCity.avoidGrowth = !avoidGrowth
+                    liveCity.reassignPopulation()
+                    true
+                },
+                successMessage = if (avoidGrowth) {
+                    "${city.name} can grow again"
+                } else {
+                    "${city.name} is now avoiding growth"
+                },
+            )
+        ).take(maxGrowthCandidatesPerCity)
     }
 
     private fun scoreTileForPurchase(city: City, tile: Tile): Int {

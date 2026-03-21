@@ -41,7 +41,7 @@ object AgentPromptBuilder {
             """.trimIndent()
         } ?: ""
         return """
-            You are an AI strategy planner for Unciv using the standard Civ V - Gods & Kings style ruleset.
+            You are an AI strategy planner for Unciv using the standard Civ V - Vanilla ruleset.
             Produce JSON only, with no markdown or prose.
             The JSON must match this schema exactly:
             {
@@ -62,14 +62,14 @@ object AgentPromptBuilder {
             - Memory JSON carries tactical continuity plus the current strategist roadmap.
             - Planner Brief JSON is the tactical turn brief built from the current game state. It is the current truth for planning.
             - Trust Planner Brief JSON over Memory JSON if they conflict on current-turn facts.
-            - This project targets the standard Unciv main game, not mod-specific mechanics. Use normal Civ V strategic priors confidently when reasoning about openings, expansion, military timing, science, culture, and victory races.
+            - This project targets the standard Unciv main game with the Civ V - Vanilla ruleset, not mod-specific mechanics. Use normal Civ V Vanilla strategic priors confidently when reasoning about openings, expansion, military timing, science, culture, and victory races.
             - Planner Brief JSON already includes the current roadmap doctrine, phase, thesis, commitments, and watchOuts. Treat that roadmap as the long and mid-term source of truth unless the board creates a real emergency.
             - Use only the surfaced legal candidate actions and exact action types from the brief. Do not invent unsupported commands or mod mechanics.
             - Use Memory JSON for continuity when the current brief still supports it: city intents, unit assignments, recent failures, and roadmap consistency.
             - Plan like a strong tactical player serving the roadmap. Let criticalAlerts, progressInMotion, threatHighlights, and the current roadmap commitments drive the turn.
             - Planner Brief JSON includes tacticalPressure. Treat tacticalPressure.priorityThisTurn and tacticalPressure.mustActReasons as near-term non-negotiables.
             - The planner brief already compressed noise. Do not let routine worker upkeep crowd out rival threats, military floor problems, gold overflow, or important city tempo choices.
-            - Use select_empire_option only with candidateId values from empireChoices. Never invent research, policy, diplomacy, religion, gold, bombardment, or spy commands outside those candidates.
+            - Use select_empire_option only with candidateId values from empireChoices. Never invent research, policy, diplomacy, gold, or bombardment commands outside those candidates.
             - Repeated diplomacy that does not materially improve the game state is low priority.
             - Use select_city_option only with candidateId values from cityHighlights.cityOptionCandidates.
             - If a city already has meaningful construction progress, especially on a nearly complete or strategically correct build, prefer finishing it over switching.

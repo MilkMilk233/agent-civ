@@ -1,7 +1,6 @@
 package com.unciv.logic.automation.agent
 
 import com.unciv.Constants
-import com.unciv.logic.automation.civilization.ReligionAutomation
 import com.unciv.logic.automation.civilization.UseGoldAutomation
 import com.unciv.logic.automation.unit.UnitAutomation
 import com.unciv.logic.battle.Battle
@@ -11,11 +10,11 @@ import com.unciv.logic.battle.MapUnitCombatant
 import com.unciv.logic.battle.TargetHelper
 import com.unciv.logic.city.City
 import com.unciv.logic.civilization.Civilization
-import com.unciv.logic.civilization.managers.ReligionState
 import com.unciv.models.ruleset.Milestone
 import com.unciv.models.ruleset.Victory
 import com.unciv.models.ruleset.Policy
 import com.unciv.models.ruleset.tech.Technology
+import com.unciv.models.ruleset.unit.BaseUnit
 import com.unciv.ui.screens.victoryscreen.RankingType
 import com.unciv.ui.screens.worldscreen.unit.actions.UnitActionsUpgrade
 import kotlin.math.max
@@ -25,6 +24,7 @@ object AgentEmpireObservationBuilder {
     private const val maxResearchCandidates = 6
     private const val maxPolicyCandidates = 6
     private const val maxVictoryThreats = 2
+    private const val maxFreeGreatPersonCandidates = 4
 
     internal fun build(civInfo: Civilization, memory: AgentMemory): AgentEmpirePlanningContext {
         civInfo.updateStatsForNextTurn()
@@ -36,9 +36,8 @@ object AgentEmpireObservationBuilder {
         val macroCandidates = buildMacroCandidates(civInfo)
         val diplomacyContext = AgentDiplomacyOptionBuilder.build(civInfo)
         val diplomacyCandidates = diplomacyContext.diplomacyCandidates
-        val spyCandidates = diplomacyContext.spyCandidates
         val candidateMap = LinkedHashMap<String, AgentEmpireRuntimeCandidate>()
-        (researchCandidates + policyCandidates + macroCandidates + diplomacyCandidates + spyCandidates).forEach { candidate ->
+        (researchCandidates + policyCandidates + macroCandidates + diplomacyCandidates).forEach { candidate ->
             candidateMap[candidate.observation.candidateId] = candidate
         }
         val currentResearch = civInfo.tech.currentTechnologyName()
@@ -85,8 +84,6 @@ object AgentEmpireObservationBuilder {
             freeTechs = civInfo.tech.freeTechs,
             storedCulture = civInfo.policies.storedCulture,
             freePolicies = civInfo.policies.freePolicies,
-            storedFaith = civInfo.religionManager.storedFaith,
-            religionState = civInfo.religionManager.religionState.name,
             gold = civInfo.gold,
             happiness = civInfo.getHappiness(),
             macroFacts = buildMacroFacts(
@@ -99,13 +96,11 @@ object AgentEmpireObservationBuilder {
                 policyCandidates,
                 macroCandidates,
                 diplomacyCandidates,
-                spyCandidates,
             ),
             researchCandidates = researchCandidates.map { it.observation },
             policyCandidates = policyCandidates.map { it.observation },
             macroCandidates = macroCandidates.map { it.observation },
             diplomacyCandidates = diplomacyCandidates.map { it.observation },
-            spyCandidates = spyCandidates.map { it.observation },
         )
         return AgentEmpirePlanningContext(
             observation = observation,
@@ -298,6 +293,8 @@ object AgentEmpireObservationBuilder {
     private fun buildMacroCandidates(civInfo: Civilization): List<AgentEmpireRuntimeCandidate> {
         val candidates = arrayListOf<AgentEmpireRuntimeCandidate>()
 
+        candidates += buildFreeGreatPersonCandidates(civInfo)
+
         if (shouldOfferGoldMacro(civInfo)) {
             candidates += AgentEmpireRuntimeCandidate(
                 observation = AgentEmpireChoiceCandidateObservation(
@@ -318,29 +315,69 @@ object AgentEmpireObservationBuilder {
             )
         }
 
-        if (shouldOfferReligionMacro(civInfo)) {
-            candidates += AgentEmpireRuntimeCandidate(
-                observation = AgentEmpireChoiceCandidateObservation(
-                    candidateId = "macro:religion:auto",
-                    category = "macro",
-                    title = "Manage religion and faith spending",
-                    detail = "Uses the current religion heuristics to spend faith and resolve pending belief choices.",
-                ),
-                validate = { currentCiv ->
-                    if (shouldOfferReligionMacro(currentCiv)) null else "Empire option rejected: no religion action is currently available"
-                },
-                execute = { currentCiv ->
-                    val before = religionFingerprint(currentCiv)
-                    ReligionAutomation.spendFaithOnReligion(currentCiv)
-                    ReligionAutomation.chooseReligiousBeliefs(currentCiv)
-                    before != religionFingerprint(currentCiv)
-                },
-                successMessage = "Religion heuristics executed",
-            )
-        }
-
         candidates += buildBombardCandidates(civInfo)
         return candidates
+    }
+
+    private fun buildFreeGreatPersonCandidates(civInfo: Civilization): List<AgentEmpireRuntimeCandidate> {
+        if (civInfo.greatPeople.freeGreatPeople <= 0) return emptyList()
+        val capital = civInfo.getCapital() ?: return emptyList()
+        val restrictedPool = civInfo.greatPeople.mayaLimitedFreeGP > 0
+        val greatPeople = if (restrictedPool) {
+            civInfo.greatPeople.getGreatPeople().filter { it.name in civInfo.greatPeople.longCountGPPool }
+        } else {
+            civInfo.greatPeople.getGreatPeople()
+        }
+        return greatPeople
+            .sortedByDescending { scoreFreeGreatPersonChoice(it) }
+            .take(maxFreeGreatPersonCandidates)
+            .map { unit ->
+                val candidateId = "macro:greatperson:${unit.name}"
+                AgentEmpireRuntimeCandidate(
+                    observation = AgentEmpireChoiceCandidateObservation(
+                        candidateId = candidateId,
+                        category = "macro",
+                        title = "Take free ${unit.name}",
+                        detail = "Claim a free great person in ${capital.name}. ${describeFreeGreatPerson(unit)}",
+                    ),
+                    validate = { currentCiv ->
+                        if (currentCiv.greatPeople.freeGreatPeople <= 0) {
+                            return@AgentEmpireRuntimeCandidate "Empire option rejected: no free great person is available"
+                        }
+                        val liveCapital = currentCiv.getCapital()
+                            ?: return@AgentEmpireRuntimeCandidate "Empire option rejected: no capital is available for the free great person"
+                        val liveRestrictedPool = currentCiv.greatPeople.mayaLimitedFreeGP > 0
+                        val liveGreatPeople = if (liveRestrictedPool) {
+                            currentCiv.greatPeople.getGreatPeople().filter { it.name in currentCiv.greatPeople.longCountGPPool }
+                        } else {
+                            currentCiv.greatPeople.getGreatPeople()
+                        }
+                        if (liveGreatPeople.none { it.name == unit.name }) {
+                            "Empire option rejected: this free great person choice is no longer available"
+                        } else {
+                            null
+                        }
+                    },
+                    execute = { currentCiv ->
+                        val liveCapital = currentCiv.getCapital() ?: return@AgentEmpireRuntimeCandidate false
+                        val mayanGreatPerson = currentCiv.greatPeople.mayaLimitedFreeGP > 0
+                        val liveGreatPeople = if (mayanGreatPerson) {
+                            currentCiv.greatPeople.getGreatPeople().filter { it.name in currentCiv.greatPeople.longCountGPPool }
+                        } else {
+                            currentCiv.greatPeople.getGreatPeople()
+                        }
+                        val liveUnit = liveGreatPeople.firstOrNull { it.name == unit.name } ?: return@AgentEmpireRuntimeCandidate false
+                        currentCiv.units.addUnit(liveUnit, liveCapital)
+                        currentCiv.greatPeople.freeGreatPeople--
+                        if (mayanGreatPerson) {
+                            currentCiv.greatPeople.longCountGPPool.remove(liveUnit.name)
+                            currentCiv.greatPeople.mayaLimitedFreeGP--
+                        }
+                        true
+                    },
+                    successMessage = "Free great person chosen: ${unit.name}",
+                )
+            }
     }
 
     private fun shouldOfferGoldMacro(civInfo: Civilization): Boolean {
@@ -416,6 +453,33 @@ object AgentEmpireObservationBuilder {
         return candidates
     }
 
+    private fun scoreFreeGreatPersonChoice(unit: BaseUnit): Int {
+        return when {
+            unit.name.contains("Scientist", ignoreCase = true) -> 120
+            unit.name.contains("Engineer", ignoreCase = true) -> 110
+            unit.name.contains("Merchant", ignoreCase = true) -> 90
+            unit.name.contains("Artist", ignoreCase = true) -> 80
+            unit.name.contains("General", ignoreCase = true) -> 75
+            else -> 60
+        }
+    }
+
+    private fun describeFreeGreatPerson(unit: BaseUnit): String {
+        return when {
+            unit.name.contains("Scientist", ignoreCase = true) ->
+                "Useful for academies and instant science tempo."
+            unit.name.contains("Engineer", ignoreCase = true) ->
+                "Useful for rushing key buildings or creating a manufactory."
+            unit.name.contains("Merchant", ignoreCase = true) ->
+                "Useful for trade missions or a customs house."
+            unit.name.contains("Artist", ignoreCase = true) ->
+                "Useful for a golden age or a landmark."
+            unit.name.contains("General", ignoreCase = true) ->
+                "Useful for a citadel or war support."
+            else -> "Useful as a free great person choice."
+        }
+    }
+
     private data class VictoryPlanSummary(
         val victory: Victory,
         val nextMilestone: Milestone?,
@@ -470,7 +534,7 @@ object AgentEmpireObservationBuilder {
             civInfo.stats.statsForNextTurn.culture.toDouble() * 0.08
         Victory.Focus.Military -> civInfo.getStatForRanking(RankingType.Force) * 0.01
         Victory.Focus.CityStates -> civInfo.gold * 0.002 + civInfo.getKnownCivs().count { it.isCityState } * 0.5
-        Victory.Focus.Faith -> civInfo.religionManager.storedFaith * 0.01
+        Victory.Focus.Faith -> 0.0
         Victory.Focus.Gold -> civInfo.gold * 0.003 + civInfo.getStatForRanking(RankingType.Gold) * 0.002
         Victory.Focus.Production -> civInfo.stats.statsForNextTurn.production.toDouble() * 0.05
         Victory.Focus.Score -> civInfo.getStatForRanking(RankingType.Score) * 0.01
@@ -555,7 +619,6 @@ object AgentEmpireObservationBuilder {
         policyCandidates: List<AgentEmpireRuntimeCandidate>,
         macroCandidates: List<AgentEmpireRuntimeCandidate>,
         diplomacyCandidates: List<AgentEmpireRuntimeCandidate> = emptyList(),
-        spyCandidates: List<AgentEmpireRuntimeCandidate> = emptyList(),
     ): List<ObservationFact> {
         val facts = mutableListOf<ObservationFact>()
         if (roadmap != null && roadmap.doctrine.isNotBlank()) {
@@ -648,15 +711,6 @@ object AgentEmpireObservationBuilder {
                 detail = goldCandidate.observation.detail,
             )
         }
-        val religionCandidate = macroCandidates.firstOrNull { it.observation.candidateId == "macro:religion:auto" }
-        if (religionCandidate != null) {
-            facts += ObservationFact(
-                category = "religion",
-                severity = "info",
-                headline = "Religion or faith actions are available",
-                detail = religionCandidate.observation.detail,
-            )
-        }
         val bombardCount = macroCandidates.count { it.observation.candidateId.startsWith("macro:bombard:") }
         if (bombardCount > 0) {
             facts += ObservationFact(
@@ -674,24 +728,7 @@ object AgentEmpireObservationBuilder {
                 detail = "${diplomacyCandidates.size} diplomacy or trade candidates can be chosen this turn.",
             )
         }
-        if (spyCandidates.isNotEmpty()) {
-            facts += ObservationFact(
-                category = "spy",
-                severity = "info",
-                headline = "Spy assignments are available",
-                detail = "${spyCandidates.size} spy candidates are available for reassignment or coup planning.",
-            )
-        }
         return facts.take(8)
-    }
-
-    private fun shouldOfferReligionMacro(civInfo: Civilization): Boolean {
-        if (!civInfo.gameInfo.isReligionEnabled()) return false
-        return civInfo.religionManager.storedFaith > 0 ||
-            civInfo.religionManager.canFoundOrExpandPantheon() ||
-            civInfo.religionManager.religionState == ReligionState.FoundingReligion ||
-            civInfo.religionManager.religionState == ReligionState.EnhancingReligion ||
-            civInfo.religionManager.hasFreeBeliefs()
     }
 
     private fun goldFingerprint(civInfo: Civilization): String {
@@ -706,16 +743,6 @@ object AgentEmpireObservationBuilder {
         ).joinToString("|")
     }
 
-    private fun religionFingerprint(civInfo: Civilization): String {
-        val beliefCount = civInfo.religionManager.religion?.getAllBeliefsOrdered()?.count() ?: 0
-        return listOf(
-            civInfo.religionManager.storedFaith,
-            civInfo.religionManager.religionState.name,
-            beliefCount,
-            civInfo.units.getCivUnits().count(),
-            civInfo.cities.joinToString("|") { it.cityConstructions.currentConstructionName() },
-        ).joinToString("|")
-    }
 }
     private fun defaultFocusForRoadmapWinPath(winPath: String): String = when (winPath.lowercase()) {
         "scientific" -> Victory.Focus.Science.name

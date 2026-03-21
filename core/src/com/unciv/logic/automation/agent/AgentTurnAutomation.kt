@@ -116,7 +116,6 @@ object AgentTurnAutomation {
                 "empirePolicyCandidates" to empireObservation.policyCandidates.size.toString(),
                 "empireMacroCandidates" to empireObservation.macroCandidates.size.toString(),
                 "empireDiplomacyCandidates" to empireObservation.diplomacyCandidates.size.toString(),
-                "empireSpyCandidates" to empireObservation.spyCandidates.size.toString(),
                 "currentResearch" to (empireObservation.currentResearch ?: ""),
                 "currentResearchTurnsLeft" to (empireObservation.currentResearchTurnsLeft?.toString() ?: ""),
             ),

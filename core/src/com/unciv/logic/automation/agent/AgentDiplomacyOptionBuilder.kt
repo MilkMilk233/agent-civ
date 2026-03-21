@@ -2,7 +2,6 @@ package com.unciv.logic.automation.agent
 
 import com.unciv.Constants
 import com.unciv.logic.automation.civilization.DiplomacyAutomation
-import com.unciv.logic.city.City
 import com.unciv.logic.civilization.AlertType
 import com.unciv.logic.civilization.Civilization
 import com.unciv.logic.civilization.PopupAlert
@@ -13,12 +12,10 @@ import com.unciv.logic.trade.TradeLogic
 import com.unciv.logic.trade.TradeOffer
 import com.unciv.logic.trade.TradeOfferType
 import com.unciv.logic.trade.TradeRequest
-import com.unciv.models.SpyAction
 import com.unciv.models.ruleset.tile.ResourceType
 
 object AgentDiplomacyOptionBuilder {
     private const val maxDiplomacyCandidates = 12
-    private const val maxSpyCandidates = 6
 
     internal fun build(civInfo: Civilization): AgentDiplomacyPlanningContext {
         val diplomacyCandidates = buildList {
@@ -32,13 +29,8 @@ object AgentDiplomacyOptionBuilder {
             .sortedByDescending { scoreCandidate(it.observation) }
             .take(maxDiplomacyCandidates)
 
-        val spyCandidates = buildSpyCandidates(civInfo)
-            .sortedByDescending { scoreCandidate(it.observation) }
-            .take(maxSpyCandidates)
-
         return AgentDiplomacyPlanningContext(
             diplomacyCandidates = diplomacyCandidates,
-            spyCandidates = spyCandidates,
         )
     }
 
@@ -271,123 +263,6 @@ object AgentDiplomacyOptionBuilder {
             .toList()
     }
 
-    private fun buildSpyCandidates(civInfo: Civilization): List<AgentEmpireRuntimeCandidate> {
-        if (!civInfo.gameInfo.isEspionageEnabled()) return emptyList()
-        return civInfo.espionageManager.spyList.flatMapIndexed { spyIndex, spy ->
-            val candidates = mutableListOf<AgentEmpireRuntimeCandidate>()
-            val currentCity = spy.getCityOrNull()
-
-            if (spy.canDoCoup()) {
-                val coupChance = (spy.getCoupChanceOfSuccess(false) * 100).toInt()
-                val city = spy.getCity()
-                candidates += AgentEmpireRuntimeCandidate(
-                    observation = AgentEmpireChoiceCandidateObservation(
-                        candidateId = "spy:coup:$spyIndex",
-                        category = "spy",
-                        title = "Stage coup with ${spy.name} in ${city.name}",
-                        detail = "Current coup success chance is $coupChance%.",
-                    ),
-                    validate = { currentCiv ->
-                        val liveSpy = currentCiv.espionageManager.spyList.getOrNull(spyIndex)
-                            ?: return@AgentEmpireRuntimeCandidate "Empire option rejected: spy is missing"
-                        if (!liveSpy.canDoCoup()) "Empire option rejected: coup is no longer available" else null
-                    },
-                    execute = { currentCiv ->
-                        val liveSpy = currentCiv.espionageManager.spyList.getOrNull(spyIndex) ?: return@AgentEmpireRuntimeCandidate false
-                        if (!liveSpy.canDoCoup()) return@AgentEmpireRuntimeCandidate false
-                        val beforeAction = liveSpy.action
-                        val beforeTurns = liveSpy.turnsRemainingForAction
-                        liveSpy.setAction(SpyAction.Coup, 1)
-                        liveSpy.action != beforeAction || liveSpy.turnsRemainingForAction != beforeTurns
-                    },
-                    successMessage = "${spy.name} is preparing a coup",
-                )
-            }
-
-            val stealCity = civInfo.getKnownCivs()
-                .filter { it.isMajorCiv() && civInfo.espionageManager.getTechsToSteal(it).isNotEmpty() }
-                .flatMap { it.cities }
-                .filter { spy.canMoveTo(it) }
-                .maxByOrNull { it.population.population }
-            if (stealCity != null && currentCity != stealCity) {
-                candidates += buildSpyMoveCandidate(
-                    civInfo = civInfo,
-                    spyIndex = spyIndex,
-                    title = "Send ${spy.name} to ${stealCity.name}",
-                    detail = "Move spy to ${stealCity.civ.civName}'s city to steal technology.",
-                    targetCity = stealCity,
-                    successMessage = "${spy.name} moved to ${stealCity.name}",
-                )
-            }
-
-            val rigCity = civInfo.getKnownCivs()
-                .filter { it.isCityState && !civInfo.isAtWarWith(it) }
-                .flatMap { it.cities }
-                .filter { !it.isBeingRazed && spy.canMoveTo(it) }
-                .maxByOrNull { it.civ.getDiplomacyManager(civInfo)?.getInfluence() ?: Float.NEGATIVE_INFINITY }
-            if (rigCity != null && currentCity != rigCity) {
-                candidates += buildSpyMoveCandidate(
-                    civInfo = civInfo,
-                    spyIndex = spyIndex,
-                    title = "Send ${spy.name} to ${rigCity.name}",
-                    detail = "Move spy to city-state ${rigCity.civ.civName} to rig elections or contest influence.",
-                    targetCity = rigCity,
-                    successMessage = "${spy.name} moved to ${rigCity.name}",
-                )
-            }
-
-            val defenseCity = civInfo.cities
-                .filter { spy.canMoveTo(it) }
-                .maxByOrNull { it.cityStats.currentCityStats.science }
-            if (defenseCity != null && currentCity != defenseCity) {
-                candidates += buildSpyMoveCandidate(
-                    civInfo = civInfo,
-                    spyIndex = spyIndex,
-                    title = "Assign ${spy.name} to ${defenseCity.name}",
-                    detail = "Move spy to our city for counter-intelligence coverage.",
-                    targetCity = defenseCity,
-                    successMessage = "${spy.name} moved to ${defenseCity.name}",
-                )
-            }
-
-            candidates
-        }
-    }
-
-    private fun buildSpyMoveCandidate(
-        civInfo: Civilization,
-        spyIndex: Int,
-        title: String,
-        detail: String,
-        targetCity: City,
-        successMessage: String,
-    ): AgentEmpireRuntimeCandidate {
-        return AgentEmpireRuntimeCandidate(
-            observation = AgentEmpireChoiceCandidateObservation(
-                candidateId = "spy:move:$spyIndex:${targetCity.location.x},${targetCity.location.y}",
-                category = "spy",
-                title = title,
-                detail = detail,
-            ),
-            validate = { currentCiv ->
-                val liveSpy = currentCiv.espionageManager.spyList.getOrNull(spyIndex)
-                    ?: return@AgentEmpireRuntimeCandidate "Empire option rejected: spy is missing"
-                val liveTarget = currentCiv.gameInfo.tileMap[targetCity.location].getCity()
-                    ?: return@AgentEmpireRuntimeCandidate "Empire option rejected: target city is missing"
-                if (!liveSpy.canMoveTo(liveTarget)) "Empire option rejected: spy can no longer move to the target city" else null
-            },
-            execute = { currentCiv ->
-                val liveSpy = currentCiv.espionageManager.spyList.getOrNull(spyIndex) ?: return@AgentEmpireRuntimeCandidate false
-                val liveTarget = currentCiv.gameInfo.tileMap[targetCity.location].getCity() ?: return@AgentEmpireRuntimeCandidate false
-                val beforeLocation = liveSpy.getCityOrNull()?.location
-                val beforeAction = liveSpy.action
-                liveSpy.moveTo(liveTarget)
-                liveSpy.getCityOrNull()?.location != beforeLocation || liveSpy.action != beforeAction
-            },
-            successMessage = successMessage,
-        )
-    }
-
     private fun candidateForTrade(
         civInfo: Civilization,
         otherCiv: Civilization,
@@ -468,11 +343,9 @@ object AgentDiplomacyOptionBuilder {
     private fun scoreCandidate(observation: AgentEmpireChoiceCandidateObservation): Int {
         val lower = "${observation.title} ${observation.detail}".lowercase()
         return when {
-            observation.category == "spy" && "coup" in lower -> 140
             observation.category == "diplomacy" && "research agreement" in lower -> 130
             observation.category == "diplomacy" && "defensive pact" in lower -> 120
             observation.category == "trade" -> 110
-            observation.category == "spy" -> 100
             else -> 90
         }
     }
@@ -493,6 +366,5 @@ object AgentDiplomacyOptionBuilder {
 
     internal data class AgentDiplomacyPlanningContext(
         val diplomacyCandidates: List<AgentEmpireRuntimeCandidate>,
-        val spyCandidates: List<AgentEmpireRuntimeCandidate>,
     )
 }

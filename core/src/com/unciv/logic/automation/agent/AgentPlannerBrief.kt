@@ -51,5 +51,4 @@ data class AgentPlannerEmpireChoicesObservation(
     val policyChoices: List<AgentEmpireChoiceCandidateObservation> = emptyList(),
     val macroChoices: List<AgentEmpireChoiceCandidateObservation> = emptyList(),
     val diplomacyChoices: List<AgentEmpireChoiceCandidateObservation> = emptyList(),
-    val spyChoices: List<AgentEmpireChoiceCandidateObservation> = emptyList(),
 )

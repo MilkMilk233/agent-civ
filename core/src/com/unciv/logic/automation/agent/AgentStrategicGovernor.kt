@@ -60,7 +60,6 @@ object AgentStrategicGovernor {
                 policyChoices = empireObservation.policyCandidates.take(2),
                 macroChoices = empireObservation.macroCandidates.take(2),
                 diplomacyChoices = empireObservation.diplomacyCandidates.take(if (gameContext.contactComplete && gameContext.duelLike) 1 else 2),
-                spyChoices = empireObservation.spyCandidates.take(2),
             ),
             cityHighlights = cityHighlights,
             unitHighlights = unitHighlights,
@@ -389,7 +388,6 @@ object AgentStrategicGovernor {
         val empireLevers =
             empireObservation.macroCandidates.isNotEmpty() ||
                 empireObservation.policyCandidates.isNotEmpty() ||
-                empireObservation.spyCandidates.isNotEmpty() ||
                 empireObservation.diplomacyCandidates.isNotEmpty() ||
                 (empireObservation.researchCandidates.isNotEmpty() &&
                     (empireObservation.currentResearch == null || empireObservation.freeTechs > 0))

@@ -238,6 +238,21 @@ pre {
   gap: 0.55rem;
 }
 
+.static-field {
+  padding: 0.9rem 1rem;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(244, 249, 255, 0.92));
+  border: 1px solid rgba(115, 148, 193, 0.18);
+  color: #14345f;
+  font-weight: 600;
+}
+
+.field-hint {
+  margin: 0;
+  color: #6c7d97;
+  font-size: 0.84rem;
+}
+
 .card,
 .turn-card,
 .modal-panel {
