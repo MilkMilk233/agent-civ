@@ -12,7 +12,7 @@ import type {
   SnapshotResponse,
   TurnRecord,
 } from "./types";
-import { formatNumber, formatRelative } from "./utils";
+import { formatNumber, formatRelative, parseJsonValue } from "./utils";
 
 type Mode = "live" | "replay";
 
@@ -514,39 +514,62 @@ function TurnDetail({
             {turnMetrics.retryCount > 0 ? <span className="tag neutral">{formatNumber(turnMetrics.retryCount)} retries</span> : null}
           </div>
           <p className="mini-note">
-            This card shows immediate turn health plus run-level averages so you can see whether the planner is stable or drifting.
+            Retries happen before execution. This card separates planning churn from live execution rejects so you can see whether the planner is thinking twice or actually failing live.
           </p>
         </div>
 
         <div className="summary-grid summary-grid-wide">
           <SummaryStat label="Latest event" value={formatRelative(turn.latestEpochMs)} />
           <SummaryStat
+            label="Planner outcome"
+            value={describePlannerOutcome(turnMetrics)}
+            note={describePlannerOutcomeNote(turnMetrics)}
+          />
+          <SummaryStat
             label="LLM time"
             value={formatDurationMs(turnMetrics.totalLatencyMs)}
             note={buildLatencyNote(turnMetrics.strategistLatencyMs, turnMetrics.tacticalLatencyMs)}
           />
           <SummaryStat
-            label="Planned actions"
-            value={formatNumber(turnMetrics.plannedActions)}
-            note={`${formatNumber(turnMetrics.executedActions)} executed`}
+            label="Inference passes"
+            value={`${formatNumber(turnMetrics.tacticalPasses)} tactical`}
+            note={`${formatNumber(turnMetrics.strategistPasses)} strategist`}
           />
           <SummaryStat
-            label="Rejected actions"
-            value={formatNumber(turnMetrics.rejectedActions)}
-            note={formatPercent(turnMetrics.rejectionRate)}
+            label="Actions applied"
+            value={`${formatNumber(turnMetrics.executedActions)} / ${formatNumber(turnMetrics.plannedActions)}`}
+            note={turnMetrics.intentionalNoOp ? "intentional no-op" : "executed / planned"}
           />
-          <SummaryStat label="This turn fallback" value={turnMetrics.fallback ? "100%" : "0%"} />
-          <SummaryStat label="This turn blocked" value={turnMetrics.blocked ? "100%" : "0%"} />
-          <SummaryStat label="Illegal action rate" value={formatPercent(turnMetrics.illegalActionRate)} />
+          <SummaryStat
+            label="Validation failures"
+            value={formatNumber(turnMetrics.validationFailureCount)}
+            note={`${formatNumber(turnMetrics.retryCount)} replans requested`}
+          />
+          <SummaryStat
+            label="Live execution rejects"
+            value={formatNumber(turnMetrics.executionRejectedActions)}
+            note={formatPercent(turnMetrics.executionRejectRate)}
+          />
+          <SummaryStat
+            label="Turn safety"
+            value={turnMetrics.fallback ? "Fallback" : turnMetrics.blocked ? "Blocked" : "Stable"}
+            note={`illegal ${formatPercent(turnMetrics.illegalActionRate)}`}
+          />
+          <SummaryStat label="First-pass success" value={formatPercent(averageMetrics.firstPassRate)} />
+          <SummaryStat
+            label="Retry-turn rate"
+            value={formatPercent(averageMetrics.retryTurnRate)}
+            note={`${formatNumber(averageMetrics.retryTurns)} of ${formatNumber(averageMetrics.sampleTurns)} turns`}
+          />
+          <SummaryStat
+            label="Avg retries / turn"
+            value={averageMetrics.avgRetriesPerTurn.toFixed(2)}
+            note={averageMetrics.retryTurns > 0 ? `${averageMetrics.avgRetriesOnRetryTurns.toFixed(2)} on retry turns` : "no retry turns yet"}
+          />
+          <SummaryStat label="Avg live reject rate" value={formatPercent(averageMetrics.avgExecutionRejectRate)} />
           <SummaryStat label="Avg LLM time" value={formatDurationMs(averageMetrics.avgLatencyMs)} />
-          <SummaryStat
-            label="Avg rejection rate"
-            value={formatPercent(averageMetrics.avgRejectionRate)}
-            note={`${formatNumber(averageMetrics.totalRejected)} rejected across ${formatNumber(averageMetrics.sampleTurns)} turns`}
-          />
           <SummaryStat label="Avg fallback rate" value={formatPercent(averageMetrics.avgFallbackRate)} />
           <SummaryStat label="Avg blocked rate" value={formatPercent(averageMetrics.avgBlockedRate)} />
-          <SummaryStat label="Avg illegal rate" value={formatPercent(averageMetrics.avgIllegalRate)} />
         </div>
       </Card>
 
@@ -1318,20 +1341,29 @@ function deriveTurnMetrics(turn: TurnRecord) {
   const totalLatencyMs = (tacticalLatencyMs ?? 0) + (strategistLatencyMs ?? 0) || summary?.llmLatencyMs || 0;
   const plannedActions = summary?.plannedActions ?? countActions(turn.parsedPlan);
   const executedActions = summary?.executedActions ?? plannedActions;
-  const rejectedActions = summary?.rejectedActions ?? countRejected(turn.validationFailures);
+  const executionRejectedActions = summary?.rejectedActions ?? 0;
   const fallback = summary?.fallback ?? turn.statusLabel.toLowerCase().includes("fallback");
   const blocked = summary?.blocked ?? turn.statusLabel.toLowerCase().includes("blocked");
   const retryCount = countEvents(turn.events, "plan_validation_failed");
-  const rejectionDenominator = Math.max(1, executedActions + rejectedActions);
+  const validationFailureCount = countValidationFailures(turn.events);
+  const tacticalPasses = countEvents(turn.events, "llm_request");
+  const strategistPasses = countEvents(turn.events, "strategist_llm_request");
+  const executionRejectDenominator = Math.max(1, executedActions + executionRejectedActions);
+  const intentionalNoOp = plannedActions === 0 && !fallback && !blocked;
 
   return {
     plannedActions,
     executedActions,
-    rejectedActions,
-    rejectionRate: rejectedActions / rejectionDenominator,
+    executionRejectedActions,
+    executionRejectRate: executionRejectedActions / executionRejectDenominator,
     fallback,
     blocked,
     retryCount,
+    validationFailureCount,
+    tacticalPasses,
+    strategistPasses,
+    intentionalNoOp,
+    cleanFirstPass: retryCount === 0 && !fallback && !blocked,
     illegalActionRate: summary?.illegalActionRate ?? 0,
     tacticalLatencyMs,
     strategistLatencyMs,
@@ -1342,17 +1374,25 @@ function deriveTurnMetrics(turn: TurnRecord) {
 function deriveAverageMetrics(allTurns: TurnRecord[], matchSummary: MatchSummary | null) {
   const turnMetrics = allTurns.map((turn) => deriveTurnMetrics(turn));
   const sampleTurns = Math.max(1, turnMetrics.length);
-  const totalRejected = turnMetrics.reduce((sum, metrics) => sum + metrics.rejectedActions, 0);
-  const totalDecisionPoints = turnMetrics.reduce((sum, metrics) => sum + Math.max(1, metrics.executedActions + metrics.rejectedActions), 0);
+  const totalExecutionRejected = turnMetrics.reduce((sum, metrics) => sum + metrics.executionRejectedActions, 0);
+  const totalDecisionPoints = turnMetrics.reduce((sum, metrics) => sum + Math.max(1, metrics.executedActions + metrics.executionRejectedActions), 0);
   const latencies = turnMetrics.map((metrics) => metrics.totalLatencyMs).filter((value): value is number => value !== null);
   const fallbackCount = turnMetrics.filter((metrics) => metrics.fallback).length;
   const blockedCount = turnMetrics.filter((metrics) => metrics.blocked).length;
+  const retryTurns = turnMetrics.filter((metrics) => metrics.retryCount > 0).length;
+  const totalRetries = turnMetrics.reduce((sum, metrics) => sum + metrics.retryCount, 0);
+  const cleanFirstPassTurns = turnMetrics.filter((metrics) => metrics.cleanFirstPass).length;
   const totalIllegalRate = turnMetrics.reduce((sum, metrics) => sum + metrics.illegalActionRate, 0);
 
   return {
     sampleTurns,
-    totalRejected,
-    avgRejectionRate: totalRejected / Math.max(1, totalDecisionPoints),
+    retryTurns,
+    totalRetries,
+    firstPassRate: cleanFirstPassTurns / sampleTurns,
+    retryTurnRate: retryTurns / sampleTurns,
+    avgRetriesPerTurn: totalRetries / sampleTurns,
+    avgRetriesOnRetryTurns: retryTurns > 0 ? totalRetries / retryTurns : 0,
+    avgExecutionRejectRate: totalExecutionRejected / Math.max(1, totalDecisionPoints),
     avgFallbackRate:
       matchSummary && matchSummary.agentTurnCount > 0
         ? matchSummary.fallbackTurns / matchSummary.agentTurnCount
@@ -1384,8 +1424,13 @@ function countActions(plan: Record<string, unknown> | null): number {
   return Array.isArray(plan?.actions) ? plan.actions.length : 0;
 }
 
-function countRejected(value: unknown): number {
-  return Array.isArray(value) ? value.length : 0;
+function countValidationFailures(events: TurnRecord["events"]): number {
+  return events.reduce((sum, event) => {
+    if (event.type !== "plan_validation_failed") return sum;
+    const retryContext = parseJsonValue<Record<string, unknown>>(event.details?.validationFailuresJson);
+    const failures = Array.isArray(retryContext?.failures) ? retryContext.failures.length : 0;
+    return sum + Math.max(1, failures);
+  }, 0);
 }
 
 function countEvents(events: TurnRecord["events"], type: string): number {
@@ -1448,6 +1493,24 @@ function buildLatencyNote(strategistLatencyMs: number | null, tacticalLatencyMs:
   const tactical = formatDurationMs(tacticalLatencyMs);
   if (strategist === "—" && tactical === "—") return "";
   return `Strategist ${strategist} · Tactical ${tactical}`;
+}
+
+function describePlannerOutcome(metrics: ReturnType<typeof deriveTurnMetrics>): string {
+  if (metrics.fallback) return "Fallback";
+  if (metrics.blocked) return "Blocked";
+  if (metrics.retryCount > 0) return `Replanned ×${formatNumber(metrics.retryCount)}`;
+  if (metrics.intentionalNoOp) return "Intentional no-op";
+  return "First pass";
+}
+
+function describePlannerOutcomeNote(metrics: ReturnType<typeof deriveTurnMetrics>): string {
+  if (metrics.fallback) return "Agent handed the turn to legacy logic.";
+  if (metrics.blocked) return "The turn could not be resolved cleanly.";
+  if (metrics.retryCount > 0) {
+    return `${formatNumber(metrics.validationFailureCount)} validation failures before the final plan stuck.`;
+  }
+  if (metrics.intentionalNoOp) return "The planner chose to preserve progress instead of acting.";
+  return "No retry loop was needed.";
 }
 
 function signedNumberText(value: unknown): string {

@@ -49,4 +49,23 @@ object AgentRetryContextFactory {
             failures = failures,
         )
     }
+
+    fun fromNoOpPolicy(
+        plan: AgentActionPlan,
+        reason: String,
+        retryAttempt: Int,
+        maxRetries: Int,
+    ): AgentRetryContext {
+        return AgentRetryContext(
+            retryAttempt = retryAttempt,
+            maxRetries = maxRetries,
+            previousPlan = plan,
+            failures = listOf(
+                AgentPlanFailure(
+                    commandType = "no_op_policy",
+                    detail = reason,
+                )
+            ),
+        )
+    }
 }

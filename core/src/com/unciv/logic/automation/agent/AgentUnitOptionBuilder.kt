@@ -10,6 +10,7 @@ import com.unciv.logic.battle.TargetHelper
 import com.unciv.logic.civilization.Civilization
 import com.unciv.logic.map.HexCoord
 import com.unciv.logic.map.mapunit.MapUnit
+import com.unciv.logic.map.tile.Tile
 import com.unciv.models.ruleset.tile.TileImprovement
 import com.unciv.models.ruleset.unique.GameContext
 import com.unciv.models.UnitAction
@@ -22,6 +23,7 @@ object AgentUnitOptionBuilder {
     private const val maxAttackCandidatesPerUnit = 3
     private const val maxSettlerCandidatesPerUnit = 2
     private const val maxWorkerCandidatesPerUnit = 3
+    private const val maxExploreCandidatesPerUnit = 2
 
     internal fun build(civInfo: Civilization, memory: AgentMemory): AgentUnitOptionContext {
         val candidates = LinkedHashMap<String, AgentUnitRuntimeCandidate>()
@@ -29,11 +31,16 @@ object AgentUnitOptionBuilder {
 
         for (unit in civInfo.units.getCivUnits().sortedBy { it.id }) {
             val observations = observationsByUnitId.getOrPut(unit.id) { arrayListOf() }
+            val availableActions = UnitActions.getUnitActions(unit).filter { it.action != null }.toList()
             buildAttackCandidates(unit).forEach { candidate ->
                 candidates[candidate.observation.candidateId] = candidate
                 observations += candidate.observation
             }
             buildSettlerCandidates(unit).forEach { candidate ->
+                candidates[candidate.observation.candidateId] = candidate
+                observations += candidate.observation
+            }
+            buildExplorationCandidates(unit, availableActions).forEach { candidate ->
                 candidates[candidate.observation.candidateId] = candidate
                 observations += candidate.observation
             }
@@ -51,6 +58,66 @@ object AgentUnitOptionBuilder {
             candidates = candidates,
             observationsByUnitId = observationsByUnitId,
         )
+    }
+
+    private fun buildExplorationCandidates(
+        unit: MapUnit,
+        availableActions: List<UnitAction>,
+    ): List<AgentUnitRuntimeCandidate> {
+        if (!unit.hasMovement()) return emptyList()
+        if (availableActions.none { it.type == UnitActionType.Explore || it.type == UnitActionType.StopExploration }) return emptyList()
+        val unitVisibilityRange = unit.getVisibilityRange()
+
+        val reachableFrontierTiles = unit.movement.getDistanceToTiles().keys
+            .asSequence()
+            .filter { isGoodTileToExplore(unit, it, unitVisibilityRange) }
+            .sortedByDescending { scoreExploreTile(unit, it, unitVisibilityRange) }
+            .take(maxExploreCandidatesPerUnit)
+            .toList()
+
+        val fartherFrontierTiles = if (reachableFrontierTiles.size < maxExploreCandidatesPerUnit) {
+            unit.getTile().getTilesInDistance(5)
+                .filter { isGoodTileToExplore(unit, it, unitVisibilityRange) }
+                .sortedByDescending { scoreExploreTile(unit, it, unitVisibilityRange) }
+                .take(maxExploreCandidatesPerUnit - reachableFrontierTiles.size)
+                .toList()
+        } else {
+            emptyList()
+        }
+
+        return (reachableFrontierTiles + fartherFrontierTiles)
+            .distinctBy { it.position }
+            .take(maxExploreCandidatesPerUnit)
+            .map { targetTile ->
+                val revealScore = targetTile.getTilesAtDistance(unitVisibilityRange).count { tile -> !tile.isExplored(unit.civ) }
+                val candidateId = "unitexplore:${unit.id}:${targetTile.position.x},${targetTile.position.y}"
+                AgentUnitRuntimeCandidate(
+                    observation = UnitOptionCandidateObservation(
+                        candidateId = candidateId,
+                        category = "explore",
+                        title = "${unit.name} #${unit.id} move to frontier",
+                        detail = "Move toward (${targetTile.position.x}, ${targetTile.position.y}) to reveal about $revealScore unseen tiles.",
+                    ),
+                    validate = { currentCiv ->
+                        val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id }
+                            ?: return@AgentUnitRuntimeCandidate "Unit option rejected: unit missing"
+                        val liveTarget = currentCiv.gameInfo.tileMap[HexCoord(targetTile.position.x, targetTile.position.y)]
+                        if (!liveUnit.hasMovement()) return@AgentUnitRuntimeCandidate "Unit option rejected: unit has no movement left"
+                        if (!isGoodTileToExplore(liveUnit, liveTarget, liveUnit.getVisibilityRange())) {
+                            return@AgentUnitRuntimeCandidate "Unit option rejected: frontier move is no longer attractive or reachable"
+                        }
+                        null
+                    },
+                    execute = { currentCiv ->
+                        val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id } ?: return@AgentUnitRuntimeCandidate false
+                        val liveTarget = currentCiv.gameInfo.tileMap[HexCoord(targetTile.position.x, targetTile.position.y)]
+                        val beforePosition = liveUnit.getTile().position
+                        liveUnit.movement.headTowards(liveTarget)
+                        liveUnit.getTile().position != beforePosition
+                    },
+                    successMessage = "${unit.name} moved to explore the frontier",
+                )
+            }
     }
 
     private fun buildAttackCandidates(unit: MapUnit): List<AgentUnitRuntimeCandidate> {
@@ -249,6 +316,21 @@ object AgentUnitOptionBuilder {
                 }
             }
             .take(maxWorkerCandidatesPerUnit)
+    }
+
+    private fun isGoodTileToExplore(unit: MapUnit, tile: Tile, unitVisibilityRange: Int): Boolean {
+        return (tile.getOwner() == null || !tile.getOwner()!!.isCityState) &&
+            tile.getTilesInDistance(unitVisibilityRange).any { !unit.civ.hasExplored(it) } &&
+            (!unit.civ.isCityState || tile.neighbors.any { it.getOwner() == unit.civ }) &&
+            unit.getDamageFromTerrain(tile) <= 0 &&
+            unit.civ.threatManager.getDistanceToClosestEnemyUnit(tile, 3) > 3 &&
+            unit.movement.canMoveTo(tile) &&
+            unit.movement.canReach(tile)
+    }
+
+    private fun scoreExploreTile(unit: MapUnit, tile: Tile, unitVisibilityRange: Int): Int {
+        val unseenTiles = tile.getTilesAtDistance(unitVisibilityRange).count { !it.isExplored(unit.civ) }
+        return tile.tileHeight * 5 + unseenTiles * 10 - unit.getTile().aerialDistanceTo(tile)
     }
 
     private fun buildCurrentWorkerCandidate(

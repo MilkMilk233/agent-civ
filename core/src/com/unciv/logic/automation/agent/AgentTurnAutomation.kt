@@ -76,7 +76,8 @@ object AgentTurnAutomation {
         var observationJson = AgentPromptBuilder.observationJson(observation)
         var empireObservationJson = AgentPromptBuilder.empireObservationJson(empireObservation)
         var memoryJson = AgentMemoryManager.memoryJson(memory)
-        var plannerBriefJson = AgentPromptBuilder.plannerBriefJson(memory, observation, empireObservation)
+        var plannerBrief = AgentPromptBuilder.plannerBrief(memory, observation, empireObservation)
+        var plannerBriefJson = AgentPromptBuilder.plannerBriefJson(plannerBrief)
         var supportSnapshot = AgentTurnDiagnostics.supportSnapshot(observation, empireObservation)
         var supportSnapshotJson = AgentTurnDiagnostics.supportSnapshotJson(supportSnapshot)
         AgentObservability.record(
@@ -171,7 +172,8 @@ object AgentTurnAutomation {
                             observationJson = AgentPromptBuilder.observationJson(observation)
                             empireObservationJson = AgentPromptBuilder.empireObservationJson(empireObservation)
                             memoryJson = AgentMemoryManager.memoryJson(memory)
-                            plannerBriefJson = AgentPromptBuilder.plannerBriefJson(memory, observation, empireObservation)
+                            plannerBrief = AgentPromptBuilder.plannerBrief(memory, observation, empireObservation)
+                            plannerBriefJson = AgentPromptBuilder.plannerBriefJson(plannerBrief)
                             supportSnapshot = AgentTurnDiagnostics.supportSnapshot(observation, empireObservation)
                             supportSnapshotJson = AgentTurnDiagnostics.supportSnapshotJson(supportSnapshot)
                             strategistRefreshCount += 1
@@ -196,8 +198,72 @@ object AgentTurnAutomation {
 
             val validation = executor.validate(civInfo, plan)
             when (validation.status) {
-                AgentActionExecutor.ValidationStatus.Valid,
+                AgentActionExecutor.ValidationStatus.Valid -> {
+                    selectedPlan = plan
+                    validationReport = validation
+                    break
+                }
                 AgentActionExecutor.ValidationStatus.NoOp -> {
+                    val noOpRejectionReason = AgentStrategicGovernor.noOpRejectionReason(plannerBrief)
+                    if (noOpRejectionReason != null) {
+                        AgentObservability.record(
+                            type = "plan_validation_failed",
+                            message = "No-op plan rejected by tactical pressure policy",
+                            civName = civInfo.civName,
+                            turn = civInfo.gameInfo.turns,
+                            details = mapOf(
+                                "attempt" to planningAttempts.toString(),
+                                "maxAttempts" to maxPlanningAttemptsPerTurn.toString(),
+                                "failedPlanJson" to AgentPromptBuilder.planJson(plan),
+                                "plannedDomainCountsJson" to AgentTurnDiagnostics.plannedDomainCountsJson(plan),
+                                "validationFailuresJson" to AgentPromptBuilder.retryContextJson(
+                                    AgentRetryContextFactory.fromNoOpPolicy(
+                                        plan = plan,
+                                        reason = noOpRejectionReason,
+                                        retryAttempt = minOf(planningAttempts, maxPlanningAttemptsPerTurn - 1),
+                                        maxRetries = maxPlanningAttemptsPerTurn - 1,
+                                    )
+                                ),
+                            ),
+                        )
+
+                        if (planningAttempts >= maxPlanningAttemptsPerTurn) {
+                            selectedPlan = plan
+                            validationReport = AgentActionExecutor.ValidationReport(
+                                status = AgentActionExecutor.ValidationStatus.Invalid,
+                                outcomes = listOf(
+                                    AgentActionExecutor.ActionOutcome(
+                                        commandType = "no_op_policy",
+                                        status = AgentActionExecutor.ActionStatus.Rejected,
+                                        reason = noOpRejectionReason,
+                                    )
+                                ),
+                            )
+                            fallbackReason = "Planner kept returning a no-op while tactical pressure required action"
+                            break
+                        }
+
+                        retryContext = AgentRetryContextFactory.fromNoOpPolicy(
+                            plan = plan,
+                            reason = noOpRejectionReason,
+                            retryAttempt = planningAttempts,
+                            maxRetries = maxPlanningAttemptsPerTurn - 1,
+                        )
+                        AgentObservability.record(
+                            type = "plan_retry_requested",
+                            message = "Requesting planner retry after no-op was rejected by tactical pressure policy",
+                            civName = civInfo.civName,
+                            turn = civInfo.gameInfo.turns,
+                            details = mapOf(
+                                "attempt" to planningAttempts.toString(),
+                                "nextAttempt" to (planningAttempts + 1).toString(),
+                                "maxAttempts" to maxPlanningAttemptsPerTurn.toString(),
+                                "plannedDomainCountsJson" to AgentTurnDiagnostics.plannedDomainCountsJson(plan),
+                                "retryContextJson" to AgentPromptBuilder.retryContextJson(retryContext),
+                            ),
+                        )
+                        continue
+                    }
                     selectedPlan = plan
                     validationReport = validation
                     break

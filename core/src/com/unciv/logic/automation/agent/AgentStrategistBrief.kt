@@ -11,12 +11,24 @@ data class AgentStrategistBrief(
     val currentResearch: String? = null,
     val currentResearchStatus: String? = null,
     val currentRoadmap: AgentStrategicRoadmapMemory? = null,
+    val roadmapReality: AgentStrategistRoadmapRealityObservation? = null,
     val rivalThreats: List<AgentVictoryThreatObservation> = emptyList(),
     val macroFacts: List<ObservationFact> = emptyList(),
     val progressInMotion: List<AgentPlannerProgressObservation> = emptyList(),
     val citySnapshots: List<AgentStrategistCitySnapshot> = emptyList(),
     val unitSnapshots: List<AgentStrategistUnitSnapshot> = emptyList(),
     val recentFailures: List<String> = emptyList(),
+)
+
+@Serializable
+data class AgentStrategistRoadmapRealityObservation(
+    val currentPhaseReality: String,
+    val expansionStatus: String,
+    val contactStatus: String,
+    val militaryStatus: String,
+    val completedGoals: List<String> = emptyList(),
+    val staleGoals: List<String> = emptyList(),
+    val urgentProblems: List<String> = emptyList(),
 )
 
 @Serializable

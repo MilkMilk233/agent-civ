@@ -6,6 +6,7 @@ import kotlinx.serialization.Serializable
 data class AgentPlannerBrief(
     val gameContext: AgentPublicGameContextObservation,
     val doctrine: AgentPlannerDoctrineObservation,
+    val tacticalPressure: AgentPlannerTacticalPressureObservation,
     val criticalAlerts: List<ObservationFact>,
     val progressInMotion: List<AgentPlannerProgressObservation>,
     val empireChoices: AgentPlannerEmpireChoicesObservation,
@@ -27,6 +28,14 @@ data class AgentPlannerDoctrineObservation(
     val thesis: String? = null,
     val commitments: List<String> = emptyList(),
     val watchOuts: List<String> = emptyList(),
+)
+
+@Serializable
+data class AgentPlannerTacticalPressureObservation(
+    val noOpPolicy: String,
+    val noOpReason: String? = null,
+    val mustActReasons: List<String> = emptyList(),
+    val priorityThisTurn: List<String> = emptyList(),
 )
 
 @Serializable

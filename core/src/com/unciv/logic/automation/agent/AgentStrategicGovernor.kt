@@ -15,6 +15,14 @@ object AgentStrategicGovernor {
         val progressInMotion = buildProgressInMotion(observation, empireObservation, cityHighlights, unitHighlights)
         val threatHighlights = observation.visibleThreatsAndTargets.take(if (observation.empireSummary.isAtWar) 3 else 2)
         val opportunityHighlights = selectOpportunityHighlights(observation, gameContext, primaryThreat)
+        val tacticalPressure = buildTacticalPressure(
+            memory = memory,
+            observation = observation,
+            empireObservation = empireObservation,
+            roadmap = roadmap,
+            cityHighlights = cityHighlights,
+            unitHighlights = unitHighlights,
+        )
 
         val workerFacts = observation.priorityFacts.count { isWorkerFact(it) }
         val suppressedContext = buildList {
@@ -44,6 +52,7 @@ object AgentStrategicGovernor {
                     .take(4),
                 watchOuts = (roadmap?.watchOuts ?: memory.strategicPosture.watchOuts).take(3),
             ),
+            tacticalPressure = tacticalPressure,
             criticalAlerts = criticalAlerts,
             progressInMotion = progressInMotion,
             empireChoices = AgentPlannerEmpireChoicesObservation(
@@ -59,6 +68,14 @@ object AgentStrategicGovernor {
             opportunityHighlights = opportunityHighlights,
             suppressedContext = suppressedContext,
         )
+    }
+
+    fun noOpRejectionReason(plannerBrief: AgentPlannerBrief): String? {
+        return when (plannerBrief.tacticalPressure.noOpPolicy.lowercase()) {
+            "forbidden" -> plannerBrief.tacticalPressure.noOpReason
+                ?: "A no-op is not acceptable under the current tactical pressure."
+            else -> null
+        }
     }
 
     internal fun buildProgressSummary(
@@ -129,6 +146,79 @@ object AgentStrategicGovernor {
             )
         }
         return alerts
+    }
+
+    private fun buildTacticalPressure(
+        memory: AgentMemory,
+        observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+        roadmap: AgentStrategicRoadmapMemory?,
+        cityHighlights: List<CityAttentionObservation>,
+        unitHighlights: List<ActionableUnitObservation>,
+    ): AgentPlannerTacticalPressureObservation {
+        val primaryThreat = empireObservation.victoryThreats.firstOrNull()
+        val mustActReasons = linkedSetOf<String>()
+        val priorityThisTurn = linkedSetOf<String>()
+
+        if (primaryThreat?.threatLevel == "critical") {
+            mustActReasons += "${primaryThreat.civName} is a critical ${primaryThreat.likelyVictoryType.lowercase()} rival."
+            priorityThisTurn += "Answer the rival surge before more routine upkeep."
+        }
+
+        if (empireObservation.gameContext.duelLike && !empireObservation.gameContext.contactComplete && observation.turn >= 20) {
+            mustActReasons += "You still have not found the only rival in this duel."
+            priorityThisTurn += "Use scout and warrior movement to force contact instead of preserving low-value progress."
+        }
+
+        if (empireObservation.macroFacts.any { it.category == "war" && it.headline.contains("military floor", ignoreCase = true) }) {
+            mustActReasons += "The empire is below its military floor."
+            priorityThisTurn += "Use unit production, purchases, or force-preserving moves to raise military strength."
+        }
+
+        if (empireObservation.macroFacts.any { it.category == "economy" && it.headline.contains("gold reserve", ignoreCase = true) }) {
+            mustActReasons += "Large gold reserves should be converted into tempo now."
+            priorityThisTurn += "Spend gold on meaningful city tempo, units, or other immediate gains if those options are surfaced."
+        }
+
+        if (observation.empireSummary.happiness <= 0) {
+            mustActReasons += "The happiness floor is at risk."
+            priorityThisTurn += "Protect happiness before taking greedier tempo lines."
+        }
+
+        val desiredCityFloor = desiredCityFloor(empireObservation.gameContext, observation.turn)
+        if (roadmap != null &&
+            (roadmap.phase.equals("expand", ignoreCase = true) || roadmap.doctrine.contains("expand", ignoreCase = true)) &&
+            observation.empireSummary.cityCount < desiredCityFloor
+        ) {
+            mustActReasons += "The roadmap still needs more cities to reach its expansion floor."
+            priorityThisTurn += "Keep expansion tempo moving instead of preserving low-impact progress."
+        }
+
+        roadmap?.mustMaintain
+            ?.take(2)
+            ?.filter { it.isNotBlank() }
+            ?.forEach { priorityThisTurn += it }
+
+        memory.strategicRoadmap.midTermGoals
+            .take(2)
+            .filter { it.isNotBlank() }
+            .forEach { priorityThisTurn += it }
+
+        val meaningfulLeversAvailable = hasMeaningfulImmediateLevers(cityHighlights, unitHighlights, empireObservation)
+        val noOpPolicy = when {
+            !meaningfulLeversAvailable -> "allowed"
+            empireObservation.gameContext.duelLike && !empireObservation.gameContext.contactComplete && observation.turn >= 30 -> "forbidden"
+            mustActReasons.size >= 2 -> "forbidden"
+            mustActReasons.isNotEmpty() -> "discouraged"
+            else -> "allowed"
+        }
+
+        return AgentPlannerTacticalPressureObservation(
+            noOpPolicy = noOpPolicy,
+            noOpReason = mustActReasons.takeIf { it.isNotEmpty() }?.joinToString(" "),
+            mustActReasons = mustActReasons.take(4),
+            priorityThisTurn = priorityThisTurn.take(4),
+        )
     }
 
     private fun selectCityHighlights(
@@ -283,6 +373,30 @@ object AgentStrategicGovernor {
         return score
     }
 
+    private fun hasMeaningfulImmediateLevers(
+        cityHighlights: List<CityAttentionObservation>,
+        unitHighlights: List<ActionableUnitObservation>,
+        empireObservation: AgentEmpireObservation,
+    ): Boolean {
+        val cityLevers = cityHighlights.any { city ->
+            city.cityOptionCandidates.any { candidate ->
+                candidate.category in setOf("construction", "purchase", "tile")
+            }
+        }
+        val unitLevers = unitHighlights.any { unit ->
+            unit.unitOptionCandidates.isNotEmpty() || unit.legalActionCandidates.isNotEmpty()
+        }
+        val empireLevers =
+            empireObservation.macroCandidates.isNotEmpty() ||
+                empireObservation.policyCandidates.isNotEmpty() ||
+                empireObservation.spyCandidates.isNotEmpty() ||
+                empireObservation.diplomacyCandidates.isNotEmpty() ||
+                (empireObservation.researchCandidates.isNotEmpty() &&
+                    (empireObservation.currentResearch == null || empireObservation.freeTechs > 0))
+
+        return cityLevers || unitLevers || empireLevers
+    }
+
     private fun unitScore(
         unit: ActionableUnitObservation,
         observation: AgentObservation,
@@ -296,6 +410,9 @@ object AgentStrategicGovernor {
             "worker" -> if (observation.turn >= 120 || primaryThreat?.threatLevel == "critical") 10 else 45
             "scout" -> if (gameContext.contactComplete) 5 else 40
             else -> 30
+        }
+        if (!gameContext.contactComplete && unit.hasMovement && unit.unitOptionCandidates.any { it.candidateId.startsWith("unitexplore:") }) {
+            score += if (unit.role == "scout") 70 else 40
         }
         if (unit.unitOptionCandidates.any { it.candidateId.startsWith("unitattack:") }) score += 40
         if (unit.nearbyHostileUnits > 0) score += 25
@@ -322,5 +439,15 @@ object AgentStrategicGovernor {
         turn < 140 -> "expansion"
         turn < 220 -> "conversion"
         else -> "endgame"
+    }
+
+    private fun desiredCityFloor(gameContext: AgentPublicGameContextObservation, turn: Int): Int {
+        return when {
+            gameContext.duelLike && gameContext.mapSize == "Tiny" && turn >= 120 -> 4
+            gameContext.duelLike && gameContext.mapSize == "Tiny" -> 3
+            gameContext.expansionWindow == "narrow" -> 4
+            gameContext.expansionWindow == "medium" -> 5
+            else -> 6
+        }
     }
 }

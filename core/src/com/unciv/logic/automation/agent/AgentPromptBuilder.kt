@@ -14,8 +14,9 @@ object AgentPromptBuilder {
     fun empireObservationJson(observation: AgentEmpireObservation): String = json.encodeToString(observation)
     fun plannerBrief(memory: AgentMemory, observation: AgentObservation, empireObservation: AgentEmpireObservation): AgentPlannerBrief =
         AgentStrategicGovernor.buildPlannerBrief(memory, observation, empireObservation)
+    fun plannerBriefJson(plannerBrief: AgentPlannerBrief): String = json.encodeToString(plannerBrief)
     fun plannerBriefJson(memory: AgentMemory, observation: AgentObservation, empireObservation: AgentEmpireObservation): String =
-        json.encodeToString(plannerBrief(memory, observation, empireObservation))
+        plannerBriefJson(plannerBrief(memory, observation, empireObservation))
     fun planJson(plan: AgentActionPlan): String = json.encodeToString(plan)
     fun retryContextJson(retryContext: AgentRetryContext): String = json.encodeToString(retryContext)
 
@@ -66,6 +67,7 @@ object AgentPromptBuilder {
             - Use only the surfaced legal candidate actions and exact action types from the brief. Do not invent unsupported commands or mod mechanics.
             - Use Memory JSON for continuity when the current brief still supports it: city intents, unit assignments, recent failures, and roadmap consistency.
             - Plan like a strong tactical player serving the roadmap. Let criticalAlerts, progressInMotion, threatHighlights, and the current roadmap commitments drive the turn.
+            - Planner Brief JSON includes tacticalPressure. Treat tacticalPressure.priorityThisTurn and tacticalPressure.mustActReasons as near-term non-negotiables.
             - The planner brief already compressed noise. Do not let routine worker upkeep crowd out rival threats, military floor problems, gold overflow, or important city tempo choices.
             - Use select_empire_option only with candidateId values from empireChoices. Never invent research, policy, diplomacy, religion, gold, bombardment, or spy commands outside those candidates.
             - Repeated diplomacy that does not materially improve the game state is low priority.
@@ -79,6 +81,9 @@ object AgentPromptBuilder {
             - In a peaceful opener, prioritize worker tempo, capital growth, and safe expansion. Do not spend the turn only on passive unit posture when strong city or expansion choices exist.
             - In the mid and late game, do not float large gold reserves when meaningful purchases, upgrades, or other tempo gains are available.
             - Avoid repeating actions that previously produced no state change unless the current brief shows a new reason they matter now.
+            - If tacticalPressure.noOpPolicy is "forbidden", do not return an empty actions list just to preserve progress. You should act unless every surfaced legal action would clearly be worse than doing nothing.
+            - If tacticalPressure.noOpPolicy is "discouraged", only return an empty actions list when the surfaced actions are genuinely low-value or disruptive relative to the roadmap.
+            - When roadmap commitments conflict with preserve-progress instincts, follow the higher-urgency tacticalPressure and criticalAlerts.
             - Use strategistRefreshRequest only for a real strategic emergency: the roadmap assumptions are broken by war, a critical rival surge, a collapse in the current plan, or another major shift that should trigger an immediate strategist review.
             - Use only unit IDs, cities, action types, tiles, and constructions present in Planner Brief JSON.
             - Do not invent entities.
