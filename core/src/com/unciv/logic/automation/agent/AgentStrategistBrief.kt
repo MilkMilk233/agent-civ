@@ -13,7 +13,7 @@ data class AgentStrategistBrief(
     val currentRoadmap: AgentStrategicRoadmapMemory? = null,
     val roadmapReality: AgentStrategistRoadmapRealityObservation? = null,
     val rivalThreats: List<AgentVictoryThreatObservation> = emptyList(),
-    val macroFacts: List<ObservationFact> = emptyList(),
+    val stateFacts: List<ObservationFact> = emptyList(),
     val progressInMotion: List<AgentPlannerProgressObservation> = emptyList(),
     val citySnapshots: List<AgentStrategistCitySnapshot> = emptyList(),
     val unitSnapshots: List<AgentStrategistUnitSnapshot> = emptyList(),

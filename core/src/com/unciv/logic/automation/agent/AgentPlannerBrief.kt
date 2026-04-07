@@ -7,7 +7,7 @@ data class AgentPlannerBrief(
     val gameContext: AgentPublicGameContextObservation,
     val doctrine: AgentPlannerDoctrineObservation,
     val tacticalPressure: AgentPlannerTacticalPressureObservation,
-    val criticalAlerts: List<ObservationFact>,
+    val attentionFacts: List<ObservationFact>,
     val progressInMotion: List<AgentPlannerProgressObservation>,
     val empireChoices: AgentPlannerEmpireChoicesObservation,
     val cityHighlights: List<AgentCityObservation>,

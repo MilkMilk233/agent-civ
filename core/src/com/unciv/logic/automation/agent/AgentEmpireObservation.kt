@@ -30,7 +30,7 @@ data class AgentEmpireObservation(
     val freePolicies: Int,
     val gold: Int,
     val happiness: Int,
-    val macroFacts: List<ObservationFact>,
+    val stateFacts: List<ObservationFact>,
     val researchCandidates: List<AgentEmpireChoiceCandidateObservation>,
     val policyCandidates: List<AgentEmpireChoiceCandidateObservation>,
     val macroCandidates: List<AgentEmpireChoiceCandidateObservation>,

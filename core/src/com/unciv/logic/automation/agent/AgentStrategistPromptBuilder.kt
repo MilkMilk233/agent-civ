@@ -50,6 +50,7 @@ object AgentStrategistPromptBuilder {
             - Prefer stable doctrine. If the existing roadmap still fits, refine it instead of thrashing.
             - On tiny duel maps, think about tempo, expansion, military timing, and pressure on the only rival.
             - Use only public setup context and the summarized state in Strategist Brief JSON.
+            - stateFacts in Strategist Brief JSON are neutral reminders from simple checks, not strategic conclusions. Do your own reasoning from them.
             - Strategist Brief JSON includes roadmapReality. Completed goals should disappear from the new roadmap, and stale goals must be rewritten to match the current board state.
             - Do not repeat opener instructions that no longer fit the actual empire size, contact status, or military situation.
             - If duel contact is still missing and roadmapReality marks it urgent, give the next roadmap concrete near-term goals that force contact.

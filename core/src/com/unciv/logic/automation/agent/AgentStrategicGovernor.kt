@@ -9,7 +9,7 @@ object AgentStrategicGovernor {
         val gameContext = empireObservation.gameContext
         val primaryThreat = empireObservation.victoryThreats.firstOrNull()
         val roadmap = memory.strategicRoadmap.takeIf { it.doctrine.isNotBlank() }
-        val criticalAlerts = buildCriticalAlerts(observation, empireObservation, roadmap)
+        val attentionFacts = buildAttentionFacts(observation, empireObservation)
         val cityHighlights = selectCityHighlights(observation, gameContext)
         val unitHighlights = selectUnitHighlights(observation, gameContext, primaryThreat)
         val progressInMotion = buildProgressInMotion(observation, empireObservation, cityHighlights, unitHighlights)
@@ -53,7 +53,7 @@ object AgentStrategicGovernor {
                 watchOuts = (roadmap?.watchOuts ?: memory.strategicPosture.watchOuts).take(3),
             ),
             tacticalPressure = tacticalPressure,
-            criticalAlerts = criticalAlerts,
+            attentionFacts = attentionFacts,
             progressInMotion = progressInMotion,
             empireChoices = AgentPlannerEmpireChoicesObservation(
                 researchChoices = empireObservation.researchCandidates.take(if (empireObservation.currentResearch == null || empireObservation.freeTechs > 0) 3 else 2),
@@ -87,64 +87,78 @@ object AgentStrategicGovernor {
         return buildProgressInMotion(observation, empireObservation, cityHighlights, unitHighlights)
     }
 
-    private fun buildCriticalAlerts(
+    private fun buildAttentionFacts(
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
-        roadmap: AgentStrategicRoadmapMemory?,
     ): List<ObservationFact> {
-        val workerFacts = observation.priorityFacts.filter(::isWorkerFact)
-        val roadmapAlerts = roadmap?.let { buildRoadmapAlerts(it) }.orEmpty()
-        val pool = buildList {
-            addAll(roadmapAlerts)
-            addAll(
-                empireObservation.macroFacts.filterNot { fact ->
-                    (fact.category == "contact" && empireObservation.gameContext.contactComplete) ||
-                        (fact.category == "victory" &&
-                            fact.headline.startsWith("Current best victory path:", ignoreCase = true) &&
-                            roadmap?.winPath != null &&
-                            !fact.headline.contains(roadmap.winPath ?: "", ignoreCase = true))
-                }
-            )
-            if (workerFacts.size >= 3) {
-                add(
-                    ObservationFact(
-                        category = "tiles",
-                        severity = if (workerFacts.any { it.severity == "warning" }) "warning" else "info",
-                        headline = "${workerFacts.size} worker jobs are already in motion",
-                        detail = "Finish on-target jobs before switching; worker detail was compressed so broader strategy can dominate this turn.",
-                    )
-                )
+        val facts = linkedMapOf<String, ObservationFact>()
+        fun addFact(fact: ObservationFact) {
+            facts.putIfAbsent("${fact.category}|${fact.headline}", fact)
+        }
+
+        val threatenedCities = observation.cities
+            .filter { it.state.nearbyHostileUnits > 0 || it.state.nearbyHostileCities > 0 }
+            .sortedByDescending { it.state.nearbyHostileUnits * 10 + it.state.nearbyHostileCities * 15 + if (it.state.isCapital) 5 else 0 }
+        if (threatenedCities.isNotEmpty()) {
+            val citySummary = threatenedCities.take(3).joinToString(", ") { city ->
+                "${city.name} (${city.state.nearbyHostileUnits} units, ${city.state.nearbyHostileCities} cities)"
             }
-            addAll(observation.priorityFacts.filterNot(::isWorkerFact))
-            addAll(observation.opportunities.filterNot(::isWorkerFact))
-            if (workerFacts.size < 3) addAll(workerFacts)
-        }
-
-        return pool
-            .distinctBy { it.headline }
-            .sortedByDescending { alertScore(it, observation.turn, empireObservation.gameContext, empireObservation.victoryThreats.firstOrNull()) }
-            .take(6)
-    }
-
-    private fun buildRoadmapAlerts(roadmap: AgentStrategicRoadmapMemory): List<ObservationFact> {
-        val alerts = arrayListOf<ObservationFact>()
-        roadmap.winPath?.takeIf { it.isNotBlank() }?.let { winPath ->
-            alerts += ObservationFact(
-                category = "roadmap",
-                severity = "info",
-                headline = "Current roadmap aims for $winPath",
-                detail = roadmap.thesis ?: "Follow the current strategist roadmap unless the board creates an emergency.",
+            addFact(
+                ObservationFact(
+                    category = "city",
+                    severity = if (threatenedCities.any { it.state.isCapital }) "warning" else "info",
+                    headline = "${threatenedCities.size} cities have nearby hostiles",
+                    detail = citySummary,
+                )
             )
         }
-        roadmap.mustMaintain.firstOrNull()?.let { mustMaintain ->
-            alerts += ObservationFact(
-                category = "roadmap",
-                severity = "warning",
-                headline = "Roadmap non-negotiable",
-                detail = mustMaintain,
+
+        val citiesNeedingChoice = observation.cities.filter { it.project?.status == "needs_choice" || it.project == null }
+        if (citiesNeedingChoice.isNotEmpty()) {
+            addFact(
+                ObservationFact(
+                    category = "city",
+                    severity = "warning",
+                    headline = "${citiesNeedingChoice.size} cities need a project choice",
+                    detail = citiesNeedingChoice.take(3).joinToString(", ") { it.name },
+                )
             )
         }
-        return alerts
+
+        val finishingProjects = observation.cities
+            .filter { (it.project?.turnsLeft ?: Int.MAX_VALUE) <= 1 }
+        if (finishingProjects.isNotEmpty()) {
+            addFact(
+                ObservationFact(
+                    category = "city",
+                    severity = "info",
+                    headline = "${finishingProjects.size} city projects finish within 1 turn",
+                    detail = finishingProjects.take(3).joinToString(", ") { city ->
+                        "${city.name}: ${city.project?.name ?: "No project"}"
+                    },
+                )
+            )
+        }
+
+        val exposedFriendlyCivilians = observation.units.filter { unit ->
+            unit.role in setOf("worker", "settler", "great_person", "civilian") &&
+                (unit.nearbyHostileUnits > 0 || unit.nearbyHostileCities > 0)
+        }
+        if (exposedFriendlyCivilians.isNotEmpty()) {
+            addFact(
+                ObservationFact(
+                    category = "unit",
+                    severity = "warning",
+                    headline = "${exposedFriendlyCivilians.size} civilian units are exposed",
+                    detail = exposedFriendlyCivilians.take(3).joinToString(", ") { unit ->
+                        "${unit.name} #${unit.id} at (${unit.x}, ${unit.y})"
+                    },
+                )
+            )
+        }
+
+        empireObservation.stateFacts.forEach(::addFact)
+        return facts.values.toList()
     }
 
     private fun buildTacticalPressure(
@@ -169,12 +183,12 @@ object AgentStrategicGovernor {
             priorityThisTurn += "Use scout and warrior movement to force contact instead of preserving low-value progress."
         }
 
-        if (empireObservation.macroFacts.any { it.category == "war" && it.headline.contains("military floor", ignoreCase = true) }) {
+        if (isBelowReferenceMilitaryFloor(observation, empireObservation.gameContext)) {
             mustActReasons += "The empire is below its military floor."
             priorityThisTurn += "Use unit production, purchases, or force-preserving moves to raise military strength."
         }
 
-        if (empireObservation.macroFacts.any { it.category == "economy" && it.headline.contains("gold reserve", ignoreCase = true) }) {
+        if (hasHighGoldReserve(empireObservation)) {
             mustActReasons += "Large gold reserves should be converted into tempo now."
             priorityThisTurn += "Spend gold on meaningful city tempo, units, or other immediate gains if those options are surfaced."
         }
@@ -353,6 +367,27 @@ object AgentStrategicGovernor {
         if (fact.headline.contains("military floor", ignoreCase = true)) score += 20
         if (fact.headline.contains("main rival", ignoreCase = true)) score += 25
         return score
+    }
+
+    private fun isBelowReferenceMilitaryFloor(
+        observation: AgentObservation,
+        gameContext: AgentPublicGameContextObservation,
+    ): Boolean {
+        val floor = when {
+            gameContext.duelLike && observation.turn < 35 -> 2
+            gameContext.duelLike && observation.turn < 70 -> 4
+            gameContext.duelLike && observation.turn < 120 -> 6
+            gameContext.duelLike -> 8
+            observation.turn < 60 -> 3
+            observation.turn < 120 -> 5
+            else -> 7
+        }
+        return observation.empireSummary.militaryUnitCount < floor
+    }
+
+    private fun hasHighGoldReserve(empireObservation: AgentEmpireObservation): Boolean {
+        return empireObservation.gold >= 1000 &&
+            empireObservation.macroCandidates.any { it.candidateId == "macro:gold:auto" }
     }
 
     private fun cityScore(city: AgentCityObservation): Int {

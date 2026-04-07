@@ -474,9 +474,9 @@ function TurnDetail({
   const parsedPlan = asRecord(turn.parsedPlan);
   const empireSummary = asRecord(observation?.empireSummary);
   const doctrine = asRecord(plannerBrief?.doctrine);
-  const criticalAlerts = objectArray(plannerBrief?.criticalAlerts ?? observation?.priorityFacts);
+  const attentionFacts = objectArray(plannerBrief?.attentionFacts ?? observation?.priorityFacts);
   const progressInMotion = objectArray(plannerBrief?.progressInMotion);
-  const strategistMacroFacts = objectArray(strategistBrief?.macroFacts);
+  const strategistStateFacts = objectArray(strategistBrief?.stateFacts);
   const strategistRivalThreats = objectArray(strategistBrief?.rivalThreats ?? empireObservation?.victoryThreats);
   const threatHighlights = objectArray(plannerBrief?.threatHighlights ?? observation?.visibleThreatsAndTargets);
   const opportunityHighlights = objectArray(plannerBrief?.opportunityHighlights ?? observation?.opportunities);
@@ -643,7 +643,7 @@ function TurnDetail({
           title="Strategist inputs"
           brief={strategistBrief}
           threats={strategistRivalThreats}
-          macroFacts={strategistMacroFacts}
+          stateFacts={strategistStateFacts}
         />
 
         <Card title="Empire picture" subtitle="High-level state the strategist and tactical planner should keep in view.">
@@ -663,7 +663,7 @@ function TurnDetail({
       </div>
 
       <div className="panel-grid">
-        <AlertSection title="Critical alerts" facts={criticalAlerts} />
+        <AlertSection title="Attention facts" facts={attentionFacts} />
         <ProgressSection title="Progress in motion" items={progressInMotion} />
       </div>
 
@@ -813,7 +813,7 @@ function AlertSection({ title, facts }: { title: string; facts: Record<string, u
           ))}
         </div>
       ) : (
-        <p className="muted-text">No critical alerts were captured for this turn.</p>
+        <p className="muted-text">No attention facts were captured for this turn.</p>
       )}
     </Card>
   );
@@ -860,12 +860,12 @@ function StrategistContextSection({
   title,
   brief,
   threats,
-  macroFacts,
+  stateFacts,
 }: {
   title: string;
   brief: Record<string, unknown> | null;
   threats: Record<string, unknown>[];
-  macroFacts: Record<string, unknown>[];
+  stateFacts: Record<string, unknown>[];
 }) {
   const gameContext = asRecord(brief?.gameContext);
   const empireSummary = asRecord(brief?.empireSummary);
@@ -874,7 +874,7 @@ function StrategistContextSection({
   const enabledVictories = stringList(brief?.enabledVictoryTypes);
 
   return (
-    <Card title={title} subtitle="Setup-aware strategist facts before the roadmap was chosen or refreshed.">
+    <Card title={title} subtitle="Neutral setup and state checks before the roadmap was chosen or refreshed.">
       {brief ? (
         <>
           <div className="summary-grid compact">
@@ -890,7 +890,7 @@ function StrategistContextSection({
           <TagList values={enabledVictories} tone="accent" />
 
           <ThreatHighlightsSection title="Rival threats" threats={threats} embedded />
-          <ObservationFactSection title="Strategic facts" facts={macroFacts.slice(0, 6)} embedded emptyText="No strategist facts were recorded." />
+          <ObservationFactSection title="State facts" facts={stateFacts} embedded emptyText="No strategist state facts were recorded." />
           <ProgressSection title="Strategist progress cues" items={progressInMotion.slice(0, 4)} embedded />
 
           {recentFailures.length ? (

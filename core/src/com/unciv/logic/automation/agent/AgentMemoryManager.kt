@@ -426,7 +426,7 @@ object AgentMemoryManager {
             val prefix = if (threat.threatLevel == "critical") "Urgent" else "Watch"
             focus += "$prefix ${threat.civName} ${threat.likelyVictoryType.lowercase()} push"
         }
-        empireObservation.macroFacts
+        empireObservation.stateFacts
             .filter { it.severity in setOf("warning", "critical") }
             .take(2)
             .forEach { focus += it.headline }
@@ -541,10 +541,10 @@ object AgentMemoryManager {
         if (observation.empireSummary.cityCount < desiredCityFloor) {
             commitments += "Grow toward at least $desiredCityFloor productive cities if land is still available."
         }
-        if (empireObservation.macroFacts.any { it.category == "war" && it.headline.contains("Military floor", ignoreCase = true) }) {
+        if (isBelowReferenceMilitaryFloor(observation, empireObservation.gameContext)) {
             commitments += "Raise the military floor before more worker polish."
         }
-        if (empireObservation.macroFacts.any { it.category == "economy" && it.headline.contains("gold reserve", ignoreCase = true) }) {
+        if (hasHighGoldReserve(empireObservation)) {
             commitments += "Convert spare gold into city tempo, upgrades, or other immediate gains."
         }
         if (gameContext.contactComplete) {
@@ -584,6 +584,27 @@ object AgentMemoryManager {
             gameContext.expansionWindow == "medium" -> 5
             else -> 6
         }
+    }
+
+    private fun isBelowReferenceMilitaryFloor(
+        observation: AgentObservation,
+        gameContext: AgentPublicGameContextObservation,
+    ): Boolean {
+        val floor = when {
+            gameContext.duelLike && observation.turn < 35 -> 2
+            gameContext.duelLike && observation.turn < 70 -> 4
+            gameContext.duelLike && observation.turn < 120 -> 6
+            gameContext.duelLike -> 8
+            observation.turn < 60 -> 3
+            observation.turn < 120 -> 5
+            else -> 7
+        }
+        return observation.empireSummary.militaryUnitCount < floor
+    }
+
+    private fun hasHighGoldReserve(empireObservation: AgentEmpireObservation): Boolean {
+        return empireObservation.gold >= 1000 &&
+            empireObservation.macroCandidates.any { it.candidateId == "macro:gold:auto" }
     }
 
     private fun victoryMode(victoryGoal: String?, victoryFocus: String?): String? {

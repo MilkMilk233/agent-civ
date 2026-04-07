@@ -65,7 +65,7 @@ object AgentPromptBuilder {
             - Planner Brief JSON already includes the current roadmap doctrine, phase, thesis, commitments, and watchOuts. Treat that roadmap as the long and mid-term source of truth unless the board creates a real emergency.
             - Use only the surfaced legal candidate actions and exact action types from the brief. Do not invent unsupported commands or mod mechanics.
             - Use Memory JSON for continuity when the current brief still supports it: city intents, unit assignments, recent failures, and roadmap consistency.
-            - Plan like a strong tactical player serving the roadmap. Let criticalAlerts, progressInMotion, threatHighlights, and the current roadmap commitments drive the turn.
+            - Plan like a strong tactical player serving the roadmap. Use attentionFacts as simple reminders of what may need attention this turn, then do your own prioritization from the full brief.
             - Planner Brief JSON includes tacticalPressure. Treat tacticalPressure.priorityThisTurn and tacticalPressure.mustActReasons as near-term non-negotiables.
             - The planner brief already compressed noise. Do not let routine worker upkeep crowd out rival threats, military floor problems, gold overflow, or important city tempo choices.
             - Use select_empire_option only with candidateId values from empireChoices. Never invent research, policy, diplomacy, gold, or bombardment commands outside those candidates.
@@ -75,6 +75,8 @@ object AgentPromptBuilder {
             - If a city already has meaningful project progress, especially on a nearly complete or strategically correct build, prefer finishing it over switching.
             - In peaceful or duel setups, city tempo usually matters more than passive military posture or focus micro.
             - Use select_unit_option only with candidateId values from unitHighlights.unitOptionCandidates.
+            - Treat select_unit_option as a complete candidate-based plan for that unit this turn. Do not issue more than one select_unit_option for the same unit.
+            - Do not mix select_unit_option with unit_move or unit_action for the same unit in the same plan.
             - If a unit includes legalActionCandidates, copy the actionType exactly. If a legalActionCandidate includes moveDestinationX/moveDestinationY, emit unit_move first and then unit_action.
             - If a unit has assignmentProgress, prefer finishing the current assignment over chasing a new local opportunity unless there is a clearly stronger strategic reason to switch.
             - For workers, prefer grounded worker candidateIds over raw unit_action, never invent worker action names, and do not default to Sleep, Skip, or Automate when a real worker move or improvement option exists.
@@ -83,7 +85,7 @@ object AgentPromptBuilder {
             - Avoid repeating actions that previously produced no state change unless the current brief shows a new reason they matter now.
             - If tacticalPressure.noOpPolicy is "forbidden", do not return an empty actions list just to preserve progress. You should act unless every surfaced legal action would clearly be worse than doing nothing.
             - If tacticalPressure.noOpPolicy is "discouraged", only return an empty actions list when the surfaced actions are genuinely low-value or disruptive relative to the roadmap.
-            - When roadmap commitments conflict with preserve-progress instincts, follow the higher-urgency tacticalPressure and criticalAlerts.
+            - When roadmap commitments conflict with preserve-progress instincts, follow the higher-urgency tacticalPressure and the immediate board state surfaced in attentionFacts and threatHighlights.
             - Use strategistRefreshRequest only for a real strategic emergency: the roadmap assumptions are broken by war, a critical rival surge, a collapse in the current plan, or another major shift that should trigger an immediate strategist review.
             - Use only unit IDs, cities, action types, tiles, and constructions present in Planner Brief JSON.
             - Do not invent entities.

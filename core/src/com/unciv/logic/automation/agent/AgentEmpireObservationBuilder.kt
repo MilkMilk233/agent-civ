@@ -86,16 +86,13 @@ object AgentEmpireObservationBuilder {
             freePolicies = civInfo.policies.freePolicies,
             gold = civInfo.gold,
             happiness = civInfo.getHappiness(),
-            macroFacts = buildMacroFacts(
-                civInfo,
-                roadmap,
-                gameContext,
-                victoryPlan,
-                victoryThreats,
-                researchCandidates,
-                policyCandidates,
-                macroCandidates,
-                diplomacyCandidates,
+            stateFacts = buildStateFacts(
+                civInfo = civInfo,
+                gameContext = gameContext,
+                researchCandidates = researchCandidates,
+                policyCandidates = policyCandidates,
+                macroCandidates = macroCandidates,
+                diplomacyCandidates = diplomacyCandidates,
             ),
             researchCandidates = researchCandidates.map { it.observation },
             policyCandidates = policyCandidates.map { it.observation },
@@ -609,106 +606,59 @@ object AgentEmpireObservationBuilder {
             .toList()
     }
 
-    private fun buildMacroFacts(
+    private fun buildStateFacts(
         civInfo: Civilization,
-        roadmap: AgentStrategicRoadmapMemory?,
         gameContext: AgentPublicGameContextObservation,
-        victoryPlan: VictoryPlanSummary?,
-        victoryThreats: List<AgentVictoryThreatObservation>,
         researchCandidates: List<AgentEmpireRuntimeCandidate>,
         policyCandidates: List<AgentEmpireRuntimeCandidate>,
         macroCandidates: List<AgentEmpireRuntimeCandidate>,
         diplomacyCandidates: List<AgentEmpireRuntimeCandidate> = emptyList(),
     ): List<ObservationFact> {
         val facts = mutableListOf<ObservationFact>()
-        if (roadmap != null && roadmap.doctrine.isNotBlank()) {
-            facts += ObservationFact(
-                category = "roadmap",
-                severity = "info",
-                headline = "Current strategist roadmap: ${roadmap.winPath ?: roadmap.doctrine}",
-                detail = roadmap.thesis ?: "Follow the current roadmap unless the board creates an emergency that justifies a strategic refresh.",
-            )
-        }
-        victoryThreats.firstOrNull()?.let { threat ->
-            facts += ObservationFact(
-                category = "victory",
-                severity = threat.threatLevel,
-                headline = "${threat.civName} is the main rival",
-                detail = threat.detail,
-            )
-        }
         val knownMajorCivs = civInfo.getKnownCivs().count { it.isMajorCiv() && !it.isDefeated() }
-        if (gameContext.contactComplete && gameContext.duelLike) {
+        if (!gameContext.contactComplete && (gameContext.duelLike || civInfo.gameInfo.turns >= 80)) {
             facts += ObservationFact(
                 category = "contact",
-                severity = "info",
-                headline = "Full rival contact is already established",
-                detail = "This duel map has no unseen major civs left. Scouting now matters more for map control and positioning than for discovery.",
-            )
-        } else if (civInfo.gameInfo.turns >= 80 && knownMajorCivs <= 1) {
-            facts += ObservationFact(
-                category = "contact",
-                severity = "warning",
-                headline = "World contact is still very limited",
-                detail = "You know only $knownMajorCivs major civ${if (knownMajorCivs == 1) "" else "s"} this late. Meeting more civs matters for trade, diplomacy, and threat awareness.",
+                severity = if (gameContext.duelLike && civInfo.gameInfo.turns >= 20) "warning" else "info",
+                headline = "Known major rivals: $knownMajorCivs/${(gameContext.majorCivCount - 1).coerceAtLeast(0)}",
+                detail = "Contact is still incomplete on turn ${civInfo.gameInfo.turns}.",
             )
         }
-        if (gameContext.duelLike) {
-            facts += ObservationFact(
-                category = "setup",
-                severity = "info",
-                headline = "This match is a duel-style setup",
-                detail = "${gameContext.mapSize} ${gameContext.mapType} with ${gameContext.cityStateCount} city-states. Long-horizon tempo, expansion timing, and direct rival pressure matter more than broad diplomacy.",
-            )
-        }
-        if (!civInfo.isAtWar() && civInfo.gameInfo.turns >= 100 && civInfo.cities.size <= 3) {
-            facts += ObservationFact(
-                category = "expansion",
-                severity = "warning",
-                headline = "Empire is small for a peaceful late-game race",
-                detail = "Only ${civInfo.cities.size} cities are supporting the current victory race. Consider faster growth, stronger investment, or more expansion.",
-            )
-        }
-        val force = civInfo.getStatForRanking(RankingType.Force)
-        if (!civInfo.isAtWar() && civInfo.cities.size >= 3 && force < max(60, civInfo.cities.size * 35)) {
+        val militaryUnits = civInfo.units.getCivUnits().count { it.isMilitary() }
+        val referenceMilitaryFloor = referenceMilitaryFloor(gameContext, civInfo.gameInfo.turns)
+        if (militaryUnits < referenceMilitaryFloor) {
             facts += ObservationFact(
                 category = "war",
                 severity = "warning",
-                headline = "Military floor looks too low",
-                detail = "A ${civInfo.cities.size}-city empire with force $force is vulnerable and may fail to contest rival victory plans.",
+                headline = "Military units: $militaryUnits / reference floor $referenceMilitaryFloor",
+                detail = "Reference floor is a simple setup check for turn ${civInfo.gameInfo.turns}.",
             )
         }
-        if (civInfo.gold >= 1000) {
+        val goldSpendCandidates = macroCandidates.count { candidate ->
+            candidate.observation.candidateId == "macro:gold:auto"
+        }
+        if (civInfo.gold >= 300 && goldSpendCandidates > 0) {
             facts += ObservationFact(
                 category = "economy",
-                severity = "warning",
-                headline = "Large gold reserve should be converted into tempo",
-                detail = "You are floating ${civInfo.gold} gold. Prefer meaningful city purchases, upgrades, or other tempo gains over hoarding.",
+                severity = if (civInfo.gold >= 1000) "warning" else "info",
+                headline = "Gold reserve: ${civInfo.gold}",
+                detail = "$goldSpendCandidates spend candidates are available this turn.",
             )
         }
         if (researchCandidates.isNotEmpty()) {
             facts += ObservationFact(
                 category = "research",
                 severity = if (civInfo.tech.currentTechnologyName() == null) "warning" else "info",
-                headline = if (civInfo.tech.freeTechs > 0) "A free technology is available" else "Research can be chosen",
-                detail = researchCandidates.first().observation.detail,
+                headline = if (civInfo.tech.freeTechs > 0) "Free technology available" else "Research choice pending",
+                detail = "${researchCandidates.size} research candidates are available.",
             )
         }
         if (policyCandidates.isNotEmpty()) {
             facts += ObservationFact(
                 category = "policy",
                 severity = "info",
-                headline = "A policy can be adopted",
-                detail = policyCandidates.first().observation.title,
-            )
-        }
-        val goldCandidate = macroCandidates.firstOrNull { it.observation.candidateId == "macro:gold:auto" }
-        if (goldCandidate != null) {
-            facts += ObservationFact(
-                category = "economy",
-                severity = if (civInfo.gold >= 300) "info" else "warning",
-                headline = "Gold can be spent this turn",
-                detail = goldCandidate.observation.detail,
+                headline = "Policy choice pending",
+                detail = "${policyCandidates.size} policy candidates are available.",
             )
         }
         val bombardCount = macroCandidates.count { it.observation.candidateId.startsWith("macro:bombard:") }
@@ -716,19 +666,31 @@ object AgentEmpireObservationBuilder {
             facts += ObservationFact(
                 category = "war",
                 severity = if (civInfo.isAtWar()) "warning" else "info",
-                headline = "Cities can bombard visible enemies",
-                detail = "$bombardCount bombard action candidates are available before unit planning.",
+                headline = "City bombard actions available: $bombardCount",
+                detail = "Bombard actions can be taken before unit planning.",
             )
         }
         if (diplomacyCandidates.isNotEmpty()) {
             facts += ObservationFact(
                 category = "diplomacy",
                 severity = "info",
-                headline = "External diplomatic actions are available",
+                headline = "Diplomatic actions available: ${diplomacyCandidates.size}",
                 detail = "${diplomacyCandidates.size} diplomacy or trade candidates can be chosen this turn.",
             )
         }
-        return facts.take(8)
+        return facts
+    }
+
+    private fun referenceMilitaryFloor(gameContext: AgentPublicGameContextObservation, turn: Int): Int {
+        return when {
+            gameContext.duelLike && turn < 35 -> 2
+            gameContext.duelLike && turn < 70 -> 4
+            gameContext.duelLike && turn < 120 -> 6
+            gameContext.duelLike -> 8
+            turn < 60 -> 3
+            turn < 120 -> 5
+            else -> 7
+        }
     }
 
     private fun goldFingerprint(civInfo: Civilization): String {

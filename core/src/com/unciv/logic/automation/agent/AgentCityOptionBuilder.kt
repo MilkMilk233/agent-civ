@@ -177,7 +177,7 @@ object AgentCityOptionBuilder {
     private fun buildTilePurchaseCandidates(city: City): List<AgentCityRuntimeCandidate> {
         return city.expansion.getChoosableTiles()
             .asSequence()
-            .filter { city.expansion.canBuyTile(it) }
+            .filter { city.expansion.canBuyTile(it) && canAffordTilePurchase(city, it) }
             .map { tile -> TilePurchaseCandidate(tile, scoreTileForPurchase(city, tile), describeTileForPurchase(city, tile)) }
             .filter { it.score > 0 }
             .sortedWith(compareByDescending<TilePurchaseCandidate> { it.score }.thenBy { it.tile.position.toString() })
@@ -202,6 +202,9 @@ object AgentCityOptionBuilder {
                         val liveTile = currentCiv.gameInfo.tileMap[tile.position]
                         if (!liveCity.expansion.canBuyTile(liveTile)) {
                             return@AgentCityRuntimeCandidate "City option rejected: tile can no longer be bought"
+                        }
+                        if (!canAffordTilePurchase(liveCity, liveTile)) {
+                            return@AgentCityRuntimeCandidate "City option rejected: not enough gold to buy tile"
                         }
                         null
                     },
@@ -351,6 +354,10 @@ object AgentCityOptionBuilder {
         if (tile.isAdjacentToRiver()) summary += "River"
         if (summary.isEmpty()) summary += "Workable tile upgrade"
         return summary.joinToString(", ")
+    }
+
+    private fun canAffordTilePurchase(city: City, tile: Tile): Boolean {
+        return city.civ.gameInfo.gameParameters.godMode || city.civ.gold >= city.expansion.getGoldCostOfTile(tile)
     }
 
     private fun yieldHintsForTile(city: City, tile: Tile): List<String> {

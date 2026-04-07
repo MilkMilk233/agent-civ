@@ -52,9 +52,7 @@ object AgentStrategistGovernor {
             currentRoadmap = memory.strategicRoadmap.takeIf { it.doctrine.isNotBlank() },
             roadmapReality = roadmapReality,
             rivalThreats = empireObservation.victoryThreats.take(2),
-            macroFacts = empireObservation.macroFacts
-                .filterNot { it.category == "victory" && it.headline.startsWith("Current best victory path:", ignoreCase = true) }
-                .take(6),
+            stateFacts = empireObservation.stateFacts,
             progressInMotion = progressInMotion,
             citySnapshots = citySnapshots,
             unitSnapshots = unitSnapshots,
@@ -131,8 +129,10 @@ object AgentStrategistGovernor {
             if (observation.empireSummary.happiness <= 1) {
                 add("Happiness is low enough to constrain further greed.")
             }
-            if (empireObservation.macroFacts.any { it.category == "economy" && it.headline.contains("gold reserve", ignoreCase = true) }) {
-                add("Large gold reserves still need to be converted into tempo.")
+            if (empireObservation.gold >= 1000 &&
+                empireObservation.macroCandidates.any { it.candidateId == "macro:gold:auto" }
+            ) {
+                add("Gold reserve is high relative to currently surfaced spend options.")
             }
         }.take(4)
 

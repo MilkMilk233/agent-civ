@@ -7,6 +7,11 @@ import com.unciv.models.UnitActionType
 import com.unciv.ui.screens.worldscreen.unit.actions.UnitActions
 
 class AgentActionExecutor {
+    private enum class UnitCommandMode {
+        CandidateOption,
+        DirectControl,
+    }
+
     enum class ActionStatus {
         Executed,
         Rejected,
@@ -93,6 +98,7 @@ class AgentActionExecutor {
         val usedEmpireCandidateIds = hashSetOf<String>()
         val usedCityCandidateIds = hashSetOf<String>()
         val usedUnitCandidateIds = hashSetOf<String>()
+        val unitCommandModes = hashMapOf<Int, UnitCommandMode>()
 
         for (action in sortedActions) {
             when (action) {
@@ -252,6 +258,30 @@ class AgentActionExecutor {
                         continue
                     }
 
+                    val unitId = parseUnitIdFromCandidateId(action.candidateId)
+                    if (unitId == null) {
+                        rejected++
+                        outcomes += ActionOutcome(
+                            commandType = "select_unit_option",
+                            status = ActionStatus.Rejected,
+                            reason = "Unit option rejected: malformed candidate id",
+                            candidateId = action.candidateId,
+                        )
+                        continue
+                    }
+                    val commandConflict = registerUnitCommand(unitCommandModes, unitId, UnitCommandMode.CandidateOption)
+                    if (commandConflict != null) {
+                        rejected++
+                        outcomes += ActionOutcome(
+                            commandType = "select_unit_option",
+                            status = ActionStatus.Rejected,
+                            reason = commandConflict,
+                            candidateId = action.candidateId,
+                            unitId = unitId,
+                        )
+                        continue
+                    }
+
                     val context = AgentUnitOptionBuilder.build(civInfo, civInfo.agentMemory)
                     val candidate = context.candidates[action.candidateId]
                     if (candidate == null) {
@@ -261,6 +291,7 @@ class AgentActionExecutor {
                             status = ActionStatus.Rejected,
                             reason = "Unit option rejected: candidate missing",
                             candidateId = action.candidateId,
+                            unitId = unitId,
                         )
                         continue
                     }
@@ -273,6 +304,7 @@ class AgentActionExecutor {
                             status = ActionStatus.Rejected,
                             reason = invalidReason,
                             candidateId = action.candidateId,
+                            unitId = unitId,
                         )
                         continue
                     }
@@ -300,6 +332,7 @@ class AgentActionExecutor {
                             status = ActionStatus.Executed,
                             reason = candidate.successMessage,
                             candidateId = action.candidateId,
+                            unitId = unitId,
                         )
                     } else {
                         rejected++
@@ -308,11 +341,23 @@ class AgentActionExecutor {
                             status = ActionStatus.Rejected,
                             reason = "Unit option rejected: execution produced no state change",
                             candidateId = action.candidateId,
+                            unitId = unitId,
                         )
                     }
                 }
 
                 is AgentActionCommand.UnitMove -> {
+                    val commandConflict = registerUnitCommand(unitCommandModes, action.unitId, UnitCommandMode.DirectControl)
+                    if (commandConflict != null) {
+                        rejected++
+                        outcomes += ActionOutcome(
+                            commandType = "unit_move",
+                            status = ActionStatus.Rejected,
+                            reason = commandConflict,
+                            unitId = action.unitId,
+                        )
+                        continue
+                    }
                     val unit = civInfo.units.getCivUnits().firstOrNull { it.id == action.unitId }
                     val destinationCoord = HexCoord(action.destinationX, action.destinationY)
                     val destination = if (destinationCoord in civInfo.gameInfo.tileMap) civInfo.gameInfo.tileMap[destinationCoord] else null
@@ -356,6 +401,18 @@ class AgentActionExecutor {
                 }
 
                 is AgentActionCommand.UnitAction -> {
+                    val commandConflict = registerUnitCommand(unitCommandModes, action.unitId, UnitCommandMode.DirectControl)
+                    if (commandConflict != null) {
+                        rejected++
+                        outcomes += ActionOutcome(
+                            commandType = "unit_action",
+                            status = ActionStatus.Rejected,
+                            reason = commandConflict,
+                            unitId = action.unitId,
+                            actionType = action.actionType,
+                        )
+                        continue
+                    }
                     val unit = civInfo.units.getCivUnits().firstOrNull { it.id == action.unitId }
                     val actionType = runCatching { enumValueOf<UnitActionType>(action.actionType) }.getOrNull()
                     if (unit == null || actionType == null) {
@@ -422,5 +479,28 @@ class AgentActionExecutor {
         }
 
         return ExecutionReport(executedActions = executed, rejectedActions = rejected, outcomes = outcomes)
+    }
+
+    private fun registerUnitCommand(
+        unitCommandModes: MutableMap<Int, UnitCommandMode>,
+        unitId: Int,
+        nextMode: UnitCommandMode,
+    ): String? {
+        val existingMode = unitCommandModes[unitId]
+        if (existingMode == null) {
+            unitCommandModes[unitId] = nextMode
+            return null
+        }
+        return when {
+            existingMode == UnitCommandMode.CandidateOption && nextMode == UnitCommandMode.CandidateOption ->
+                "Unit option rejected: only one candidate-selected action is allowed per unit per turn"
+            existingMode == UnitCommandMode.CandidateOption || nextMode == UnitCommandMode.CandidateOption ->
+                "Unit action rejected: cannot mix select_unit_option with direct unit commands for the same unit in one turn"
+            else -> null
+        }
+    }
+
+    private fun parseUnitIdFromCandidateId(candidateId: String): Int? {
+        return candidateId.substringAfter(':', "").substringBefore(':').toIntOrNull()
     }
 }

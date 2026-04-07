@@ -198,3 +198,5 @@ detekt/reports.html
 /.claude/
 
 .env
+
+.codex
