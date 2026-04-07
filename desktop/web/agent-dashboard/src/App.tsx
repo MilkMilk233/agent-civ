@@ -480,8 +480,9 @@ function TurnDetail({
   const strategistRivalThreats = objectArray(strategistBrief?.rivalThreats ?? empireObservation?.victoryThreats);
   const threatHighlights = objectArray(plannerBrief?.threatHighlights ?? observation?.visibleThreatsAndTargets);
   const opportunityHighlights = objectArray(plannerBrief?.opportunityHighlights ?? observation?.opportunities);
-  const cityHighlights = objectArray(plannerBrief?.cityHighlights ?? observation?.citiesNeedingAttention);
-  const unitHighlights = objectArray(plannerBrief?.unitHighlights ?? observation?.actionableUnits);
+  const cityHighlights = objectArray(plannerBrief?.cityHighlights ?? observation?.cities);
+  const unitHighlights = objectArray(plannerBrief?.unitHighlights ?? observation?.units);
+  const perceptionSummary = asRecord(observation?.perceptionSummary);
   const empireChoices = asRecord(plannerBrief?.empireChoices);
   const suppressedContext = stringList(plannerBrief?.suppressedContext);
   const plannedActions = objectArray(parsedPlan?.actions);
@@ -685,8 +686,16 @@ function TurnDetail({
               <SummaryStat label="Units" value={formatNumber(numberValue(empireSummary?.unitCount))} />
               <SummaryStat label="Known civs" value={formatNumber(numberValue(empireSummary?.knownCivs))} />
               <SummaryStat label="Threats surfaced" value={formatNumber(arrayLength(observation.visibleThreatsAndTargets))} />
-              <SummaryStat label="City highlights" value={formatNumber(arrayLength(observation.citiesNeedingAttention))} />
-              <SummaryStat label="Unit highlights" value={formatNumber(arrayLength(observation.actionableUnits))} />
+              <SummaryStat
+                label="Expanded cities"
+                value={formatNumber(numberValue(perceptionSummary?.expandedCities))}
+                note={`${formatNumber(numberValue(perceptionSummary?.totalCities))} total`}
+              />
+              <SummaryStat
+                label="Expanded units"
+                value={formatNumber(numberValue(perceptionSummary?.expandedUnits))}
+                note={`${formatNumber(numberValue(perceptionSummary?.totalUnits))} total`}
+              />
             </div>
           ) : (
             <p className="muted-text">No tactical observation captured.</p>
@@ -1049,48 +1058,74 @@ function CityHighlightsSection({ title, cities }: { title: string; cities: Recor
       {cities.length ? (
         <div className="structured-list">
           {cities.map((city, index) => {
-            const progress = asRecord(city.constructionProgress);
-            const topChoices = stringList(city.topConstructionChoices);
-            const optionCandidates = objectArray(city.cityOptionCandidates).map((candidate) => stringValue(candidate.title)).filter(Boolean);
-            const reasons = [...stringList(city.reasons), ...stringList(city.localFacts)].slice(0, 6);
+            const state = asRecord(city.state);
+            const project = asRecord(city.project);
+            const actions = asRecord(city.actions);
+            const signals = stringList(city.signals);
+            const projectChoices = objectArray(actions?.chooseProject).map(formatCityActionCandidateLabel).filter(Boolean);
+            const purchaseChoices = objectArray(actions?.purchase).map(formatCityActionCandidateLabel).filter(Boolean);
+            const tileChoices = objectArray(actions?.buyTile).map(formatCityActionCandidateLabel).filter(Boolean);
+            const focusChoices = objectArray(actions?.focus).map(formatCityActionCandidateLabel).filter(Boolean);
+            const growthChoices = objectArray(actions?.growthMode).map(formatCityActionCandidateLabel).filter(Boolean);
 
             return (
               <article key={`${stringValue(city.name)}-${index}`} className="structured-item">
                 <div className="structured-item-header">
                   <strong>{stringValue(city.name) || "Unnamed city"}</strong>
                   <div className="tag-list compact">
-                    <span className="tag neutral">Pop {formatNumber(numberValue(city.population))}</span>
-                    <span className="tag neutral">{stringValue(city.currentConstruction) || "No build"}</span>
+                    <span className="tag neutral">Pop {formatNumber(numberValue(state?.population))}</span>
+                    <span className="tag neutral">{stringValue(project?.name) || "Needs project"}</span>
                   </div>
                 </div>
 
                 <div className="mini-metric-grid">
-                  <MiniMetric label="Food" value={formatNumber(numberValue(city.foodPerTurn))} />
-                  <MiniMetric label="Prod" value={formatNumber(numberValue(city.productionPerTurn))} />
-                  <MiniMetric label="Growth" value={nullableNumberText(city.turnsToGrowth)} />
-                  <MiniMetric label="Strength" value={formatNumber(numberValue(city.cityStrength))} />
+                  <MiniMetric label="Food" value={formatNumber(numberValue(state?.foodPerTurn))} />
+                  <MiniMetric label="Prod" value={formatNumber(numberValue(state?.productionPerTurn))} />
+                  <MiniMetric label="Growth" value={nullableNumberText(state?.turnsToGrowth)} />
+                  <MiniMetric label="Strength" value={formatNumber(numberValue(state?.cityStrength))} />
                 </div>
 
-                {progress ? <p className="card-paragraph">{stringValue(progress.progressNote)}</p> : null}
+                {project ? <p className="card-paragraph">{stringValue(project.note)}</p> : null}
 
-                {reasons.length ? (
+                {signals.length ? (
                   <>
-                    <SectionLabel text="Why it matters" />
-                    <TagList values={reasons} />
+                    <SectionLabel text="Signals" />
+                    <TagList values={signals} />
                   </>
                 ) : null}
 
-                {topChoices.length ? (
+                {projectChoices.length ? (
                   <>
-                    <SectionLabel text="Top build choices" />
-                    <TagList values={topChoices.slice(0, 4)} tone="accent" />
+                    <SectionLabel text="Choose project" />
+                    <TagList values={projectChoices.slice(0, 4)} tone="accent" />
                   </>
                 ) : null}
 
-                {optionCandidates.length ? (
+                {purchaseChoices.length ? (
                   <>
-                    <SectionLabel text="Immediate city options" />
-                    <TagList values={optionCandidates.slice(0, 4)} />
+                    <SectionLabel text="Purchase" />
+                    <TagList values={purchaseChoices.slice(0, 3)} />
+                  </>
+                ) : null}
+
+                {tileChoices.length ? (
+                  <>
+                    <SectionLabel text="Buy tile" />
+                    <TagList values={tileChoices.slice(0, 3)} />
+                  </>
+                ) : null}
+
+                {focusChoices.length ? (
+                  <>
+                    <SectionLabel text="Focus" />
+                    <TagList values={focusChoices.slice(0, 2)} />
+                  </>
+                ) : null}
+
+                {growthChoices.length ? (
+                  <>
+                    <SectionLabel text="Growth mode" />
+                    <TagList values={growthChoices.slice(0, 2)} />
                   </>
                 ) : null}
               </article>
@@ -1547,6 +1582,16 @@ function summarizeUnknown(value: unknown): string {
   return "—";
 }
 
+function formatCityActionCandidateLabel(candidate: Record<string, unknown>): string {
+  const title = stringValue(candidate.title) || stringValue(candidate.candidateId) || "Unnamed action";
+  const estimatedTurns = numberValue(candidate.estimatedTurns);
+  const goldCost = numberValue(candidate.goldCost);
+  const parts = [title];
+  if (estimatedTurns !== undefined) parts.push(`${formatNumber(estimatedTurns)}t`);
+  if (goldCost !== undefined) parts.push(`${formatNumber(goldCost)}g`);
+  return parts.join(" · ");
+}
+
 function describeAction(action: Record<string, unknown>): string {
   switch (stringValue(action.type)) {
     case "select_empire_option":
@@ -1559,8 +1604,6 @@ function describeAction(action: Record<string, unknown>): string {
       return `Move unit ${formatNumber(numberValue(action.unitId))} to (${formatNumber(numberValue(action.destinationX))}, ${formatNumber(numberValue(action.destinationY))})`;
     case "unit_action":
       return `Use ${stringValue(action.actionType)} with unit ${formatNumber(numberValue(action.unitId))}`;
-    case "city_choose_construction":
-      return `Choose ${stringValue(action.constructionName)} in city (${formatNumber(numberValue(action.cityX))}, ${formatNumber(numberValue(action.cityY))})`;
     case "end_turn":
       return "End the turn";
     default:
@@ -1578,8 +1621,6 @@ function describeActionDetail(action: Record<string, unknown>): string {
       return "Pure movement action selected for this unit.";
     case "unit_action":
       return "Direct unit command selected from current legal actions.";
-    case "city_choose_construction":
-      return "City production was changed explicitly this turn.";
     case "end_turn":
       return "Planner decided the turn could safely end after higher-priority actions.";
     default:

@@ -74,6 +74,10 @@ class CityConstructions : IsPartOfGameInfoSerialization {
     fun setCurrentConstruction(value: String) {
         if (constructionQueue.isEmpty()) constructionQueue.add(value) else constructionQueue[0] = value
     }
+    fun collapseQueueToSingleProject() {
+        if (constructionQueue.size <= 1) return
+        constructionQueue.subList(1, constructionQueue.size).clear()
+    }
 
     //endregion
     //region Serialized Fields

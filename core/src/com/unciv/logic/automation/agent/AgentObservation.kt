@@ -8,11 +8,11 @@ data class AgentObservation(
     val civName: String,
     val empireSummary: EmpireSummaryObservation,
     val priorityFacts: List<ObservationFact>,
-    val citiesNeedingAttention: List<CityAttentionObservation>,
-    val actionableUnits: List<ActionableUnitObservation>,
+    val cities: List<AgentCityObservation>,
+    val units: List<AgentUnitObservation>,
     val visibleThreatsAndTargets: List<VisibleTargetObservation>,
     val opportunities: List<ObservationFact>,
-    val omittedSummary: OmittedSummaryObservation,
+    val perceptionSummary: PerceptionSummaryObservation,
 )
 
 @Serializable
@@ -47,56 +47,72 @@ data class ObservationFact(
 )
 
 @Serializable
-data class CityAttentionObservation(
+data class AgentCityObservation(
     val x: Int,
     val y: Int,
     val name: String,
+    val state: AgentCityStateObservation,
+    val project: AgentCityProjectObservation? = null,
+    val signals: List<String> = emptyList(),
+    val actions: AgentCityActionsObservation = AgentCityActionsObservation(),
+)
+
+@Serializable
+data class AgentCityStateObservation(
     val population: Int,
     val health: Int,
-    val currentConstruction: String,
-    val availableConstructions: List<String>,
+    val isCapital: Boolean,
+    val isCoastal: Boolean,
+    val isPuppet: Boolean,
+    val isGarrisoned: Boolean,
+    val canBombard: Boolean,
+    val focus: String,
     val productionPerTurn: Int,
     val foodPerTurn: Int,
     val turnsToGrowth: Int? = null,
     val turnsToStarvation: Int? = null,
     val cityStrength: Int,
-    val canBombard: Boolean,
-    val isCapital: Boolean,
-    val isCoastal: Boolean,
-    val isPuppet: Boolean,
-    val isGarrisoned: Boolean,
-    val cityFocus: String,
     val nearbyHostileUnits: Int,
     val nearbyHostileCities: Int,
-    val reasons: List<String>,
-    val localFacts: List<String>,
-    val constructionProgress: ConstructionProgressObservation? = null,
-    val topConstructionChoices: List<String> = emptyList(),
-    val cityOptionCandidates: List<CityOptionCandidateObservation> = emptyList(),
 )
 
 @Serializable
-data class ConstructionProgressObservation(
-    val intent: String? = null,
-    val target: String? = null,
-    val turnsLeft: Int? = null,
-    val workDone: Int? = null,
-    val workRemaining: Int? = null,
+data class AgentCityProjectObservation(
+    val name: String? = null,
     val status: String,
-    val progressNote: String,
+    val turnsLeft: Int? = null,
+    val productionInvested: Int? = null,
+    val productionRemaining: Int? = null,
     val switchCost: String,
+    val note: String,
 )
 
 @Serializable
-data class CityOptionCandidateObservation(
+data class AgentCityActionsObservation(
+    val chooseProject: List<AgentCityActionCandidateObservation> = emptyList(),
+    val purchase: List<AgentCityActionCandidateObservation> = emptyList(),
+    val buyTile: List<AgentCityActionCandidateObservation> = emptyList(),
+    val focus: List<AgentCityActionCandidateObservation> = emptyList(),
+    val growthMode: List<AgentCityActionCandidateObservation> = emptyList(),
+)
+
+@Serializable
+data class AgentCityActionCandidateObservation(
     val candidateId: String,
-    val category: String,
     val title: String,
     val detail: String,
+    val estimatedTurns: Int? = null,
+    val goldCost: Int? = null,
+    val effectTiming: String? = null,
+    val switchCost: String? = null,
+    val yieldHints: List<String> = emptyList(),
+    val tileSummary: String? = null,
 )
 
 @Serializable
-data class ActionableUnitObservation(
+data class AgentUnitObservation(
+    val detailLevel: String,
+    val detailReasons: List<String>,
     val id: Int,
     val x: Int,
     val y: Int,
@@ -165,12 +181,12 @@ data class VisibleTargetObservation(
 )
 
 @Serializable
-data class OmittedSummaryObservation(
-    val quietCities: Int,
-    val quietUnits: Int,
-    val visibleTargetsOmitted: Int,
-    val lowerPriorityFactsOmitted: Int,
-    val lowerPriorityOpportunitiesOmitted: Int,
+data class PerceptionSummaryObservation(
+    val totalCities: Int,
+    val expandedCities: Int,
+    val totalUnits: Int,
+    val expandedUnits: Int,
+    val visibleTargets: Int,
 )
 
 @Serializable
@@ -178,3 +194,8 @@ data class TileRef(
     val x: Int,
     val y: Int,
 )
+
+fun AgentCityObservation.allActionCandidates(): List<AgentCityActionCandidateObservation> = actions.allCandidates()
+
+fun AgentCityActionsObservation.allCandidates(): List<AgentCityActionCandidateObservation> =
+    chooseProject + purchase + buyTile + focus + growthMode

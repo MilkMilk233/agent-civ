@@ -35,11 +35,11 @@ data class AgentStrategistRoadmapRealityObservation(
 data class AgentStrategistCitySnapshot(
     val name: String,
     val population: Int,
-    val currentConstruction: String,
+    val currentProject: String? = null,
     val turnsToGrowth: Int? = null,
     val cityStrength: Int,
-    val reasons: List<String>,
-    val topConstructionChoices: List<String> = emptyList(),
+    val signals: List<String> = emptyList(),
+    val projectOptions: List<String> = emptyList(),
 )
 
 @Serializable

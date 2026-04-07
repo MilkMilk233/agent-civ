@@ -24,37 +24,22 @@ object AgentCityOptionBuilder {
 
     internal fun build(civInfo: Civilization): AgentCityOptionContext {
         val candidates = LinkedHashMap<String, AgentCityRuntimeCandidate>()
-        val observationsByCity = LinkedHashMap<String, MutableList<CityOptionCandidateObservation>>()
+        val observationsByCity = LinkedHashMap<String, AgentCityActionBuckets>()
 
         for (city in civInfo.cities.sortedWith(compareBy<City> { it.name }.thenBy { it.location.toString() })) {
             val cityKey = cityKey(city.location.x, city.location.y)
-            val observations = observationsByCity.getOrPut(cityKey) { arrayListOf() }
+            val observations = observationsByCity.getOrPut(cityKey) { AgentCityActionBuckets() }
 
-            buildConstructionCandidates(city).forEach { candidate ->
-                candidates[candidate.observation.candidateId] = candidate
-                observations += candidate.observation
-            }
-            buildPurchaseCandidates(city).forEach { candidate ->
-                candidates[candidate.observation.candidateId] = candidate
-                observations += candidate.observation
-            }
-            buildTilePurchaseCandidates(city).forEach { candidate ->
-                candidates[candidate.observation.candidateId] = candidate
-                observations += candidate.observation
-            }
-            buildGrowthCandidates(city).forEach { candidate ->
-                candidates[candidate.observation.candidateId] = candidate
-                observations += candidate.observation
-            }
-            buildFocusCandidates(city).forEach { candidate ->
-                candidates[candidate.observation.candidateId] = candidate
-                observations += candidate.observation
-            }
+            appendCandidates(candidates, observations.chooseProject, buildConstructionCandidates(city))
+            appendCandidates(candidates, observations.purchase, buildPurchaseCandidates(city))
+            appendCandidates(candidates, observations.buyTile, buildTilePurchaseCandidates(city))
+            appendCandidates(candidates, observations.growthMode, buildGrowthCandidates(city))
+            appendCandidates(candidates, observations.focus, buildFocusCandidates(city))
         }
 
         return AgentCityOptionContext(
             candidates = candidates,
-            observationsByCityKey = observationsByCity,
+            observationsByCityKey = observationsByCity.mapValues { (_, buckets) -> buckets.freeze() },
         )
     }
 
@@ -97,13 +82,14 @@ object AgentCityOptionBuilder {
 
     private fun buildConstructionCandidates(city: City): List<AgentCityRuntimeCandidate> {
         return rankConstructionChoices(city, maxConstructionCandidatesPerCity)
+            .filter { it.name != city.cityConstructions.currentConstructionName() }
             .map { choice ->
                 val candidateId = "citybuild:${city.location.x},${city.location.y}:${choice.name}"
+                val construction = city.cityConstructions.getConstruction(choice.name)
                 AgentCityRuntimeCandidate(
-                    observation = CityOptionCandidateObservation(
+                    observation = AgentCityActionCandidateObservation(
                         candidateId = candidateId,
-                        category = "construction",
-                        title = "Queue ${choice.name}",
+                        title = "Build ${choice.name}",
                         detail = buildString {
                             append(choice.detail)
                             currentConstructionProgressText(city, choice.name)?.let {
@@ -111,6 +97,9 @@ object AgentCityOptionBuilder {
                                 append(it)
                             }
                         },
+                        estimatedTurns = city.cityConstructions.turnsToConstruction(choice.name),
+                        switchCost = buildProjectSwitchCost(city, choice.name),
+                        yieldHints = yieldHintsForConstruction(construction),
                     ),
                     validate = { currentCiv ->
                         val liveCity = currentCiv.cities.firstOrNull { it.location == city.location }
@@ -129,11 +118,9 @@ object AgentCityOptionBuilder {
                         val liveConstruction = runCatching { liveCity.cityConstructions.getConstruction(choice.name) }.getOrNull()
                             ?: return@AgentCityRuntimeCandidate false
                         if (!liveConstruction.isBuildable(liveCity.cityConstructions)) return@AgentCityRuntimeCandidate false
-                        if (liveCity.cityConstructions.currentConstructionName() == choice.name) return@AgentCityRuntimeCandidate false
-                        liveCity.cityConstructions.setCurrentConstruction(choice.name)
-                        true
+                        AgentCityProjectPolicy.selectProject(liveCity, choice.name)
                     },
-                    successMessage = "${city.name} switched production to ${choice.name}",
+                    successMessage = "${city.name} switched active project to ${choice.name}",
                 )
             }
     }
@@ -154,11 +141,13 @@ object AgentCityOptionBuilder {
                 }
                 val candidateId = "citypurchase:${city.location.x},${city.location.y}:${construction.name}"
                 AgentCityRuntimeCandidate(
-                    observation = CityOptionCandidateObservation(
+                    observation = AgentCityActionCandidateObservation(
                         candidateId = candidateId,
-                        category = "purchase",
                         title = "Buy ${construction.name}",
                         detail = detailParts.joinToString(", "),
+                        goldCost = cost,
+                        effectTiming = "immediate",
+                        yieldHints = yieldHintsForConstruction(construction),
                     ),
                     validate = { currentCiv ->
                         val liveCity = currentCiv.cities.firstOrNull { it.location == city.location }
@@ -176,7 +165,7 @@ object AgentCityOptionBuilder {
                     },
                     execute = { currentCiv ->
                         val liveCity = currentCiv.cities.firstOrNull { it.location == city.location } ?: return@AgentCityRuntimeCandidate false
-                        liveCity.cityConstructions.purchaseConstruction(construction.name, -1, true, Stat.Gold)
+                        AgentCityProjectPolicy.purchaseWithGold(liveCity, construction.name)
                     },
                     successMessage = "Purchased ${construction.name} in ${city.name}",
                 )
@@ -196,12 +185,16 @@ object AgentCityOptionBuilder {
             .map { candidate ->
                 val tile = candidate.tile
                 val candidateId = "citytile:${city.location.x},${city.location.y}:${tile.position.x},${tile.position.y}"
+                val goldCost = city.expansion.getGoldCostOfTile(tile)
                 AgentCityRuntimeCandidate(
-                    observation = CityOptionCandidateObservation(
+                    observation = AgentCityActionCandidateObservation(
                         candidateId = candidateId,
-                        category = "tile",
                         title = "Buy tile (${tile.position.x}, ${tile.position.y})",
                         detail = candidate.detail,
+                        goldCost = goldCost,
+                        effectTiming = "immediate",
+                        tileSummary = summarizeTileForPurchase(city, tile),
+                        yieldHints = yieldHintsForTile(city, tile),
                     ),
                     validate = { currentCiv ->
                         val liveCity = currentCiv.cities.firstOrNull { it.location == city.location }
@@ -242,11 +235,12 @@ object AgentCityOptionBuilder {
             .map { focus ->
                 val candidateId = "cityfocus:${city.location.x},${city.location.y}:${focus.name}"
                 AgentCityRuntimeCandidate(
-                    observation = CityOptionCandidateObservation(
+                    observation = AgentCityActionCandidateObservation(
                         candidateId = candidateId,
-                        category = "focus",
                         title = "Set ${city.name} to ${focus.name}",
                         detail = "Current focus is ${currentFocus.name}. Reassign citizens using ${focus.label}.",
+                        effectTiming = "immediate",
+                        yieldHints = yieldHintsForFocus(focus),
                     ),
                     validate = { currentCiv ->
                         val liveCity = currentCiv.cities.firstOrNull { it.location == city.location }
@@ -287,11 +281,12 @@ object AgentCityOptionBuilder {
         }
         return listOf(
             AgentCityRuntimeCandidate(
-                observation = CityOptionCandidateObservation(
+                observation = AgentCityActionCandidateObservation(
                     candidateId = candidateId,
-                    category = "growth",
                     title = title,
                     detail = detail,
+                    effectTiming = "immediate",
+                    yieldHints = if (avoidGrowth) listOf("food", "growth") else listOf("production", "gold", "stability"),
                 ),
                 validate = { currentCiv ->
                     val liveCity = currentCiv.cities.firstOrNull { it.location == city.location }
@@ -346,6 +341,32 @@ object AgentCityOptionBuilder {
         if (tile.isAdjacentToRiver()) pieces += "River"
         if (tile.isHill()) pieces += "Hill"
         return pieces.joinToString(", ")
+    }
+
+    private fun summarizeTileForPurchase(city: City, tile: Tile): String {
+        val summary = arrayListOf<String>()
+        tile.tileResource?.takeIf { city.civ.canSeeResource(it) }?.let { summary += it.name }
+        if (tile.naturalWonder != null) summary += "Natural wonder"
+        if (tile.isHill()) summary += "Hill"
+        if (tile.isAdjacentToRiver()) summary += "River"
+        if (summary.isEmpty()) summary += "Workable tile upgrade"
+        return summary.joinToString(", ")
+    }
+
+    private fun yieldHintsForTile(city: City, tile: Tile): List<String> {
+        val hints = linkedSetOf<String>()
+        val stats = tile.stats.getTileStats(city.civ)
+        if (stats.food.roundToInt() > 0) hints += "food"
+        if (stats.production.roundToInt() > 0) hints += "production"
+        if (stats.gold.roundToInt() > 0) hints += "gold"
+        tile.tileResource?.takeIf { city.civ.canSeeResource(it) }?.let { resource ->
+            hints += when (resource.resourceType) {
+                ResourceType.Luxury -> "happiness"
+                ResourceType.Strategic -> "strategic_resource"
+                ResourceType.Bonus -> "tile_yield"
+            }
+        }
+        return hints.toList()
     }
 
     private fun scoreConstructionChoice(
@@ -457,6 +478,55 @@ object AgentCityOptionBuilder {
         }
     }
 
+    private fun buildProjectSwitchCost(city: City, candidateName: String): String {
+        val currentName = city.cityConstructions.currentConstructionName()
+        if (currentName.isBlank() || currentName == candidateName) return "low"
+        val turnsLeft = city.cityConstructions.turnsToConstruction(currentName)
+        val workDone = city.cityConstructions.getWorkDone(currentName)
+        return when {
+            turnsLeft <= 2 -> "high"
+            workDone > 0 -> "medium"
+            else -> "low"
+        }
+    }
+
+    private fun yieldHintsForConstruction(construction: IConstruction): List<String> {
+        val hints = linkedSetOf<String>()
+        when (construction) {
+            is Building -> {
+                val lower = construction.name.lowercase()
+                if ("granary" in lower || "water mill" in lower || "aqueduct" in lower) hints += "food"
+                if ("library" in lower || "university" in lower || "public school" in lower) hints += "science"
+                if ("monument" in lower || "amphitheater" in lower || "opera house" in lower) hints += "culture"
+                if ("market" in lower || "bank" in lower || "mint" in lower) hints += "gold"
+                if ("wall" in lower || "castle" in lower || "arsenal" in lower) hints += "defense"
+                if (construction.isAnyWonder()) hints += "wonder"
+                if (hints.isEmpty()) hints += "city_development"
+            }
+            is BaseUnit -> {
+                when {
+                    construction.isCityFounder() -> hints += "expansion"
+                    construction.hasUnique(UniqueType.BuildImprovements, GameContext.IgnoreConditionals) -> hints += "tile_improvement"
+                    construction.isMilitary -> hints += "military"
+                    else -> hints += "unit"
+                }
+                if (construction.isRanged()) hints += "ranged"
+                if (construction.isMilitary && !construction.isRanged()) hints += "frontline"
+            }
+            else -> hints += "tempo"
+        }
+        return hints.toList()
+    }
+
+    private fun yieldHintsForFocus(focus: CityFocus): List<String> = when (focus) {
+        CityFocus.FoodFocus -> listOf("food", "growth")
+        CityFocus.ProductionFocus -> listOf("production")
+        CityFocus.GoldFocus -> listOf("gold")
+        CityFocus.ScienceFocus -> listOf("science")
+        CityFocus.CultureFocus -> listOf("culture")
+        else -> listOf("balanced")
+    }
+
     private fun City.getThreatScore(): Int {
         val cityTile = getCenterTile()
         return civ.viewableTiles.count { tile ->
@@ -468,11 +538,11 @@ object AgentCityOptionBuilder {
 
     internal data class AgentCityOptionContext(
         val candidates: Map<String, AgentCityRuntimeCandidate>,
-        val observationsByCityKey: Map<String, List<CityOptionCandidateObservation>>,
+        val observationsByCityKey: Map<String, AgentCityActionsObservation>,
     )
 
     internal data class AgentCityRuntimeCandidate(
-        val observation: CityOptionCandidateObservation,
+        val observation: AgentCityActionCandidateObservation,
         val validate: (Civilization) -> String?,
         val execute: (Civilization) -> Boolean,
         val successMessage: String,
@@ -489,4 +559,31 @@ object AgentCityOptionBuilder {
         val score: Int,
         val detail: String,
     )
+
+    private data class AgentCityActionBuckets(
+        val chooseProject: MutableList<AgentCityActionCandidateObservation> = arrayListOf(),
+        val purchase: MutableList<AgentCityActionCandidateObservation> = arrayListOf(),
+        val buyTile: MutableList<AgentCityActionCandidateObservation> = arrayListOf(),
+        val focus: MutableList<AgentCityActionCandidateObservation> = arrayListOf(),
+        val growthMode: MutableList<AgentCityActionCandidateObservation> = arrayListOf(),
+    ) {
+        fun freeze(): AgentCityActionsObservation = AgentCityActionsObservation(
+            chooseProject = chooseProject.toList(),
+            purchase = purchase.toList(),
+            buyTile = buyTile.toList(),
+            focus = focus.toList(),
+            growthMode = growthMode.toList(),
+        )
+    }
+
+    private fun appendCandidates(
+        candidatesById: MutableMap<String, AgentCityRuntimeCandidate>,
+        target: MutableList<AgentCityActionCandidateObservation>,
+        runtimeCandidates: List<AgentCityRuntimeCandidate>,
+    ) {
+        runtimeCandidates.forEach { candidate ->
+            candidatesById[candidate.observation.candidateId] = candidate
+            target += candidate.observation
+        }
+    }
 }

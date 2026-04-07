@@ -14,8 +14,7 @@ enum class AgentControlDomain(val wireName: String) {
     companion object {
         fun fromPlanAction(action: AgentActionCommand): AgentControlDomain? = when (action) {
             is AgentActionCommand.SelectEmpireOption -> fromEmpireCandidateId(action.candidateId)
-            is AgentActionCommand.SelectCityOption,
-            is AgentActionCommand.CityChooseConstruction -> City
+            is AgentActionCommand.SelectCityOption -> City
             is AgentActionCommand.SelectUnitOption,
             is AgentActionCommand.UnitMove,
             is AgentActionCommand.UnitAction -> Unit
@@ -27,7 +26,7 @@ enum class AgentControlDomain(val wireName: String) {
             candidateId: String?,
         ): AgentControlDomain? = when (commandType) {
             "select_empire_option" -> fromEmpireCandidateId(candidateId)
-            "select_city_option", "city_choose_construction" -> City
+            "select_city_option" -> City
             "select_unit_option", "unit_move", "unit_action" -> Unit
             else -> null
         }
@@ -77,12 +76,11 @@ object AgentTurnDiagnostics {
                     }
                 ),
             AgentControlDomain.City.wireName to (
-                observation.citiesNeedingAttention.sumOf { it.cityOptionCandidates.size } +
-                    observation.citiesNeedingAttention.count { it.availableConstructions.isNotEmpty() }
+                observation.cities.sumOf { it.allActionCandidates().size }
                 ),
             AgentControlDomain.Unit.wireName to (
-                observation.actionableUnits.sumOf { it.legalActionCandidates.size + it.unitOptionCandidates.size } +
-                    observation.actionableUnits.count { it.hasMovement }
+                observation.units.sumOf { it.legalActionCandidates.size + it.unitOptionCandidates.size } +
+                    observation.units.count { it.hasMovement }
                 ),
             AgentControlDomain.Diplomacy.wireName to (
                 empireObservation.diplomacyCandidates.size

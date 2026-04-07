@@ -7,22 +7,22 @@ object AgentStrategistGovernor {
         empireObservation: AgentEmpireObservation,
         refreshRequest: AgentStrategistRefreshRequest,
     ): AgentStrategistBrief {
-        val citySnapshots = observation.citiesNeedingAttention
+        val citySnapshots = observation.cities
             .sortedByDescending { cityStrategistScore(it) }
             .take(4)
             .map { city ->
                 AgentStrategistCitySnapshot(
                     name = city.name,
-                    population = city.population,
-                    currentConstruction = city.currentConstruction,
-                    turnsToGrowth = city.turnsToGrowth,
-                    cityStrength = city.cityStrength,
-                    reasons = city.reasons.take(4),
-                    topConstructionChoices = city.topConstructionChoices.take(4),
+                    population = city.state.population,
+                    currentProject = city.project?.name,
+                    turnsToGrowth = city.state.turnsToGrowth,
+                    cityStrength = city.state.cityStrength,
+                    signals = city.signals.take(4),
+                    projectOptions = city.actions.chooseProject.map { it.title }.take(4),
                 )
             }
 
-        val unitSnapshots = observation.actionableUnits
+        val unitSnapshots = observation.units
             .sortedByDescending { unitStrategistScore(it, empireObservation.gameContext.contactComplete) }
             .take(5)
             .map { unit ->
@@ -147,16 +147,16 @@ object AgentStrategistGovernor {
         )
     }
 
-    private fun cityStrategistScore(city: CityAttentionObservation): Int {
-        var score = city.population * 10 + city.cityStrength
-        if (city.isCapital) score += 40
-        if (city.nearbyHostileUnits > 0 || city.nearbyHostileCities > 0) score += 60
-        if ((city.turnsToGrowth ?: Int.MAX_VALUE) <= 2) score += 20
-        score += city.reasons.size * 5
+    private fun cityStrategistScore(city: AgentCityObservation): Int {
+        var score = city.state.population * 10 + city.state.cityStrength
+        if (city.state.isCapital) score += 40
+        if (city.state.nearbyHostileUnits > 0 || city.state.nearbyHostileCities > 0) score += 60
+        if ((city.state.turnsToGrowth ?: Int.MAX_VALUE) <= 2) score += 20
+        score += city.signals.size * 5
         return score
     }
 
-    private fun unitStrategistScore(unit: ActionableUnitObservation, contactComplete: Boolean): Int {
+    private fun unitStrategistScore(unit: AgentUnitObservation, contactComplete: Boolean): Int {
         var score = when (unit.role) {
             "settler" -> 120
             "melee", "ranged", "siege", "naval_melee", "naval_ranged" -> 80

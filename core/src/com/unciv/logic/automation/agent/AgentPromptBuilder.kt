@@ -47,11 +47,10 @@ object AgentPromptBuilder {
             {
               "actions": [
                 {"type":"select_empire_option","priority":0,"candidateId":"research:Pottery"},
-                {"type":"select_city_option","priority":1,"candidateId":"citypurchase:0,0:Granary"},
+                {"type":"select_city_option","priority":1,"candidateId":"citybuild:0,0:Granary"},
                 {"type":"select_unit_option","priority":2,"candidateId":"unitattack:7:3,6:4,6"},
                 {"type":"unit_move","priority":0,"unitId":123,"destinationX":0,"destinationY":0},
                 {"type":"unit_action","priority":3,"unitId":123,"actionType":"FoundCity"},
-                {"type":"city_choose_construction","priority":4,"cityX":0,"cityY":0,"constructionName":"Granary"},
                 {"type":"end_turn","priority":999}
               ],
               "handoffToLegacyAI": false,
@@ -71,8 +70,9 @@ object AgentPromptBuilder {
             - The planner brief already compressed noise. Do not let routine worker upkeep crowd out rival threats, military floor problems, gold overflow, or important city tempo choices.
             - Use select_empire_option only with candidateId values from empireChoices. Never invent research, policy, diplomacy, gold, or bombardment commands outside those candidates.
             - Repeated diplomacy that does not materially improve the game state is low priority.
-            - Use select_city_option only with candidateId values from cityHighlights.cityOptionCandidates.
-            - If a city already has meaningful construction progress, especially on a nearly complete or strategically correct build, prefer finishing it over switching.
+            - Use select_city_option only with candidateId values from the grouped lists under cityHighlights.actions.
+            - City payloads are single-project views, not build queues. city.project is the only active production commitment.
+            - If a city already has meaningful project progress, especially on a nearly complete or strategically correct build, prefer finishing it over switching.
             - In peaceful or duel setups, city tempo usually matters more than passive military posture or focus micro.
             - Use select_unit_option only with candidateId values from unitHighlights.unitOptionCandidates.
             - If a unit includes legalActionCandidates, copy the actionType exactly. If a legalActionCandidate includes moveDestinationX/moveDestinationY, emit unit_move first and then unit_action.

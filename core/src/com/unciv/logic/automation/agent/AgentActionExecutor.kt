@@ -410,51 +410,6 @@ class AgentActionExecutor {
                     }
                 }
 
-                is AgentActionCommand.CityChooseConstruction -> {
-                    val city = civInfo.cities.firstOrNull { it.location.x == action.cityX && it.location.y == action.cityY }
-                    if (city == null) {
-                        rejected++
-                        outcomes += ActionOutcome(
-                            commandType = "city_choose_construction",
-                            status = ActionStatus.Rejected,
-                            reason = "Construction rejected: city missing",
-                            cityX = action.cityX,
-                            cityY = action.cityY,
-                            constructionName = action.constructionName,
-                        )
-                        continue
-                    }
-
-                    val construction = runCatching { city.cityConstructions.getConstruction(action.constructionName) }.getOrNull()
-                    if (construction == null || !construction.isBuildable(city.cityConstructions)) {
-                        rejected++
-                        outcomes += ActionOutcome(
-                            commandType = "city_choose_construction",
-                            status = ActionStatus.Rejected,
-                            reason = if (construction == null) {
-                                "Construction rejected: unknown construction"
-                            } else {
-                                "Construction rejected: not buildable"
-                            },
-                            cityX = action.cityX,
-                            cityY = action.cityY,
-                            constructionName = action.constructionName,
-                        )
-                        continue
-                    }
-
-                    city.cityConstructions.setCurrentConstruction(action.constructionName)
-                    executed++
-                    outcomes += ActionOutcome(
-                        commandType = "city_choose_construction",
-                        status = ActionStatus.Executed,
-                        reason = "Construction selected",
-                        cityX = action.cityX,
-                        cityY = action.cityY,
-                        constructionName = action.constructionName,
-                    )
-                }
-
                 is AgentActionCommand.EndTurn -> {
                     // no-op; included to make model output explicit
                     outcomes += ActionOutcome(

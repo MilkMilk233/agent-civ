@@ -9,7 +9,6 @@ import com.unciv.logic.map.mapunit.MapUnit
 import com.unciv.logic.map.tile.Tile
 import com.unciv.models.UnitAction
 import com.unciv.models.UnitActionType
-import com.unciv.models.ruleset.PerpetualConstruction
 import com.unciv.models.ruleset.tile.ResourceType
 import com.unciv.ui.screens.worldscreen.unit.actions.UnitActions
 import kotlin.math.roundToInt
@@ -17,12 +16,10 @@ import kotlin.math.roundToInt
 object AgentObservationBuilder {
     private const val maxPriorityFacts = 8
     private const val maxOpportunityFacts = 8
-    private const val maxCitiesNeedingAttention = 6
-    private const val maxActionableUnits = 12
     private const val maxVisibleTargets = 8
-    private const val maxConstructionsPerCity = 10
     private const val maxReachableTilesPerUnit = 14
     private const val maxLocalFactsPerEntity = 4
+    private const val maxCompactFactsPerEntity = 2
 
     fun build(civInfo: Civilization, memory: AgentMemory = civInfo.agentMemory): AgentObservation {
         civInfo.updateStatsForNextTurn()
@@ -37,49 +34,81 @@ object AgentObservationBuilder {
         val cityCandidates = civInfo.cities
             .sortedWith(compareBy<City> { it.name }.thenBy { it.location.toString() })
             .map { buildCityCandidate(it, civInfo, visibleTargetCandidates, peacefulGrowthWindow, memory) }
-        val selectedCityCandidates = selectCityCandidates(cityCandidates)
-        val selectedCities = selectedCityCandidates.map { candidate ->
-            CityAttentionObservation(
+        val cities = cityCandidates.map { candidate ->
+            val project = buildProjectObservation(candidate.city, memory)
+            val actions = cityOptionContext.observationsByCityKey["${candidate.city.location.x},${candidate.city.location.y}"]
+                ?: AgentCityActionsObservation()
+            AgentCityObservation(
                 x = candidate.city.location.x,
                 y = candidate.city.location.y,
                 name = candidate.city.name,
-                population = candidate.city.population.population,
-                health = candidate.city.health,
-                currentConstruction = candidate.city.cityConstructions.currentConstructionName().ifBlank { "None selected" },
-                availableConstructions = buildConstructionOptions(candidate.city),
-                productionPerTurn = candidate.productionPerTurn,
-                foodPerTurn = candidate.foodPerTurn,
-                turnsToGrowth = candidate.turnsToGrowth,
-                turnsToStarvation = candidate.turnsToStarvation,
-                cityStrength = candidate.cityStrength,
-                canBombard = candidate.canBombard,
-                isCapital = candidate.city.isCapital(),
-                isCoastal = candidate.city.isCoastal(),
-                isPuppet = candidate.city.isPuppet,
-                isGarrisoned = candidate.city.isGarrisoned(),
-                cityFocus = candidate.city.getCityFocus().name,
-                nearbyHostileUnits = candidate.nearbyHostileUnits,
-                nearbyHostileCities = candidate.nearbyHostileCities,
-                reasons = candidate.reasons,
-                localFacts = candidate.localFacts,
-                constructionProgress = buildConstructionProgress(candidate.city, memory),
-                topConstructionChoices = AgentCityOptionBuilder.rankConstructionChoices(candidate.city, 4).map { it.name },
-                cityOptionCandidates = cityOptionContext.observationsByCityKey["${candidate.city.location.x},${candidate.city.location.y}"]
-                    ?: emptyList(),
+                state = AgentCityStateObservation(
+                    population = candidate.city.population.population,
+                    health = candidate.city.health,
+                    isCapital = candidate.city.isCapital(),
+                    isCoastal = candidate.city.isCoastal(),
+                    isPuppet = candidate.city.isPuppet,
+                    isGarrisoned = candidate.city.isGarrisoned(),
+                    canBombard = candidate.canBombard,
+                    focus = candidate.city.getCityFocus().name,
+                    productionPerTurn = candidate.productionPerTurn,
+                    foodPerTurn = candidate.foodPerTurn,
+                    turnsToGrowth = candidate.turnsToGrowth,
+                    turnsToStarvation = candidate.turnsToStarvation,
+                    cityStrength = candidate.cityStrength,
+                    nearbyHostileUnits = candidate.nearbyHostileUnits,
+                    nearbyHostileCities = candidate.nearbyHostileCities,
+                ),
+                project = project,
+                signals = buildCitySignals(candidate, project),
+                actions = actions,
             )
         }
 
-        val unitCandidates = allUnits.map { buildUnitCandidate(it, civInfo, visibleTargetCandidates, peacefulGrowthWindow, memory) }
-        val selectedUnitCandidates = selectUnitCandidates(unitCandidates)
         val unitOptionContext = AgentUnitOptionBuilder.build(civInfo, memory)
-        val selectedUnits = selectedUnitCandidates.map { candidate ->
+        val unitCandidates = allUnits.map { unit ->
+            buildUnitCandidate(
+                unit = unit,
+                civInfo = civInfo,
+                visibleTargetCandidates = visibleTargetCandidates,
+                peacefulGrowthWindow = peacefulGrowthWindow,
+                memory = memory,
+                unitOptionCandidates = unitOptionContext.observationsByUnitId[unit.id] ?: emptyList(),
+            )
+        }
+        val units = unitCandidates.map { candidate ->
             val unit = candidate.unit
             val availableActions = collectAvailableUnitActions(unit)
-            val unitActionTypes = availableActions
-                .map { it.type.name }
-                .distinct()
-                .sorted()
-            ActionableUnitObservation(
+            val unitOptionCandidates = unitOptionContext.observationsByUnitId[unit.id] ?: emptyList()
+            val assignmentProgress = buildUnitAssignmentProgress(
+                unit = unit,
+                memory = memory,
+                unitOptionCandidates = unitOptionCandidates,
+            )
+            val legalActionCandidates = buildLegalActionCandidates(
+                unit = unit,
+                role = candidate.role,
+                availableActions = availableActions,
+                memory = memory,
+            )
+            val detailReasons = buildUnitDetailReasons(
+                candidate = candidate,
+                unitOptionCandidates = unitOptionCandidates,
+                legalActionCandidates = legalActionCandidates,
+                assignmentProgress = assignmentProgress,
+            )
+            val expanded = detailReasons.isNotEmpty()
+            val unitActionTypes = if (expanded) {
+                availableActions
+                    .map { it.type.name }
+                    .distinct()
+                    .sorted()
+            } else {
+                emptyList()
+            }
+            AgentUnitObservation(
+                detailLevel = if (expanded) "expanded" else "compact",
+                detailReasons = detailReasons,
                 id = unit.id,
                 x = unit.getTile().position.x,
                 y = unit.getTile().position.y,
@@ -92,25 +121,17 @@ object AgentObservationBuilder {
                 rangedStrength = candidate.rangedStrength,
                 range = candidate.range,
                 unitActions = unitActionTypes,
-                legalActionCandidates = buildLegalActionCandidates(
-                    unit = unit,
-                    role = candidate.role,
-                    availableActions = availableActions,
-                    memory = memory,
-                ),
-                unitOptionCandidates = unitOptionContext.observationsByUnitId[unit.id] ?: emptyList(),
-                reachableTiles = buildReachableTiles(unit),
+                legalActionCandidates = if (expanded) legalActionCandidates else emptyList(),
+                unitOptionCandidates = if (expanded) unitOptionCandidates else emptyList(),
+                reachableTiles = if (expanded) buildReachableTiles(unit) else emptyList(),
                 nearbyHostileUnits = candidate.nearbyHostileUnits,
                 nearbyHostileCities = candidate.nearbyHostileCities,
-                reasons = candidate.reasons,
-                localFacts = candidate.localFacts,
-                assignmentProgress = buildUnitAssignmentProgress(
-                    unit = unit,
-                    memory = memory,
-                    unitOptionCandidates = unitOptionContext.observationsByUnitId[unit.id] ?: emptyList(),
-                ),
+                reasons = candidate.reasons.take(if (expanded) maxLocalFactsPerEntity else maxCompactFactsPerEntity),
+                localFacts = candidate.localFacts.take(if (expanded) maxLocalFactsPerEntity else maxCompactFactsPerEntity),
+                assignmentProgress = assignmentProgress,
             )
         }
+        val expandedUnits = units.filter { it.detailLevel == "expanded" }
 
         val selectedTargets = visibleTargetCandidates
             .sortedWith(compareByDescending<VisibleTargetCandidate> { it.score }.thenBy { it.observation.name })
@@ -119,10 +140,10 @@ object AgentObservationBuilder {
 
         val opportunityFacts = selectFacts(
             buildOpportunityFacts(
-                selectedCityCandidates = selectedCityCandidates,
-                selectedCities = selectedCities,
-                selectedUnitCandidates = selectedUnitCandidates,
-                selectedUnits = selectedUnits,
+                selectedCityCandidates = cityCandidates,
+                selectedCities = cities,
+                selectedUnitCandidates = unitCandidates.filter { candidate -> expandedUnits.any { it.id == candidate.unit.id } },
+                selectedUnits = expandedUnits,
                 visibleTargetCandidates = visibleTargetCandidates,
                 selectedTargets = selectedTargets,
             ),
@@ -157,8 +178,8 @@ object AgentObservationBuilder {
             buildPriorityFacts(
                 civInfo = civInfo,
                 empireSummary = empireSummary,
-                cityCandidates = selectedCityCandidates,
-                unitCandidates = selectedUnitCandidates,
+                cityCandidates = cityCandidates,
+                unitCandidates = unitCandidates,
                 visibleTargetCandidates = visibleTargetCandidates,
                 opportunityFacts = opportunityFacts,
                 peacefulGrowthWindow = peacefulGrowthWindow,
@@ -171,36 +192,16 @@ object AgentObservationBuilder {
             civName = civInfo.civName,
             empireSummary = empireSummary,
             priorityFacts = priorityFacts,
-            citiesNeedingAttention = selectedCities,
-            actionableUnits = selectedUnits,
+            cities = cities,
+            units = units,
             visibleThreatsAndTargets = selectedTargets,
             opportunities = opportunityFacts,
-            omittedSummary = OmittedSummaryObservation(
-                quietCities = (civInfo.cities.size - selectedCities.size).coerceAtLeast(0),
-                quietUnits = (allUnits.size - selectedUnits.size).coerceAtLeast(0),
-                visibleTargetsOmitted = (visibleTargetCandidates.size - selectedTargets.size).coerceAtLeast(0),
-                lowerPriorityFactsOmitted = (
-                    buildPriorityFacts(
-                        civInfo,
-                        empireSummary,
-                        cityCandidates,
-                        unitCandidates,
-                        visibleTargetCandidates,
-                        opportunityFacts,
-                        peacefulGrowthWindow,
-                    ).size -
-                        priorityFacts.size
-                    ).coerceAtLeast(0),
-                lowerPriorityOpportunitiesOmitted = (
-                    buildOpportunityFacts(
-                        selectedCityCandidates = selectedCityCandidates,
-                        selectedCities = selectedCities,
-                        selectedUnitCandidates = selectedUnitCandidates,
-                        selectedUnits = selectedUnits,
-                        visibleTargetCandidates = visibleTargetCandidates,
-                        selectedTargets = selectedTargets,
-                    ).size - opportunityFacts.size
-                    ).coerceAtLeast(0),
+            perceptionSummary = PerceptionSummaryObservation(
+                totalCities = cities.size,
+                expandedCities = cities.size,
+                totalUnits = units.size,
+                expandedUnits = expandedUnits.size,
+                visibleTargets = selectedTargets.size,
             ),
         )
     }
@@ -362,11 +363,11 @@ object AgentObservationBuilder {
             reasons += "Capital oversight"
         }
 
-        buildConstructionProgress(city, memory)?.let { progress ->
-            if (progress.status == "nearly_complete") score += 28
-            if (progress.status == "following_intent") score += 18
-            localFacts += progress.progressNote
-            reasons += when (progress.status) {
+        buildProjectObservation(city, memory)?.let { project ->
+            if (project.status == "nearly_complete") score += 28
+            if (project.status == "following_intent") score += 18
+            localFacts += project.note
+            reasons += when (project.status) {
                 "nearly_complete" -> "Finish current build"
                 "following_intent" -> "Continuing city plan"
                 else -> "City progress in flight"
@@ -397,6 +398,7 @@ object AgentObservationBuilder {
         visibleTargetCandidates: List<VisibleTargetCandidate>,
         peacefulGrowthWindow: Boolean,
         memory: AgentMemory,
+        unitOptionCandidates: List<UnitOptionCandidateObservation>,
     ): UnitCandidate {
         val role = classifyUnitRole(unit)
         val threatRadius = if (unit.isMilitary()) 3 else 2
@@ -458,7 +460,7 @@ object AgentObservationBuilder {
             }
         }
 
-        buildUnitAssignmentProgress(unit, memory, emptyList())?.let { progress ->
+        buildUnitAssignmentProgress(unit, memory, unitOptionCandidates)?.let { progress ->
             localFacts += progress.progressNote
             if (progress.status == "ready_to_finish") {
                 score += 32
@@ -670,7 +672,7 @@ object AgentObservationBuilder {
                 category = "city",
                 severity = "warning",
                 headline = "Some cities still need production choices",
-                detail = "${empireSummary.citiesNeedingProductionChoice} cities have no active construction queued.",
+                detail = "${empireSummary.citiesNeedingProductionChoice} cities have no active project selected.",
             )
         }
 
@@ -715,9 +717,9 @@ object AgentObservationBuilder {
 
     private fun buildOpportunityFacts(
         selectedCityCandidates: List<CityCandidate>,
-        selectedCities: List<CityAttentionObservation>,
+        selectedCities: List<AgentCityObservation>,
         selectedUnitCandidates: List<UnitCandidate>,
-        selectedUnits: List<ActionableUnitObservation>,
+        selectedUnits: List<AgentUnitObservation>,
         visibleTargetCandidates: List<VisibleTargetCandidate>,
         selectedTargets: List<VisibleTargetObservation>,
     ): List<ScoredFact> {
@@ -744,13 +746,13 @@ object AgentObservationBuilder {
         }
 
         for (cityObservation in selectedCities) {
-            if (cityObservation.canBombard && cityObservation.nearbyHostileUnits > 0) {
+            if (cityObservation.state.canBombard && cityObservation.state.nearbyHostileUnits > 0) {
                 facts += fact(
                     priority = 100,
                     category = "war",
                     severity = "info",
                     headline = "${cityObservation.name} can pressure nearby enemies",
-                    detail = "The city can bombard and has ${cityObservation.nearbyHostileUnits} hostile units nearby.",
+                    detail = "The city can bombard and has ${cityObservation.state.nearbyHostileUnits} hostile units nearby.",
                 )
             }
         }
@@ -771,56 +773,45 @@ object AgentObservationBuilder {
         return facts
     }
 
-    private fun selectCityCandidates(candidates: List<CityCandidate>): List<CityCandidate> {
-        val sorted = candidates.sortedWith(compareByDescending<CityCandidate> { it.score }.thenBy { it.city.name })
-        val selected = sorted.filter { it.score > 0 }.take(maxCitiesNeedingAttention).toMutableList()
-        if (selected.size >= minOf(2, sorted.size)) return selected
-
-        val fallbacks = sorted
-            .sortedWith(
-                compareByDescending<CityCandidate> { it.productionPerTurn }
-                    .thenByDescending { it.city.isCapital() }
-                    .thenBy { it.city.name },
-            )
-            .filter { it !in selected }
-            .take((minOf(2, sorted.size) - selected.size).coerceAtLeast(0))
-        selected += fallbacks
-        return selected.distinct().take(maxCitiesNeedingAttention)
-    }
-
-    private fun selectUnitCandidates(candidates: List<UnitCandidate>): List<UnitCandidate> {
-        val movable = candidates.filter { it.unit.hasMovement() }
-        val sorted = movable.sortedWith(compareByDescending<UnitCandidate> { it.score }.thenBy { it.unit.id })
-        val selected = sorted.take(maxActionableUnits).toMutableList()
-        if (selected.size >= minOf(4, sorted.size)) return selected
-
-        val fallbacks = movable
-            .sortedWith(compareByDescending<UnitCandidate> { it.unit.getTile().neighbors.count { neighbor -> neighbor.getUnits().any { other -> other.civ != it.unit.civ } } }.thenBy { it.unit.id })
-            .filter { it !in selected }
-            .take((minOf(4, sorted.size) - selected.size).coerceAtLeast(0))
-        selected += fallbacks
-        return selected.distinct().take(maxActionableUnits)
-    }
-
-    private fun buildConstructionOptions(city: City): List<String> {
-        val ranked = AgentCityOptionBuilder.rankConstructionChoices(city, maxConstructionsPerCity)
-            .map { it.name }
-            .toMutableList()
-        val cityConstructions = city.cityConstructions
-        val fallbacks = (
-            cityConstructions.getBuildableBuildings().map { it.name } +
-                cityConstructions.getConstructableUnits().map { it.name } +
-                PerpetualConstruction.perpetualConstructionsMap.values.asSequence()
-                    .filter { it.isBuildable(cityConstructions) }
-                    .map { it.name }
-            )
-            .distinct()
-            .sorted()
-        for (name in fallbacks) {
-            if (ranked.size >= maxConstructionsPerCity) break
-            if (name !in ranked) ranked += name
+    private fun buildUnitDetailReasons(
+        candidate: UnitCandidate,
+        unitOptionCandidates: List<UnitOptionCandidateObservation>,
+        legalActionCandidates: List<LegalActionCandidateObservation>,
+        assignmentProgress: UnitAssignmentProgressObservation?,
+    ): List<String> {
+        val reasons = linkedSetOf<String>()
+        val unit = candidate.unit
+        if (unit.hasMovement()) reasons += "free_to_act"
+        if (unitOptionCandidates.isNotEmpty() || legalActionCandidates.isNotEmpty()) reasons += "has_grounded_options"
+        if (candidate.nearbyHostileUnits > 0 || candidate.nearbyHostileCities > 0) reasons += "local_threat"
+        if (assignmentProgress?.status in setOf("ready_to_finish", "on_target", "assignment_at_risk")) {
+            reasons += "assignment_requires_review"
         }
-        return ranked.take(maxConstructionsPerCity)
+        if (candidate.role == "settler") reasons += "strategic_civilian"
+        if (candidate.role == "worker" && unit.hasMovement()) reasons += "worker_decision"
+        if (unit.health < 70 && unit.isMilitary()) reasons += "damaged_frontline"
+        if (unit.isCivilian() && (candidate.nearbyHostileUnits > 0 || candidate.nearbyHostileCities > 0)) {
+            reasons += "exposed_civilian"
+        }
+        return reasons.take(4)
+    }
+
+    private fun buildCitySignals(
+        candidate: CityCandidate,
+        project: AgentCityProjectObservation?,
+    ): List<String> {
+        return buildList {
+            addAll(candidate.reasons)
+            addAll(candidate.localFacts)
+            project?.note
+                ?.takeIf {
+                    candidate.localFacts.none { fact -> fact == it } &&
+                        candidate.reasons.none { reason -> reason == it }
+                }
+                ?.let(::add)
+        }
+            .distinct()
+            .take(6)
     }
 
     private fun isPeacefulGrowthWindow(
@@ -914,20 +905,19 @@ object AgentObservationBuilder {
         return memory.unitAssignments.firstOrNull { it.unitId == unitId }
     }
 
-    private fun buildConstructionProgress(
+    private fun buildProjectObservation(
         city: City,
         memory: AgentMemory,
-    ): ConstructionProgressObservation? {
+    ): AgentCityProjectObservation? {
         val currentName = city.cityConstructions.currentConstructionName()
         val cityIntent = findCityIntent(memory, city)
         if (currentName.isBlank() && cityIntent == null) return null
         if (currentName.isBlank()) {
-            return ConstructionProgressObservation(
-                intent = cityIntent?.intent,
-                target = cityIntent?.target,
+            return AgentCityProjectObservation(
+                name = null,
                 status = "needs_choice",
-                progressNote = cityIntent?.target?.let { "No construction is queued even though memory was carrying $it." }
-                    ?: "No construction is currently queued for this city.",
+                note = cityIntent?.target?.let { "No active project is selected even though memory was carrying $it." }
+                    ?: "No active project is selected for this city.",
                 switchCost = "low",
             )
         }
@@ -953,14 +943,13 @@ object AgentObservationBuilder {
             workDone > 0 || intentMatches -> "medium"
             else -> "low"
         }
-        return ConstructionProgressObservation(
-            intent = cityIntent?.intent,
-            target = cityIntent?.target,
+        return AgentCityProjectObservation(
+            name = currentName,
             turnsLeft = turnsLeft,
-            workDone = workDone,
-            workRemaining = workRemaining,
+            productionInvested = workDone,
+            productionRemaining = workRemaining,
             status = status,
-            progressNote = progressNote,
+            note = progressNote,
             switchCost = switchCost,
         )
     }

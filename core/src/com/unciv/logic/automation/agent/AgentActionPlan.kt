@@ -54,15 +54,6 @@ sealed class AgentActionCommand {
     ) : AgentActionCommand()
 
     @Serializable
-    @SerialName("city_choose_construction")
-    data class CityChooseConstruction(
-        override val priority: Int = 0,
-        val cityX: Int,
-        val cityY: Int,
-        val constructionName: String,
-    ) : AgentActionCommand()
-
-    @Serializable
     @SerialName("end_turn")
     data class EndTurn(
         override val priority: Int = Int.MAX_VALUE,

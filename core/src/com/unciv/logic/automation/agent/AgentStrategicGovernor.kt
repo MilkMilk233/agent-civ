@@ -26,8 +26,8 @@ object AgentStrategicGovernor {
 
         val workerFacts = observation.priorityFacts.count { isWorkerFact(it) }
         val suppressedContext = buildList {
-            val hiddenCities = observation.citiesNeedingAttention.size - cityHighlights.size
-            val hiddenUnits = observation.actionableUnits.size - unitHighlights.size
+            val hiddenCities = observation.cities.size - cityHighlights.size
+            val hiddenUnits = observation.units.size - unitHighlights.size
             val hiddenOpportunities = observation.opportunities.size - opportunityHighlights.size
             if (hiddenCities > 0) add("$hiddenCities lower-priority city cards were hidden after strategic ranking.")
             if (hiddenUnits > 0) add("$hiddenUnits lower-priority unit cards were hidden after strategic ranking.")
@@ -152,8 +152,8 @@ object AgentStrategicGovernor {
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
         roadmap: AgentStrategicRoadmapMemory?,
-        cityHighlights: List<CityAttentionObservation>,
-        unitHighlights: List<ActionableUnitObservation>,
+        cityHighlights: List<AgentCityObservation>,
+        unitHighlights: List<AgentUnitObservation>,
     ): AgentPlannerTacticalPressureObservation {
         val primaryThreat = empireObservation.victoryThreats.firstOrNull()
         val mustActReasons = linkedSetOf<String>()
@@ -223,9 +223,9 @@ object AgentStrategicGovernor {
     private fun selectCityHighlights(
         observation: AgentObservation,
         gameContext: AgentPublicGameContextObservation,
-    ): List<CityAttentionObservation> {
+    ): List<AgentCityObservation> {
         val maxCities = if (gameContext.duelLike) 3 else 4
-        return observation.citiesNeedingAttention
+        return observation.cities
             .sortedByDescending { cityScore(it) }
             .take(maxCities)
     }
@@ -234,7 +234,7 @@ object AgentStrategicGovernor {
         observation: AgentObservation,
         gameContext: AgentPublicGameContextObservation,
         primaryThreat: AgentVictoryThreatObservation?,
-    ): List<ActionableUnitObservation> {
+    ): List<AgentUnitObservation> {
         val maxUnits = when {
             observation.empireSummary.isAtWar -> 6
             observation.turn >= 150 -> 5
@@ -247,8 +247,11 @@ object AgentStrategicGovernor {
             else -> 3
         }
 
-        val ranked = observation.actionableUnits.sortedByDescending { unitScore(it, observation, gameContext, primaryThreat) }
-        val selected = arrayListOf<ActionableUnitObservation>()
+        val candidateUnits = observation.units
+            .filter { it.detailLevel == "expanded" }
+            .ifEmpty { observation.units }
+        val ranked = candidateUnits.sortedByDescending { unitScore(it, observation, gameContext, primaryThreat) }
+        val selected = arrayListOf<AgentUnitObservation>()
         var workerCount = 0
         for (unit in ranked) {
             if (selected.size >= maxUnits) break
@@ -275,8 +278,8 @@ object AgentStrategicGovernor {
     private fun buildProgressInMotion(
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
-        cityHighlights: List<CityAttentionObservation>,
-        unitHighlights: List<ActionableUnitObservation>,
+        cityHighlights: List<AgentCityObservation>,
+        unitHighlights: List<AgentUnitObservation>,
     ): List<AgentPlannerProgressObservation> {
         val progress = arrayListOf<AgentPlannerProgressObservation>()
         empireObservation.currentResearch?.let { research ->
@@ -299,11 +302,11 @@ object AgentStrategicGovernor {
         }
         cityHighlights
             .mapNotNull { city ->
-                city.constructionProgress?.let { progressObservation ->
+                city.project?.let { project ->
                     AgentPlannerProgressObservation(
                         category = "city",
-                        label = "${city.name}: ${city.currentConstruction}",
-                        detail = progressObservation.progressNote,
+                        label = "${city.name}: ${project.name ?: "Needs project"}",
+                        detail = project.note,
                     )
                 }
             }
@@ -352,35 +355,35 @@ object AgentStrategicGovernor {
         return score
     }
 
-    private fun cityScore(city: CityAttentionObservation): Int {
+    private fun cityScore(city: AgentCityObservation): Int {
         var score = 100
-        score += city.nearbyHostileUnits * 20
-        score += city.nearbyHostileCities * 30
-        if (city.isCapital) score += 15
-        if (city.canBombard) score += 5
-        if (city.turnsToGrowth != null && city.turnsToGrowth <= 2) score += 10
-        val progress = city.constructionProgress
-        if (progress != null) {
-            score += when (progress.switchCost.lowercase()) {
+        score += city.state.nearbyHostileUnits * 20
+        score += city.state.nearbyHostileCities * 30
+        if (city.state.isCapital) score += 15
+        if (city.state.canBombard) score += 5
+        if (city.state.turnsToGrowth != null && city.state.turnsToGrowth <= 2) score += 10
+        val project = city.project
+        if (project != null) {
+            score += when (project.switchCost.lowercase()) {
                 "high" -> 18
                 "medium" -> 10
                 else -> 4
             }
-            if (progress.status.contains("progress", ignoreCase = true)) score += 8
-            if ((progress.turnsLeft ?: Int.MAX_VALUE) <= 2) score += 10
+            if (project.status in setOf("in_progress", "following_intent", "committed", "nearly_complete")) score += 8
+            if ((project.turnsLeft ?: Int.MAX_VALUE) <= 2) score += 10
         }
         return score
     }
 
     private fun hasMeaningfulImmediateLevers(
-        cityHighlights: List<CityAttentionObservation>,
-        unitHighlights: List<ActionableUnitObservation>,
+        cityHighlights: List<AgentCityObservation>,
+        unitHighlights: List<AgentUnitObservation>,
         empireObservation: AgentEmpireObservation,
     ): Boolean {
         val cityLevers = cityHighlights.any { city ->
-            city.cityOptionCandidates.any { candidate ->
-                candidate.category in setOf("construction", "purchase", "tile")
-            }
+            city.actions.chooseProject.isNotEmpty() ||
+                city.actions.purchase.isNotEmpty() ||
+                city.actions.buyTile.isNotEmpty()
         }
         val unitLevers = unitHighlights.any { unit ->
             unit.unitOptionCandidates.isNotEmpty() || unit.legalActionCandidates.isNotEmpty()
@@ -396,7 +399,7 @@ object AgentStrategicGovernor {
     }
 
     private fun unitScore(
-        unit: ActionableUnitObservation,
+        unit: AgentUnitObservation,
         observation: AgentObservation,
         gameContext: AgentPublicGameContextObservation,
         primaryThreat: AgentVictoryThreatObservation?,
@@ -415,6 +418,7 @@ object AgentStrategicGovernor {
         if (unit.unitOptionCandidates.any { it.candidateId.startsWith("unitattack:") }) score += 40
         if (unit.nearbyHostileUnits > 0) score += 25
         if (unit.nearbyHostileCities > 0) score += 35
+        if (unit.detailLevel == "expanded") score += 20
         val assignment = unit.assignmentProgress
         if (assignment != null) {
             if (assignment.status == "on_target") score += 20

@@ -330,7 +330,7 @@ object AgentMemoryManager {
         val primaryThreat = empireObservation.victoryThreats.firstOrNull()
         val mode = when {
             observation.empireSummary.visibleHostileUnits > 0 ||
-                observation.citiesNeedingAttention.any { it.nearbyHostileUnits > 0 || it.nearbyHostileCities > 0 } -> "defend_and_stabilize"
+                observation.cities.any { it.state.nearbyHostileUnits > 0 || it.state.nearbyHostileCities > 0 } -> "defend_and_stabilize"
             observation.empireSummary.settlersReady > 0 ||
                 observation.opportunities.any { it.looksLikeSettlementOpportunity() } -> "expand_safely"
             observation.empireSummary.workersReady > 0 &&
@@ -374,7 +374,7 @@ object AgentMemoryManager {
         val primaryThreat = empireObservation.victoryThreats.firstOrNull()
         val mode = when {
             observation.empireSummary.visibleHostileUnits > 0 ||
-                observation.citiesNeedingAttention.any { it.nearbyHostileUnits > 0 || it.nearbyHostileCities > 0 } -> "defend_and_stabilize"
+                observation.cities.any { it.state.nearbyHostileUnits > 0 || it.state.nearbyHostileCities > 0 } -> "defend_and_stabilize"
             observation.empireSummary.settlersReady > 0 ||
                 observation.opportunities.any { it.looksLikeSettlementOpportunity() } -> "expand_safely"
             observation.empireSummary.workersReady > 0 &&
@@ -670,29 +670,8 @@ object AgentMemoryManager {
         plan: AgentActionPlan,
         turn: Int,
     ): ArrayList<CityIntentMemory> {
-        val cityByKey = observation.citiesNeedingAttention.associateBy { cityKey(it.x, it.y) }
+        val cityByKey = observation.cities.associateBy { cityKey(it.x, it.y) }
         val intentsByKey = linkedMapOf<String, CityIntentMemory>()
-
-        plan.actions
-            .filterIsInstance<AgentActionCommand.CityChooseConstruction>()
-            .forEach { action ->
-                val city = cityByKey[cityKey(action.cityX, action.cityY)]
-                val intent = if (city != null && (city.nearbyHostileUnits > 0 || city.nearbyHostileCities > 0)) {
-                    "hold_front_build"
-                } else {
-                    "develop_city"
-                }
-                intentsByKey[cityKey(action.cityX, action.cityY)] = CityIntentMemory(
-                    cityX = action.cityX,
-                    cityY = action.cityY,
-                    cityName = city?.name ?: "(${action.cityX}, ${action.cityY})",
-                    intent = intent,
-                    target = action.constructionName,
-                    reasons = ArrayList(city?.reasons?.take(3) ?: emptyList()),
-                    lastProgressTurn = turn,
-                    staleAfterTurn = turn + cityIntentHorizonTurns,
-                )
-            }
 
         plan.actions
             .filterIsInstance<AgentActionCommand.SelectCityOption>()
@@ -706,7 +685,7 @@ object AgentMemoryManager {
                         cityName = city?.name ?: "(${parsed.cityX}, ${parsed.cityY})",
                         intent = "develop_city",
                         target = parsed.payload,
-                        reasons = ArrayList(listOf("Production plan selected") + (city?.reasons?.take(2) ?: emptyList())),
+                        reasons = ArrayList(listOf("Project selected") + (city?.signals?.take(2) ?: emptyList())),
                         lastProgressTurn = turn,
                         staleAfterTurn = turn + cityIntentHorizonTurns,
                     )
@@ -716,7 +695,7 @@ object AgentMemoryManager {
                         cityName = city?.name ?: "(${parsed.cityX}, ${parsed.cityY})",
                         intent = "invest_with_gold",
                         target = parsed.payload,
-                        reasons = ArrayList(listOf("Gold purchase selected") + (city?.reasons?.take(2) ?: emptyList())),
+                        reasons = ArrayList(listOf("Gold purchase selected") + (city?.signals?.take(2) ?: emptyList())),
                         lastProgressTurn = turn,
                         staleAfterTurn = turn + cityIntentHorizonTurns,
                     )
@@ -726,7 +705,7 @@ object AgentMemoryManager {
                         cityName = city?.name ?: "(${parsed.cityX}, ${parsed.cityY})",
                         intent = "city_focus",
                         target = parsed.payload,
-                        reasons = ArrayList(listOf("City focus adjusted") + (city?.reasons?.take(2) ?: emptyList())),
+                        reasons = ArrayList(listOf("City focus adjusted") + (city?.signals?.take(2) ?: emptyList())),
                         lastProgressTurn = turn,
                         staleAfterTurn = turn + cityIntentHorizonTurns,
                     )
@@ -741,8 +720,8 @@ object AgentMemoryManager {
         plan: AgentActionPlan,
         turn: Int,
     ): ArrayList<UnitAssignmentMemory> {
-        val unitById = observation.actionableUnits.associateBy { it.id }
-        val unitOptionByCandidateId = observation.actionableUnits
+        val unitById = observation.units.associateBy { it.id }
+        val unitOptionByCandidateId = observation.units
             .flatMap { it.unitOptionCandidates }
             .associateBy { it.candidateId }
         val assignmentsByUnitId = linkedMapOf<Int, UnitAssignmentMemory>()
@@ -776,7 +755,7 @@ object AgentMemoryManager {
     }
 
     private fun classifyAssignment(
-        unit: ActionableUnitObservation?,
+        unit: AgentUnitObservation?,
         actionType: String?,
         targetX: Int?,
         targetY: Int?,
@@ -835,7 +814,7 @@ object AgentMemoryManager {
     }
 
     private fun shouldPersistUnitAssignment(
-        unit: ActionableUnitObservation?,
+        unit: AgentUnitObservation?,
         actionType: String?,
         assignment: UnitAssignmentMemory,
     ): Boolean {
@@ -876,7 +855,7 @@ object AgentMemoryManager {
 
     private fun deriveUnitOptionAssignment(
         candidateId: String,
-        unitById: Map<Int, ActionableUnitObservation>,
+        unitById: Map<Int, AgentUnitObservation>,
         candidateObservations: Map<String, UnitOptionCandidateObservation>,
         turn: Int,
     ): UnitAssignmentMemory? {
@@ -1038,12 +1017,17 @@ object AgentMemoryManager {
         if (observation.empireSummary.happiness < 0) return false
         return observation.opportunities.any { it.looksLikeSettlementOpportunity() } ||
             observation.opportunities.any { it.looksLikeImprovementOpportunity() } ||
-            observation.citiesNeedingAttention.any { city ->
-                city.topConstructionChoices.any { it == "Worker" || it == "Settler" || it == "Granary" || it == "Monument" }
+            observation.cities.any { city ->
+                city.actions.chooseProject.any { candidate ->
+                    candidate.candidateId.endsWith(":Worker") ||
+                        candidate.candidateId.endsWith(":Settler") ||
+                        candidate.candidateId.endsWith(":Granary") ||
+                        candidate.candidateId.endsWith(":Monument")
+                }
             }
     }
 
-    private fun isPeacefulSnowballWindow(unit: ActionableUnitObservation, turn: Int?): Boolean {
+    private fun isPeacefulSnowballWindow(unit: AgentUnitObservation, turn: Int?): Boolean {
         if (turn != null && turn > 45) return false
         if (unit.nearbyHostileUnits > 0 || unit.nearbyHostileCities > 0) return false
         return true

@@ -15,6 +15,7 @@ object AgentTurnAutomation {
             return
         }
 
+        AgentCityProjectPolicy.enforceSingleProject(civInfo)
         val seedMemory = civInfo.agentMemory.clone()
         val initialObservation = AgentObservationBuilder.build(civInfo, seedMemory)
         val initialEmpireObservation = AgentEmpireObservationBuilder.build(civInfo, seedMemory).observation
@@ -86,8 +87,8 @@ object AgentTurnAutomation {
             civName = civInfo.civName,
             turn = civInfo.gameInfo.turns,
             details = mapOf(
-                "cities" to observation.empireSummary.cityCount.toString(),
-                "units" to observation.empireSummary.unitCount.toString(),
+                "summaryCities" to observation.empireSummary.cityCount.toString(),
+                "summaryUnits" to observation.empireSummary.unitCount.toString(),
                 "knownCivs" to observation.empireSummary.knownCivs.toString(),
                 "visibleTiles" to observation.empireSummary.visibleTiles.toString(),
                 "gold" to observation.empireSummary.gold.toString(),
@@ -97,8 +98,10 @@ object AgentTurnAutomation {
                 "happiness" to observation.empireSummary.happiness.toString(),
                 "isAtWar" to observation.empireSummary.isAtWar.toString(),
                 "priorityFacts" to observation.priorityFacts.size.toString(),
-                "citiesNeedingAttention" to observation.citiesNeedingAttention.size.toString(),
-                "actionableUnits" to observation.actionableUnits.size.toString(),
+                "observedCities" to observation.cities.size.toString(),
+                "expandedCities" to observation.perceptionSummary.expandedCities.toString(),
+                "observedUnits" to observation.units.size.toString(),
+                "expandedUnits" to observation.perceptionSummary.expandedUnits.toString(),
                 "visibleThreatsAndTargets" to observation.visibleThreatsAndTargets.size.toString(),
                 "opportunities" to observation.opportunities.size.toString(),
                 "memoryMode" to memory.strategicPosture.mode,
