@@ -288,7 +288,7 @@ export default function App() {
         </aside>
 
         <section className="detail-pane">
-          {selectedTurn ? <TurnDetail turn={selectedTurn} allTurns={turns} matchSummary={selectedMatch} /> : <EmptyState />}
+          {selectedTurn ? <TurnDetail turn={selectedTurn} /> : <EmptyState />}
         </section>
       </section>
 
@@ -458,12 +458,8 @@ function LaunchModal({
 
 function TurnDetail({
   turn,
-  allTurns,
-  matchSummary,
 }: {
   turn: TurnRecord;
-  allTurns: TurnRecord[];
-  matchSummary: MatchSummary | null;
 }) {
   const observation = asRecord(turn.observation);
   const empireObservation = asRecord(turn.empireObservation);
@@ -492,11 +488,21 @@ function TurnDetail({
   const roadmapRefreshReason = stringValue(roadmap?.lastRefreshReason);
   const roadmapSwitchTriggers = stringList(roadmap?.switchTriggers);
   const turnMetrics = deriveTurnMetrics(turn);
-  const averageMetrics = deriveAverageMetrics(allTurns, matchSummary);
   const strategistRefresh = latestEventDetails(turn.events, [
     "strategist_refresh_requested_by_tactical",
     "strategist_refresh_requested",
   ]);
+  const candidateLookup = buildCandidateLookup(empireChoices, cityHighlights, unitHighlights);
+  const tacticalAttempts = buildTacticalAttempts(turn.events);
+  const strategistArtifacts = buildStrategistArtifacts(turn.events);
+  const latestTerminalEvent = findLatestEvent(turn.events, ["plan_applied", "fallback_legacy", "plan_missing"]);
+  const hiddenCities = Math.max(0, (numberValue(perceptionSummary?.totalCities) ?? cityHighlights.length) - cityHighlights.length);
+  const hiddenUnits = Math.max(0, (numberValue(perceptionSummary?.totalUnits) ?? unitHighlights.length) - unitHighlights.length);
+  const hiddenThreats = Math.max(0, arrayLength(observation?.visibleThreatsAndTargets) - threatHighlights.length);
+  const memoryRecord = asRecord(turn.memory);
+  const memoryCityIntents = arrayLength(memoryRecord?.cityIntents);
+  const memoryUnitAssignments = arrayLength(memoryRecord?.unitAssignments);
+  const memoryRecentFailures = arrayLength(memoryRecord?.recentFailures);
 
   return (
     <div className="detail-stack">
@@ -511,13 +517,39 @@ function TurnDetail({
             {turnMetrics.blocked ? <span className="tag warning">Blocked turn</span> : null}
             {turnMetrics.retryCount > 0 ? <span className="tag neutral">{formatNumber(turnMetrics.retryCount)} retries</span> : null}
           </div>
-          <p className="mini-note">
-            Retries happen before execution. This card separates planning churn from live execution rejects so you can see whether the planner is thinking twice or actually failing live.
-          </p>
+          <p className="mini-note">This page is organized around the agent's real flow: what existed in the game, what was surfaced into the prompts, what the models chose, and what survived validation.</p>
         </div>
 
-        <div className="summary-grid summary-grid-wide">
-          <SummaryStat label="Latest event" value={formatRelative(turn.latestEpochMs)} />
+        <div className="story-strip">
+          <StoryStage
+            title="Reality"
+            subtitle={`${formatNumber(numberValue(empireSummary?.cityCount))} cities · ${formatNumber(numberValue(empireSummary?.unitCount))} units · ${formatNumber(numberValue(empireSummary?.visibleHostileUnits))} visible hostiles`}
+            detail="The full board and empire state before any compression."
+          />
+          <StoryStage
+            title="Perception"
+            subtitle={`${formatNumber(attentionFacts.length)} reminders · ${formatNumber(cityHighlights.length)} city cards · ${formatNumber(unitHighlights.length)} unit cards`}
+            detail="What the tactician actually saw in the planner brief."
+          />
+          <StoryStage
+            title="Decision"
+            subtitle={`${formatNumber(plannedActions.length)} actions · ${formatNumber(turnMetrics.tacticalPasses)} tactical passes`}
+            detail="The structured plan returned by the LLM across attempts."
+          />
+          <StoryStage
+            title="Result"
+            subtitle={
+              turnMetrics.fallback
+                ? "Legacy fallback"
+                : turnMetrics.blocked
+                  ? "Blocked"
+                  : `${formatNumber(turnMetrics.executedActions)} applied / ${formatNumber(turnMetrics.plannedActions)} planned`
+            }
+            detail={stringValue(latestTerminalEvent?.message) || "Outcome was not recorded."}
+          />
+        </div>
+
+        <div className="summary-grid compact">
           <SummaryStat
             label="Planner outcome"
             value={describePlannerOutcome(turnMetrics)}
@@ -553,174 +585,219 @@ function TurnDetail({
             value={turnMetrics.fallback ? "Fallback" : turnMetrics.blocked ? "Blocked" : "Stable"}
             note={`illegal ${formatPercent(turnMetrics.illegalActionRate)}`}
           />
-          <SummaryStat label="First-pass success" value={formatPercent(averageMetrics.firstPassRate)} />
           <SummaryStat
-            label="Retry-turn rate"
-            value={formatPercent(averageMetrics.retryTurnRate)}
-            note={`${formatNumber(averageMetrics.retryTurns)} of ${formatNumber(averageMetrics.sampleTurns)} turns`}
+            label="Memory carried in"
+            value={`${formatNumber(memoryCityIntents)} city · ${formatNumber(memoryUnitAssignments)} unit`}
+            note={`${formatNumber(memoryRecentFailures)} recent failures`}
           />
-          <SummaryStat
-            label="Avg retries / turn"
-            value={averageMetrics.avgRetriesPerTurn.toFixed(2)}
-            note={averageMetrics.retryTurns > 0 ? `${averageMetrics.avgRetriesOnRetryTurns.toFixed(2)} on retry turns` : "no retry turns yet"}
-          />
-          <SummaryStat label="Avg live reject rate" value={formatPercent(averageMetrics.avgExecutionRejectRate)} />
-          <SummaryStat label="Avg LLM time" value={formatDurationMs(averageMetrics.avgLatencyMs)} />
-          <SummaryStat label="Avg fallback rate" value={formatPercent(averageMetrics.avgFallbackRate)} />
-          <SummaryStat label="Avg blocked rate" value={formatPercent(averageMetrics.avgBlockedRate)} />
+          <SummaryStat label="Latest event" value={formatRelative(turn.latestEpochMs)} />
         </div>
       </Card>
 
-      <div className="panel-grid">
-        <Card title="Strategist roadmap" subtitle="The long and mid-term plan that tactical turns should serve.">
-          {roadmap ? (
-            <>
-              <div className="summary-grid compact">
-                <SummaryStat label="Doctrine" value={stringValue(roadmap.doctrine)} />
-                <SummaryStat label="Win path" value={stringValue(roadmap.winPath)} />
-                <SummaryStat label="Phase" value={stringValue(roadmap.phase)} />
-                <SummaryStat label="Review turn" value={formatNumber(numberValue(roadmap.reviewAfterTurn))} />
-                <SummaryStat label="Created" value={roadmapCreatedTurn === null ? "Unknown" : `Turn ${formatNumber(roadmapCreatedTurn)}`} />
-                <SummaryStat label="Last reviewed" value={roadmapLastReviewedTurn === null ? "Unknown" : `Turn ${formatNumber(roadmapLastReviewedTurn)}`} />
-              </div>
-              <p className="card-paragraph">{stringValue(roadmap.thesis) || "No roadmap thesis recorded."}</p>
-              {roadmapNotes ? <p className="mini-note">{roadmapNotes}</p> : null}
-              {roadmapRefreshReason || strategistRefresh ? (
-                <>
-                  <SectionLabel text="Refresh context" />
-                  <div className="tag-list">
-                    {roadmapRefreshReason ? <span className="tag accent">{roadmapRefreshReason}</span> : null}
-                    {stringValue(strategistRefresh?.urgency) ? (
-                      <StatusPill tone={toneFromUrgency(stringValue(strategistRefresh?.urgency))}>
-                        {stringValue(strategistRefresh?.urgency)}
-                      </StatusPill>
-                    ) : null}
-                    {stringValue(strategistRefresh?.reason) ? <span className="tag neutral">{stringValue(strategistRefresh?.reason)}</span> : null}
-                  </div>
-                </>
-              ) : null}
-              <SectionLabel text="Mid-term goals" />
-              <TagList values={stringList(roadmap.midTermGoals)} />
-              <SectionLabel text="Must maintain" />
-              <TagList values={stringList(roadmap.mustMaintain)} tone="accent" />
-              <SectionLabel text="Watch-outs" />
-              <TagList values={stringList(roadmap.watchOuts)} tone="warning" />
-              <SectionLabel text="Switch triggers" />
-              <TagList values={roadmapSwitchTriggers} />
-            </>
-          ) : (
-            <p className="muted-text">No strategist roadmap was recorded for this turn.</p>
-          )}
-        </Card>
+      <TurnSectionNav
+        items={[
+          { id: "section-strategist", label: "Strategist" },
+          { id: "section-perception", label: "Perception" },
+          { id: "section-decision", label: "Decision" },
+          { id: "section-literal", label: "Literal" },
+          { id: "section-events", label: "Events" },
+        ]}
+      />
 
-        <Card title="Tactical brief" subtitle="The filtered turn brief the planner saw before choosing actions.">
-          {plannerBrief ? (
-            <>
-              <div className="summary-grid compact">
-                <SummaryStat label="Archetype" value={stringValue(doctrine?.gameArchetype)} />
-                <SummaryStat label="Doctrine" value={stringValue(doctrine?.doctrine)} />
-                <SummaryStat label="Phase" value={stringValue(doctrine?.phase)} />
-                <SummaryStat label="Victory goal" value={stringValue(doctrine?.victoryGoal)} />
-                <SummaryStat label="Rival" value={stringValue(doctrine?.rivalCiv)} />
-                <SummaryStat label="Rival plan" value={stringValue(doctrine?.rivalVictoryGoal)} />
-              </div>
-              <p className="card-paragraph">{stringValue(doctrine?.thesis) || "No tactical thesis recorded."}</p>
-              <SectionLabel text="Commitments" />
-              <TagList values={stringList(doctrine?.commitments)} />
-              <SectionLabel text="Watch-outs" />
-              <TagList values={stringList(doctrine?.watchOuts)} tone="warning" />
-              <SectionLabel text="Suppressed context" />
-              <TagList values={suppressedContext} />
-            </>
-          ) : (
-            <p className="muted-text">Planner brief missing from this turn.</p>
-          )}
-        </Card>
-      </div>
+      <SectionShell
+        id="section-strategist"
+        eyebrow="Strategist"
+        title="What the strategist saw"
+        body="The strategist owns doctrine and roadmap updates. This section shows the compact state that shaped long-horizon commitments and watch-outs."
+      >
+        <div className="panel-grid panel-grid-asymmetric">
+          <Card title="Strategist roadmap" subtitle="The long and mid-term plan that tactical turns should serve.">
+            {roadmap ? (
+              <>
+                <div className="summary-grid compact">
+                  <SummaryStat label="Doctrine" value={stringValue(roadmap.doctrine)} />
+                  <SummaryStat label="Win path" value={stringValue(roadmap.winPath)} />
+                  <SummaryStat label="Phase" value={stringValue(roadmap.phase)} />
+                  <SummaryStat label="Review turn" value={formatNumber(numberValue(roadmap.reviewAfterTurn))} />
+                  <SummaryStat label="Created" value={roadmapCreatedTurn === null ? "Unknown" : `Turn ${formatNumber(roadmapCreatedTurn)}`} />
+                  <SummaryStat label="Last reviewed" value={roadmapLastReviewedTurn === null ? "Unknown" : `Turn ${formatNumber(roadmapLastReviewedTurn)}`} />
+                </div>
+                <p className="card-paragraph">{stringValue(roadmap.thesis) || "No roadmap thesis recorded."}</p>
+                {roadmapNotes ? <p className="mini-note">{roadmapNotes}</p> : null}
+                {roadmapRefreshReason || strategistRefresh ? (
+                  <>
+                    <SectionLabel text="Refresh context" />
+                    <div className="tag-list">
+                      {roadmapRefreshReason ? <span className="tag accent">{roadmapRefreshReason}</span> : null}
+                      {stringValue(strategistRefresh?.urgency) ? (
+                        <StatusPill tone={toneFromUrgency(stringValue(strategistRefresh?.urgency))}>
+                          {stringValue(strategistRefresh?.urgency)}
+                        </StatusPill>
+                      ) : null}
+                      {stringValue(strategistRefresh?.reason) ? <span className="tag neutral">{stringValue(strategistRefresh?.reason)}</span> : null}
+                    </div>
+                  </>
+                ) : null}
+                <SectionLabel text="Mid-term goals" />
+                <TagList values={stringList(roadmap.midTermGoals)} />
+                <SectionLabel text="Must maintain" />
+                <TagList values={stringList(roadmap.mustMaintain)} tone="accent" />
+                <SectionLabel text="Watch-outs" />
+                <TagList values={stringList(roadmap.watchOuts)} tone="warning" />
+                <SectionLabel text="Switch triggers" />
+                <TagList values={roadmapSwitchTriggers} />
+              </>
+            ) : (
+              <p className="muted-text">No strategist roadmap was recorded for this turn.</p>
+            )}
+          </Card>
 
-      <div className="panel-grid">
-        <StrategistContextSection
-          title="Strategist inputs"
-          brief={strategistBrief}
-          threats={strategistRivalThreats}
-          stateFacts={strategistStateFacts}
-        />
-
-        <Card title="Empire picture" subtitle="High-level state the strategist and tactical planner should keep in view.">
-          {empireObservation ? (
-            <div className="summary-grid compact">
-              <SummaryStat label="Ruleset" value={stringValue(asRecord(empireObservation.gameContext)?.rulesetName)} />
-              <SummaryStat label="Map" value={`${stringValue(asRecord(empireObservation.gameContext)?.mapSize)} ${stringValue(asRecord(empireObservation.gameContext)?.mapType)}`.trim()} />
-              <SummaryStat label="Victory goal" value={stringValue(empireObservation.victoryGoal)} />
-              <SummaryStat label="Research" value={stringValue(empireObservation.currentResearch)} />
-              <SummaryStat label="Gold" value={formatNumber(numberValue(empireObservation.gold))} />
-              <SummaryStat label="Happiness" value={formatNumber(numberValue(empireObservation.happiness))} />
-            </div>
-          ) : (
-            <p className="muted-text">No empire observation captured.</p>
-          )}
-        </Card>
-      </div>
-
-      <div className="panel-grid">
-        <AlertSection title="Attention facts" facts={attentionFacts} />
-        <ProgressSection title="Progress in motion" items={progressInMotion} />
-      </div>
-
-      <div className="panel-grid">
-        <ThreatHighlightsSection title="Threat highlights" threats={threatHighlights} />
-        <ObservationFactSection title="Opportunity highlights" facts={opportunityHighlights} emptyText="No opportunity highlights were surfaced for this turn." />
-      </div>
-
-      <div className="panel-grid">
-        <CityHighlightsSection title="City highlights" cities={cityHighlights} />
-        <UnitHighlightsSection title="Unit highlights" units={unitHighlights} />
-      </div>
-
-      <div className="panel-grid">
-        <EmpireChoicesSection title="Empire choices" choices={empireChoices} />
-        <Card title="Current board" subtitle="What mattered locally on this turn.">
-          {observation ? (
-            <div className="summary-grid compact">
-              <SummaryStat label="Cities" value={formatNumber(numberValue(empireSummary?.cityCount))} />
-              <SummaryStat label="Units" value={formatNumber(numberValue(empireSummary?.unitCount))} />
-              <SummaryStat label="Known civs" value={formatNumber(numberValue(empireSummary?.knownCivs))} />
-              <SummaryStat label="Threats surfaced" value={formatNumber(arrayLength(observation.visibleThreatsAndTargets))} />
-              <SummaryStat
-                label="Expanded cities"
-                value={formatNumber(numberValue(perceptionSummary?.expandedCities))}
-                note={`${formatNumber(numberValue(perceptionSummary?.totalCities))} total`}
-              />
-              <SummaryStat
-                label="Expanded units"
-                value={formatNumber(numberValue(perceptionSummary?.expandedUnits))}
-                note={`${formatNumber(numberValue(perceptionSummary?.totalUnits))} total`}
-              />
-            </div>
-          ) : (
-            <p className="muted-text">No tactical observation captured.</p>
-          )}
-        </Card>
-      </div>
-
-      <div className="panel-grid">
-        <ActionPlanSection title="Planned actions" actions={plannedActions} notes={stringValue(parsedPlan?.notes)} />
-        <DomainSummarySection title="Execution by domain" value={turn.outcomeDomainSummary ?? turn.plannedDomainCounts} />
-      </div>
-
-      <Card title="Raw events" subtitle="Keep this for deep debugging when the curated view is not enough.">
-        <div className="event-list">
-          {turn.events.map((event) => (
-            <details key={event.id} className="event-item">
-              <summary>
-                <span>{event.type}</span>
-                <span>{event.message}</span>
-              </summary>
-              <pre>{JSON.stringify(event.details ?? {}, null, 2)}</pre>
-            </details>
-          ))}
+          <StrategistContextSection
+            title="Strategist inputs"
+            brief={strategistBrief}
+            threats={strategistRivalThreats}
+            stateFacts={strategistStateFacts}
+          />
         </div>
-      </Card>
+      </SectionShell>
+
+      <SectionShell
+        id="section-perception"
+        eyebrow="Tactician"
+        title="What the tactician saw"
+        body="This is the compressed tactical packet that the planner actually used. It separates full board reality from the smaller planner brief so you can see what was surfaced and what stayed hidden."
+      >
+        <div className="panel-grid panel-grid-asymmetric">
+          <PerceptionCoverageSection
+            observation={observation}
+            perceptionSummary={perceptionSummary}
+            attentionFacts={attentionFacts}
+            cityHighlights={cityHighlights}
+            unitHighlights={unitHighlights}
+            threatHighlights={threatHighlights}
+            hiddenCities={hiddenCities}
+            hiddenUnits={hiddenUnits}
+            hiddenThreats={hiddenThreats}
+            suppressedContext={suppressedContext}
+          />
+
+          <Card title="Tactical brief" subtitle="Roadmap doctrine plus the final brief that the tactical prompt called the current truth.">
+            {plannerBrief ? (
+              <>
+                <div className="summary-grid compact">
+                  <SummaryStat label="Archetype" value={stringValue(doctrine?.gameArchetype)} />
+                  <SummaryStat label="Doctrine" value={stringValue(doctrine?.doctrine)} />
+                  <SummaryStat label="Phase" value={stringValue(doctrine?.phase)} />
+                  <SummaryStat label="Victory goal" value={stringValue(doctrine?.victoryGoal)} />
+                  <SummaryStat label="Rival" value={stringValue(doctrine?.rivalCiv)} />
+                  <SummaryStat label="Rival plan" value={stringValue(doctrine?.rivalVictoryGoal)} />
+                </div>
+                <p className="card-paragraph">{stringValue(doctrine?.thesis) || "No tactical thesis recorded."}</p>
+                <SectionLabel text="Commitments" />
+                <TagList values={stringList(doctrine?.commitments)} />
+                <SectionLabel text="Watch-outs" />
+                <TagList values={stringList(doctrine?.watchOuts)} tone="warning" />
+                <SectionLabel text="Immediate pressure" />
+                <TagList values={stringList(asRecord(plannerBrief?.tacticalPressure)?.priorityThisTurn)} tone="accent" />
+              </>
+            ) : (
+              <p className="muted-text">Planner brief missing from this turn.</p>
+            )}
+          </Card>
+        </div>
+
+        <div className="panel-grid">
+          <AlertSection title="Attention facts" facts={attentionFacts} />
+          <ProgressSection title="Progress already in motion" items={progressInMotion} />
+        </div>
+
+        <div className="panel-grid">
+          <ThreatHighlightsSection title="Threats the tactician could see" threats={threatHighlights} />
+          <ObservationFactSection title="Opportunities surfaced" facts={opportunityHighlights} emptyText="No opportunity highlights were surfaced for this turn." />
+        </div>
+
+        <div className="panel-grid">
+          <Card title="Empire picture" subtitle="Macro state shared around the tactical turn.">
+            {empireObservation ? (
+              <div className="summary-grid compact">
+                <SummaryStat label="Ruleset" value={stringValue(asRecord(empireObservation.gameContext)?.rulesetName)} />
+                <SummaryStat label="Map" value={`${stringValue(asRecord(empireObservation.gameContext)?.mapSize)} ${stringValue(asRecord(empireObservation.gameContext)?.mapType)}`.trim()} />
+                <SummaryStat label="Victory goal" value={stringValue(empireObservation.victoryGoal)} />
+                <SummaryStat label="Research" value={stringValue(empireObservation.currentResearch)} />
+                <SummaryStat label="Gold" value={formatNumber(numberValue(empireObservation.gold))} />
+                <SummaryStat label="Happiness" value={formatNumber(numberValue(empireObservation.happiness))} />
+              </div>
+            ) : (
+              <p className="muted-text">No empire observation captured.</p>
+            )}
+          </Card>
+          <EmpireChoicesSection title="Empire choices" choices={empireChoices} />
+        </div>
+
+        <div className="panel-grid">
+          <CityHighlightsSection title="Surfaced city cards" cities={cityHighlights} />
+          <UnitHighlightsSection title="Surfaced unit cards" units={unitHighlights} />
+        </div>
+      </SectionShell>
+
+      <SectionShell
+        id="section-decision"
+        eyebrow="Decision"
+        title="What the agent decided"
+        body="These are the structured actions the tactician returned, plus the retry and validation story that determined whether they stuck."
+      >
+        <div className="panel-grid panel-grid-asymmetric">
+          <ActionPlanSection
+            title="Planned actions"
+            actions={plannedActions}
+            notes={stringValue(parsedPlan?.notes)}
+            candidateLookup={candidateLookup}
+          />
+          <DomainSummarySection title="Applied outcome" value={turn.outcomeDomainSummary ?? turn.plannedDomainCounts} />
+        </div>
+
+        <AttemptLadderSection attempts={tacticalAttempts} validationFailures={turn.validationFailures} />
+      </SectionShell>
+
+      <SectionShell
+        id="section-literal"
+        eyebrow="Literal"
+        title="Exact prompt artifacts"
+        body="Use this when you need the honest answer to 'did the agent really see this?' These blocks come from logged request events and the stored JSON payloads, not from the curated UI summaries."
+      >
+        <details className="section-disclosure">
+          <summary>Open literal prompt and JSON artifacts</summary>
+          <LiteralArtifactsSection
+            memory={turn.memory}
+            plannerBrief={turn.plannerBrief}
+            strategistBrief={turn.strategistBrief}
+            tacticalAttempts={tacticalAttempts}
+            strategistArtifacts={strategistArtifacts}
+          />
+        </details>
+      </SectionShell>
+
+      <SectionShell
+        id="section-events"
+        eyebrow="Events"
+        title="Raw event log"
+        body="Everything else is derived from these events. Keep this for deep debugging and schema audits."
+      >
+        <details className="section-disclosure">
+          <summary>Open raw events</summary>
+          <div className="event-list">
+            {turn.events.map((event) => (
+              <details key={event.id} className="event-item">
+                <summary>
+                  <span>{event.type}</span>
+                  <span>{event.message}</span>
+                </summary>
+                <pre>{JSON.stringify(event.details ?? {}, null, 2)}</pre>
+              </details>
+            ))}
+          </div>
+        </details>
+      </SectionShell>
     </div>
   );
 }
@@ -786,11 +863,18 @@ function TagList({ values, tone = "neutral" }: { values: string[]; tone?: "neutr
   );
 }
 
-function JsonSection({ title, value }: { title: string; value: unknown }) {
+function EmptyCardState({
+  title = "Nothing surfaced",
+  body,
+}: {
+  title?: string;
+  body: string;
+}) {
   return (
-    <Card title={title}>
-      {value ? <pre>{JSON.stringify(value, null, 2)}</pre> : <p className="muted-text">Nothing recorded here for this turn.</p>}
-    </Card>
+    <div className="empty-card-state">
+      <strong>{title}</strong>
+      <p>{body}</p>
+    </div>
   );
 }
 
@@ -841,7 +925,7 @@ function ProgressSection({
       ))}
     </div>
   ) : (
-    <p className="muted-text">No in-flight progress was recorded for this turn.</p>
+    <EmptyCardState title="No in-flight progress" body="The planner brief did not carry any active research, city, or unit progress reminders for this turn." />
   );
 
   if (embedded) {
@@ -935,9 +1019,9 @@ function ObservationFactSection({
         </article>
       ))}
     </div>
-  ) : (
-    <p className="muted-text">{emptyText}</p>
-  );
+      ) : (
+        <EmptyCardState body={emptyText} />
+      );
 
   if (embedded) {
     return (
@@ -999,7 +1083,7 @@ function ThreatHighlightsSection({
       ))}
     </div>
   ) : (
-    <p className="muted-text">No threat highlights were surfaced for this turn.</p>
+    <EmptyCardState title="No threat highlights" body="No visible rivals, hostile units, or targetable cities were lifted into this turn's tactical brief." />
   );
 
   if (embedded) {
@@ -1012,6 +1096,146 @@ function ThreatHighlightsSection({
   }
 
   return <Card title={title}>{content}</Card>;
+}
+
+function SectionIntro({
+  eyebrow,
+  title,
+  body,
+}: {
+  eyebrow: string;
+  title: string;
+  body: string;
+}) {
+  return (
+    <div className="section-intro">
+      <p className="eyebrow">{eyebrow}</p>
+      <h2>{title}</h2>
+      <p>{body}</p>
+    </div>
+  );
+}
+
+function SectionShell({
+  id,
+  eyebrow,
+  title,
+  body,
+  children,
+}: {
+  id: string;
+  eyebrow: string;
+  title: string;
+  body: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section id={id} className="section-shell">
+      <SectionIntro eyebrow={eyebrow} title={title} body={body} />
+      <div className="section-shell-body">{children}</div>
+    </section>
+  );
+}
+
+function TurnSectionNav({
+  items,
+}: {
+  items: Array<{ id: string; label: string }>;
+}) {
+  return (
+    <nav className="turn-section-nav" aria-label="Turn sections">
+      {items.map((item) => (
+        <a key={item.id} href={`#${item.id}`} className="turn-section-link">
+          {item.label}
+        </a>
+      ))}
+    </nav>
+  );
+}
+
+function StoryStage({
+  title,
+  subtitle,
+  detail,
+}: {
+  title: string;
+  subtitle: string;
+  detail: string;
+}) {
+  return (
+    <article className="story-stage">
+      <span className="story-stage-title">{title}</span>
+      <strong>{subtitle}</strong>
+      <p>{detail}</p>
+    </article>
+  );
+}
+
+function PerceptionCoverageSection({
+  observation,
+  perceptionSummary,
+  attentionFacts,
+  cityHighlights,
+  unitHighlights,
+  threatHighlights,
+  hiddenCities,
+  hiddenUnits,
+  hiddenThreats,
+  suppressedContext,
+}: {
+  observation: Record<string, unknown> | null;
+  perceptionSummary: Record<string, unknown> | null;
+  attentionFacts: Record<string, unknown>[];
+  cityHighlights: Record<string, unknown>[];
+  unitHighlights: Record<string, unknown>[];
+  threatHighlights: Record<string, unknown>[];
+  hiddenCities: number;
+  hiddenUnits: number;
+  hiddenThreats: number;
+  suppressedContext: string[];
+}) {
+  return (
+    <Card title="Perception coverage" subtitle="How full observation was compressed before the tactical model planned the turn.">
+      {observation ? (
+        <>
+          <div className="summary-grid compact">
+            <SummaryStat
+              label="World cities"
+              value={formatNumber(numberValue(perceptionSummary?.totalCities))}
+              note={`${formatNumber(cityHighlights.length)} surfaced in brief`}
+            />
+            <SummaryStat
+              label="World units"
+              value={formatNumber(numberValue(perceptionSummary?.totalUnits))}
+              note={`${formatNumber(numberValue(perceptionSummary?.expandedUnits))} expanded · ${formatNumber(unitHighlights.length)} surfaced`}
+            />
+            <SummaryStat
+              label="Visible threats"
+              value={formatNumber(arrayLength(observation.visibleThreatsAndTargets))}
+              note={`${formatNumber(threatHighlights.length)} surfaced`}
+            />
+            <SummaryStat
+              label="Attention facts"
+              value={formatNumber(attentionFacts.length)}
+              note="Neutral reminders in the planner brief"
+            />
+          </div>
+
+          <div className="summary-grid compact">
+            <SummaryStat label="Hidden city cards" value={formatNumber(hiddenCities)} />
+            <SummaryStat label="Hidden unit cards" value={formatNumber(hiddenUnits)} />
+            <SummaryStat label="Hidden threat cards" value={formatNumber(hiddenThreats)} />
+            <SummaryStat label="Suppressed notes" value={formatNumber(suppressedContext.length)} />
+          </div>
+
+          <SectionLabel text="Suppressed context" />
+          <TagList values={suppressedContext} />
+        </>
+      ) : (
+        <p className="muted-text">No tactical observation captured.</p>
+      )}
+    </Card>
+  );
 }
 
 function EmpireChoicesSection({
@@ -1046,7 +1270,7 @@ function EmpireChoicesSection({
           ))}
         </div>
       ) : (
-        <p className="muted-text">No empire-level choices were surfaced in the tactical brief.</p>
+        <EmptyCardState title="No empire choices" body="The tactical brief did not expose any research, policy, macro, or diplomacy choices for this turn." />
       )}
     </Card>
   );
@@ -1133,7 +1357,7 @@ function CityHighlightsSection({ title, cities }: { title: string; cities: Recor
           })}
         </div>
       ) : (
-        <p className="muted-text">No city highlights were lifted into the turn brief.</p>
+        <EmptyCardState title="No surfaced city cards" body="No cities were lifted into the tactical brief for focused city planning on this turn." />
       )}
     </Card>
   );
@@ -1190,7 +1414,7 @@ function UnitHighlightsSection({ title, units }: { title: string; units: Record<
           })}
         </div>
       ) : (
-        <p className="muted-text">No unit highlights were lifted into the turn brief.</p>
+        <EmptyCardState title="No surfaced unit cards" body="No units were lifted into the tactical brief for focused unit planning on this turn." />
       )}
     </Card>
   );
@@ -1200,31 +1424,33 @@ function ActionPlanSection({
   title,
   actions,
   notes,
+  candidateLookup,
 }: {
   title: string;
   actions: Record<string, unknown>[];
   notes: string;
+  candidateLookup: Record<string, CandidateLookupEntry>;
 }) {
   return (
-    <Card title={title}>
+    <Card title={title} subtitle="Ordered actions exactly as the tactical planner returned them.">
       {notes ? <p className="card-paragraph">{notes}</p> : null}
       {actions.length ? (
         <div className="structured-list">
           {actions.map((action, index) => (
             <article key={`${stringValue(action.type)}-${index}`} className="structured-item">
               <div className="structured-item-header">
-                <strong>{describeAction(action)}</strong>
+                <strong>{describeAction(action, candidateLookup)}</strong>
                 <div className="tag-list compact">
                   <span className="tag neutral">{stringValue(action.type) || "action"}</span>
                   <span className="tag neutral">Priority {formatNumber(numberValue(action.priority) ?? 0)}</span>
                 </div>
               </div>
-              <p className="card-paragraph">{describeActionDetail(action)}</p>
+              <p className="card-paragraph">{describeActionDetail(action, candidateLookup)}</p>
             </article>
           ))}
         </div>
       ) : (
-        <p className="muted-text">No structured actions were parsed for this turn.</p>
+        <EmptyCardState title="No parsed actions" body="The tactician did not return any structured actions for this turn." />
       )}
     </Card>
   );
@@ -1233,7 +1459,7 @@ function ActionPlanSection({
 function DomainSummarySection({ title, value }: { title: string; value: unknown }) {
   const record = asRecord(value);
   return (
-    <Card title={title}>
+    <Card title={title} subtitle="What validation or live execution says actually happened across domains.">
       {record ? (
         <div className="summary-grid compact">
           {Object.entries(record).map(([key, raw]) => (
@@ -1243,9 +1469,123 @@ function DomainSummarySection({ title, value }: { title: string; value: unknown 
       ) : value ? (
         <pre>{JSON.stringify(value, null, 2)}</pre>
       ) : (
-        <p className="muted-text">No execution summary was recorded for this turn.</p>
+        <EmptyCardState title="No execution summary" body="No validation or live execution summary was recorded for this turn." />
       )}
     </Card>
+  );
+}
+
+function AttemptLadderSection({
+  attempts,
+  validationFailures,
+}: {
+  attempts: TacticalAttemptView[];
+  validationFailures: unknown;
+}) {
+  return (
+    <Card title="Retry and validation ladder" subtitle="Each tactical attempt, the parsed plan it produced, and why the next retry was requested.">
+      {attempts.length ? (
+        <div className="structured-list">
+          {attempts.map((attempt) => (
+            <article key={`attempt-${attempt.attemptNumber}`} className="structured-item">
+              <div className="structured-item-header">
+                <strong>Attempt {formatNumber(attempt.attemptNumber)}</strong>
+                <div className="tag-list compact">
+                  <span className="tag neutral">{attempt.parsedPlan ? `${formatNumber(arrayLength(attempt.parsedPlan.actions))} actions` : "No parsed plan"}</span>
+                  {attempt.validationFailure ? <StatusPill tone="warning">Retry requested</StatusPill> : <StatusPill tone="success">Final or clean pass</StatusPill>}
+                </div>
+              </div>
+
+              <div className="mini-metric-grid">
+                <MiniMetric label="Retry context" value={attempt.retryContext ? "present" : "none"} />
+                <MiniMetric label="Prompt size" value={attempt.prompt ? `${formatNumber(attempt.prompt.length)} chars` : "—"} />
+                <MiniMetric label="Brief JSON" value={attempt.plannerBriefJson ? "captured" : "—"} />
+                <MiniMetric label="Raw response" value={attempt.rawResponse ? "captured" : "—"} />
+              </div>
+
+              {attempt.parsedPlan ? (
+                <p className="card-paragraph">
+                  {stringValue(attempt.parsedPlan.notes) || "Parsed plan recorded without planner notes."}
+                </p>
+              ) : (
+                <p className="card-paragraph">No parsed plan was decoded for this attempt.</p>
+              )}
+
+              {attempt.validationFailure ? (
+                <details className="code-disclosure">
+                  <summary>Why retry {formatNumber(attempt.attemptNumber + 1)} was requested</summary>
+                  <pre>{attempt.validationFailure}</pre>
+                </details>
+              ) : null}
+            </article>
+          ))}
+        </div>
+      ) : (
+        <EmptyCardState title="No tactical attempts" body="No tactical request/response attempts were captured for this turn." />
+      )}
+
+      {validationFailures ? (
+        <details className="code-disclosure">
+          <summary>Latest validation failure JSON</summary>
+          <pre>{JSON.stringify(validationFailures, null, 2)}</pre>
+        </details>
+      ) : null}
+    </Card>
+  );
+}
+
+function LiteralArtifactsSection({
+  memory,
+  plannerBrief,
+  strategistBrief,
+  tacticalAttempts,
+  strategistArtifacts,
+}: {
+  memory: unknown;
+  plannerBrief: unknown;
+  strategistBrief: unknown;
+  tacticalAttempts: TacticalAttemptView[];
+  strategistArtifacts: StrategistArtifactsView | null;
+}) {
+  const latestAttempt = tacticalAttempts[tacticalAttempts.length - 1] ?? null;
+
+  return (
+    <div className="panel-grid panel-grid-asymmetric">
+      <Card title="Tactical prompt artifacts" subtitle="Exact payloads and prompt text from the most recent tactical request.">
+        {latestAttempt ? (
+          <>
+            <CodeDisclosure title="Memory JSON" content={latestAttempt.memoryJson || JSON.stringify(memory, null, 2)} />
+            <CodeDisclosure title="Planner Brief JSON" content={latestAttempt.plannerBriefJson || JSON.stringify(plannerBrief, null, 2)} />
+            {latestAttempt.retryContext ? <CodeDisclosure title="Retry Context JSON" content={latestAttempt.retryContext} /> : null}
+            <CodeDisclosure title="Exact Tactical Prompt" content={latestAttempt.prompt} />
+          </>
+        ) : (
+          <p className="muted-text">No tactical prompt artifacts were captured for this turn.</p>
+        )}
+      </Card>
+
+      <Card title="Strategist prompt artifacts" subtitle="Exact strategist brief and prompt text when a strategist pass happened on this turn.">
+        {strategistArtifacts ? (
+          <>
+            <CodeDisclosure title="Strategist Brief JSON" content={strategistArtifacts.briefJson || JSON.stringify(strategistBrief, null, 2)} />
+            {strategistArtifacts.refreshRequest ? <CodeDisclosure title="Refresh Request JSON" content={strategistArtifacts.refreshRequest} /> : null}
+            <CodeDisclosure title="Exact Strategist Prompt" content={strategistArtifacts.prompt} />
+          </>
+        ) : (
+          <p className="muted-text">No strategist prompt ran on this turn.</p>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function CodeDisclosure({ title, content }: { title: string; content: string }) {
+  if (!content) return null;
+  return (
+    <details className="code-disclosure">
+      <summary>{title}</summary>
+      <pre>{content}</pre>
+    </details>
   );
 }
 
@@ -1361,6 +1701,12 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+function stringNumber(value: string | undefined): number | null {
+  if (!value) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function numberValue(value: unknown): number | null {
   return typeof value === "number" ? value : null;
 }
@@ -1399,47 +1745,6 @@ function deriveTurnMetrics(turn: TurnRecord) {
     tacticalLatencyMs,
     strategistLatencyMs,
     totalLatencyMs: totalLatencyMs || null,
-  };
-}
-
-function deriveAverageMetrics(allTurns: TurnRecord[], matchSummary: MatchSummary | null) {
-  const turnMetrics = allTurns.map((turn) => deriveTurnMetrics(turn));
-  const sampleTurns = Math.max(1, turnMetrics.length);
-  const totalExecutionRejected = turnMetrics.reduce((sum, metrics) => sum + metrics.executionRejectedActions, 0);
-  const totalDecisionPoints = turnMetrics.reduce((sum, metrics) => sum + Math.max(1, metrics.executedActions + metrics.executionRejectedActions), 0);
-  const latencies = turnMetrics.map((metrics) => metrics.totalLatencyMs).filter((value): value is number => value !== null);
-  const fallbackCount = turnMetrics.filter((metrics) => metrics.fallback).length;
-  const blockedCount = turnMetrics.filter((metrics) => metrics.blocked).length;
-  const retryTurns = turnMetrics.filter((metrics) => metrics.retryCount > 0).length;
-  const totalRetries = turnMetrics.reduce((sum, metrics) => sum + metrics.retryCount, 0);
-  const cleanFirstPassTurns = turnMetrics.filter((metrics) => metrics.cleanFirstPass).length;
-  const totalIllegalRate = turnMetrics.reduce((sum, metrics) => sum + metrics.illegalActionRate, 0);
-
-  return {
-    sampleTurns,
-    retryTurns,
-    totalRetries,
-    firstPassRate: cleanFirstPassTurns / sampleTurns,
-    retryTurnRate: retryTurns / sampleTurns,
-    avgRetriesPerTurn: totalRetries / sampleTurns,
-    avgRetriesOnRetryTurns: retryTurns > 0 ? totalRetries / retryTurns : 0,
-    avgExecutionRejectRate: totalExecutionRejected / Math.max(1, totalDecisionPoints),
-    avgFallbackRate:
-      matchSummary && matchSummary.agentTurnCount > 0
-        ? matchSummary.fallbackTurns / matchSummary.agentTurnCount
-        : fallbackCount / sampleTurns,
-    avgBlockedRate:
-      matchSummary && matchSummary.agentTurnCount > 0
-        ? matchSummary.blockedTurns / matchSummary.agentTurnCount
-        : blockedCount / sampleTurns,
-    avgLatencyMs:
-      matchSummary?.avgInferenceLatencyMs && matchSummary.avgInferenceLatencyMs > 0
-        ? matchSummary.avgInferenceLatencyMs
-        : average(latencies),
-    avgIllegalRate:
-      matchSummary?.illegalActionRate && matchSummary.illegalActionRate > 0
-        ? matchSummary.illegalActionRate
-        : totalIllegalRate / sampleTurns,
   };
 }
 
@@ -1551,11 +1856,6 @@ function signedNumberText(value: unknown): string {
   return formatNumber(number);
 }
 
-function average(values: number[]): number | null {
-  if (!values.length) return null;
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
 function hasThreatMetrics(threat: Record<string, unknown>): boolean {
   return (
     numberValue(threat.technologyDeltaVsUs) !== null ||
@@ -1587,19 +1887,45 @@ function formatCityActionCandidateLabel(candidate: Record<string, unknown>): str
   const estimatedTurns = numberValue(candidate.estimatedTurns);
   const goldCost = numberValue(candidate.goldCost);
   const parts = [title];
-  if (estimatedTurns !== undefined) parts.push(`${formatNumber(estimatedTurns)}t`);
-  if (goldCost !== undefined) parts.push(`${formatNumber(goldCost)}g`);
+  if (estimatedTurns !== null) parts.push(`${formatNumber(estimatedTurns)}t`);
+  if (goldCost !== null) parts.push(`${formatNumber(goldCost)}g`);
   return parts.join(" · ");
 }
 
-function describeAction(action: Record<string, unknown>): string {
+type CandidateLookupEntry = {
+  title: string;
+  detail: string;
+  source: string;
+};
+
+type TacticalAttemptView = {
+  attemptNumber: number;
+  prompt: string;
+  memoryJson: string;
+  plannerBriefJson: string;
+  retryContext: string;
+  rawResponse: string;
+  parsedPlan: Record<string, unknown> | null;
+  validationFailure: string;
+};
+
+type StrategistArtifactsView = {
+  prompt: string;
+  briefJson: string;
+  refreshRequest: string;
+};
+
+function describeAction(action: Record<string, unknown>, candidateLookup: Record<string, CandidateLookupEntry>): string {
+  const candidateId = stringValue(action.candidateId);
+  const candidate = candidateId ? candidateLookup[candidateId] : undefined;
+
   switch (stringValue(action.type)) {
     case "select_empire_option":
-      return `Select empire option ${stringValue(action.candidateId)}`;
+      return candidate ? `Empire choice: ${candidate.title}` : `Select empire option ${candidateId}`;
     case "select_city_option":
-      return `Select city option ${stringValue(action.candidateId)}`;
+      return candidate ? `City choice: ${candidate.title}` : `Select city option ${candidateId}`;
     case "select_unit_option":
-      return `Select unit option ${stringValue(action.candidateId)}`;
+      return candidate ? `Unit choice: ${candidate.title}` : `Select unit option ${candidateId}`;
     case "unit_move":
       return `Move unit ${formatNumber(numberValue(action.unitId))} to (${formatNumber(numberValue(action.destinationX))}, ${formatNumber(numberValue(action.destinationY))})`;
     case "unit_action":
@@ -1611,12 +1937,17 @@ function describeAction(action: Record<string, unknown>): string {
   }
 }
 
-function describeActionDetail(action: Record<string, unknown>): string {
+function describeActionDetail(action: Record<string, unknown>, candidateLookup: Record<string, CandidateLookupEntry>): string {
+  const candidateId = stringValue(action.candidateId);
+  const candidate = candidateId ? candidateLookup[candidateId] : undefined;
+
   switch (stringValue(action.type)) {
     case "select_empire_option":
     case "select_city_option":
     case "select_unit_option":
-      return `Candidate ${stringValue(action.candidateId)} was chosen from the surfaced legal options.`;
+      return candidate
+        ? `${candidate.detail || "Chosen from the surfaced legal options."} Source: ${candidate.source}. Candidate ID: ${candidateId}.`
+        : `Candidate ${candidateId} was chosen from the surfaced legal options.`;
     case "unit_move":
       return "Pure movement action selected for this unit.";
     case "unit_action":
@@ -1626,4 +1957,117 @@ function describeActionDetail(action: Record<string, unknown>): string {
     default:
       return "Structured action chosen by the tactical planner.";
   }
+}
+
+function findLatestEvent(events: ObservabilityEvent[], types: string[]): ObservabilityEvent | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (types.includes(events[index].type)) return events[index];
+  }
+  return null;
+}
+
+function findEvents(events: ObservabilityEvent[], type: string): ObservabilityEvent[] {
+  return events.filter((event) => event.type === type).sort((left, right) => left.id - right.id);
+}
+
+function buildCandidateLookup(
+  empireChoices: Record<string, unknown> | null,
+  cityHighlights: Record<string, unknown>[],
+  unitHighlights: Record<string, unknown>[],
+): Record<string, CandidateLookupEntry> {
+  const lookup: Record<string, CandidateLookupEntry> = {};
+  const empireSections = [
+    ["researchChoices", "Research"],
+    ["policyChoices", "Policy"],
+    ["macroChoices", "Macro"],
+    ["diplomacyChoices", "Diplomacy"],
+  ] as const;
+
+  for (const [key, label] of empireSections) {
+    objectArray(empireChoices?.[key]).forEach((candidate) => {
+      const candidateId = stringValue(candidate.candidateId);
+      if (!candidateId) return;
+      lookup[candidateId] = {
+        title: stringValue(candidate.title) || candidateId,
+        detail: stringValue(candidate.detail),
+        source: `${label} candidate`,
+      };
+    });
+  }
+
+  cityHighlights.forEach((city) => {
+    const cityName = stringValue(city.name) || "City";
+    const actions = asRecord(city.actions);
+    const sections = [
+      ["chooseProject", "project"],
+      ["purchase", "purchase"],
+      ["buyTile", "tile"],
+      ["focus", "focus"],
+      ["growthMode", "growth"],
+    ] as const;
+    for (const [key, label] of sections) {
+      objectArray(actions?.[key]).forEach((candidate) => {
+        const candidateId = stringValue(candidate.candidateId);
+        if (!candidateId) return;
+        lookup[candidateId] = {
+          title: stringValue(candidate.title) || candidateId,
+          detail: stringValue(candidate.detail),
+          source: `${cityName} ${label} candidate`,
+        };
+      });
+    }
+  });
+
+  unitHighlights.forEach((unit) => {
+    const unitName = stringValue(unit.name) || "Unit";
+    const unitId = formatNumber(numberValue(unit.id));
+    objectArray(unit.unitOptionCandidates).forEach((candidate) => {
+      const candidateId = stringValue(candidate.candidateId);
+      if (!candidateId) return;
+      lookup[candidateId] = {
+        title: stringValue(candidate.title) || candidateId,
+        detail: stringValue(candidate.detail) || stringValue(candidate.rationale),
+        source: `${unitName} #${unitId} unit option`,
+      };
+    });
+  });
+
+  return lookup;
+}
+
+function buildTacticalAttempts(events: ObservabilityEvent[]): TacticalAttemptView[] {
+  const requests = findEvents(events, "llm_request");
+  const parsedEvents = findEvents(events, "llm_plan_parsed");
+  const validationEvents = findEvents(events, "plan_validation_failed");
+  const responses = findEvents(events, "llm_response");
+
+  return requests.map((request, index) => {
+    const nextRequestId = requests[index + 1]?.id ?? Number.MAX_SAFE_INTEGER;
+    const attemptNumber = (stringNumber(request.details?.retryAttempt) ?? 0) + 1;
+    const parsed = parsedEvents.find((event) => event.id > request.id && event.id < nextRequestId);
+    const validation = validationEvents.find((event) => stringNumber(event.details?.attempt) === attemptNumber)
+      ?? validationEvents.find((event) => event.id > request.id && event.id < nextRequestId);
+    const response = responses.find((event) => event.id > request.id && event.id < nextRequestId);
+
+    return {
+      attemptNumber,
+      prompt: request.details?.prompt ?? "",
+      memoryJson: request.details?.memoryJson ?? "",
+      plannerBriefJson: request.details?.plannerBriefJson ?? "",
+      retryContext: request.details?.retryContextJson ?? "",
+      rawResponse: response?.details?.rawResponse ?? "",
+      parsedPlan: parseJsonValue(parsed?.details?.parsedPlan),
+      validationFailure: validation?.details?.validationFailuresJson ?? "",
+    };
+  });
+}
+
+function buildStrategistArtifacts(events: ObservabilityEvent[]): StrategistArtifactsView | null {
+  const request = findLatestEvent(events, ["strategist_llm_request"]);
+  if (!request) return null;
+  return {
+    prompt: request.details?.prompt ?? "",
+    briefJson: request.details?.strategistBriefJson ?? "",
+    refreshRequest: request.details?.refreshRequestJson ?? "",
+  };
 }
