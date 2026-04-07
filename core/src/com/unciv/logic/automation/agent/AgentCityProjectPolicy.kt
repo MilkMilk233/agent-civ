@@ -15,13 +15,20 @@ object AgentCityProjectPolicy {
         return hadQueuedProjects
     }
 
+    fun needsExplicitProjectChoice(city: City): Boolean {
+        val currentName = city.cityConstructions.currentConstructionName()
+        if (currentName.isBlank()) return true
+        return city.cityConstructions.getWorkDone(currentName) <= 0
+    }
+
     fun selectProject(city: City, constructionName: String): Boolean {
         val currentName = city.cityConstructions.currentConstructionName()
+        val needsExplicitChoice = needsExplicitProjectChoice(city)
         val hadQueuedProjects = enforceSingleProject(city)
-        if (currentName == constructionName && !hadQueuedProjects) return false
+        if (currentName == constructionName && !hadQueuedProjects && !needsExplicitChoice) return false
         city.cityConstructions.setCurrentConstruction(constructionName)
         city.cityConstructions.collapseQueueToSingleProject()
-        return currentName != constructionName || hadQueuedProjects
+        return currentName != constructionName || hadQueuedProjects || needsExplicitChoice
     }
 
     fun purchaseWithGold(city: City, constructionName: String): Boolean {

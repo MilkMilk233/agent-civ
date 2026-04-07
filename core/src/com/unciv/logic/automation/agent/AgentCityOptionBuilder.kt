@@ -47,28 +47,42 @@ object AgentCityOptionBuilder {
         city: City,
         limit: Int = maxConstructionCandidatesPerCity,
     ): List<RankedConstructionChoice> {
-        val automation = ConstructionAutomation(city.cityConstructions)
-        val orderedNames = buildList {
-            addAll(automation.getRankedConstructionChoices(limit = limit * 3).map { it.name })
-            addAll(city.cityConstructions.getBuildableBuildings().map { it.name })
-            addAll(city.cityConstructions.getConstructableUnits().map { it.name })
-        }.distinct()
+        val needsExplicitChoice = AgentCityProjectPolicy.needsExplicitProjectChoice(city)
+        val orderedNames: List<String> = if (needsExplicitChoice) {
+            val names = mutableListOf<String>()
+            names += city.cityConstructions.getBuildableBuildings().map { it.name }
+            names += city.cityConstructions.getConstructableUnits().map { it.name }
+            names.distinct().sorted()
+        } else {
+            val automation = ConstructionAutomation(city.cityConstructions)
+            buildList<String> {
+                addAll(automation.getRankedConstructionChoices(limit = limit * 3).map { it.name })
+                addAll(city.cityConstructions.getBuildableBuildings().map { it.name })
+                addAll(city.cityConstructions.getConstructableUnits().map { it.name })
+            }.distinct()
+        }
 
-        return orderedNames
+        val choices = orderedNames
             .mapIndexedNotNull { index, name ->
                 val construction = runCatching { city.cityConstructions.getConstruction(name) }.getOrNull()
                     ?: return@mapIndexedNotNull null
                 if (!construction.isBuildable(city.cityConstructions)) return@mapIndexedNotNull null
                 val score = scoreConstructionChoice(city, construction, index)
-                if (score <= 0) return@mapIndexedNotNull null
+                if (!needsExplicitChoice && score <= 0) return@mapIndexedNotNull null
                 RankedConstructionChoice(
                     name = name,
                     score = score,
                     detail = describeConstructionChoice(city, construction),
                 )
             }
-            .sortedWith(compareByDescending<RankedConstructionChoice> { it.score }.thenBy { it.name })
-            .take(limit)
+
+        return if (needsExplicitChoice) {
+            choices
+        } else {
+            choices
+                .sortedWith(compareByDescending<RankedConstructionChoice> { it.score }.thenBy { it.name })
+                .take(limit)
+        }
     }
 
     internal fun isPeacefulGrowthWindow(city: City): Boolean {
@@ -81,15 +95,21 @@ object AgentCityOptionBuilder {
     }
 
     private fun buildConstructionCandidates(city: City): List<AgentCityRuntimeCandidate> {
+        val needsExplicitChoice = AgentCityProjectPolicy.needsExplicitProjectChoice(city)
+        val currentName = city.cityConstructions.currentConstructionName()
         return rankConstructionChoices(city, maxConstructionCandidatesPerCity)
-            .filter { it.name != city.cityConstructions.currentConstructionName() }
+            .filter { needsExplicitChoice || it.name != currentName }
             .map { choice ->
                 val candidateId = "citybuild:${city.location.x},${city.location.y}:${choice.name}"
                 val construction = city.cityConstructions.getConstruction(choice.name)
                 AgentCityRuntimeCandidate(
                     observation = AgentCityActionCandidateObservation(
                         candidateId = candidateId,
-                        title = "Build ${choice.name}",
+                        title = if (needsExplicitChoice && choice.name == currentName) {
+                            "Keep ${choice.name}"
+                        } else {
+                            "Build ${choice.name}"
+                        },
                         detail = choice.detail,
                         estimatedTurns = city.cityConstructions.turnsToConstruction(choice.name),
                         switchCost = buildProjectSwitchCost(city, choice.name),
@@ -431,9 +451,18 @@ object AgentCityOptionBuilder {
         val peacefulGrowthWindow = isPeacefulGrowthWindow(city)
         val noWorkerExists = civInfo.units.getCivUnits().none { it.cache.hasUniqueToBuildImprovements }
         val singleCity = civInfo.cities.size == 1
+        val needsExplicitChoice = AgentCityProjectPolicy.needsExplicitProjectChoice(city)
+        val currentName = city.cityConstructions.currentConstructionName()
         val currentProgress = currentConstructionProgressText(city, construction.name)
 
         val reasons = arrayListOf<String>()
+        if (needsExplicitChoice && construction.name == currentName) {
+            reasons += if (currentName.isBlank()) {
+                "This city still needs an explicit first project choice"
+            } else {
+                "$currentName is only a provisional project with no invested production yet"
+            }
+        }
         when (construction) {
             is BaseUnit -> {
                 if (construction.hasUnique(UniqueType.BuildImprovements, GameContext.IgnoreConditionals) && noWorkerExists) {

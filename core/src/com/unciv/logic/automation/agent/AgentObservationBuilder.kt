@@ -166,7 +166,7 @@ object AgentObservationBuilder {
             civilianUnitCount = allUnits.count { it.isCivilian() },
             knownCivs = civInfo.getKnownCivs().count(),
             knownWarOpponents = civInfo.getKnownCivs().count { civInfo.isAtWarWith(it) },
-            citiesNeedingProductionChoice = civInfo.cities.count { it.cityConstructions.currentConstructionName().isBlank() },
+            citiesNeedingProductionChoice = civInfo.cities.count { AgentCityProjectPolicy.needsExplicitProjectChoice(it) },
             settlersReady = allUnits.count { it.baseUnit.isCityFounder() && it.hasMovement() },
             workersReady = allUnits.count { it.cache.hasUniqueToBuildImprovements && it.hasMovement() },
             damagedUnits = allUnits.count { it.health < 100 },
@@ -364,10 +364,12 @@ object AgentObservationBuilder {
         }
 
         buildProjectObservation(city, memory)?.let { project ->
+            if (project.status == "needs_choice") score += 24
             if (project.status == "nearly_complete") score += 28
             if (project.status == "following_intent") score += 18
             localFacts += project.note
             reasons += when (project.status) {
+                "needs_choice" -> "Needs explicit project choice"
                 "nearly_complete" -> "Finish current build"
                 "following_intent" -> "Continuing city plan"
                 else -> "City progress in flight"
@@ -672,7 +674,7 @@ object AgentObservationBuilder {
                 category = "city",
                 severity = "warning",
                 headline = "Some cities still need production choices",
-                detail = "${empireSummary.citiesNeedingProductionChoice} cities have no active project selected.",
+                detail = "${empireSummary.citiesNeedingProductionChoice} cities still need explicit project choices.",
             )
         }
 
@@ -926,6 +928,22 @@ object AgentObservationBuilder {
         val turnsLeft = city.cityConstructions.turnsToConstruction(currentName)
         val workDone = city.cityConstructions.getWorkDone(currentName)
         val workRemaining = city.cityConstructions.getRemainingWork(currentName)
+        if (AgentCityProjectPolicy.needsExplicitProjectChoice(city)) {
+            val note = if (projectIntent?.target == currentName) {
+                "$currentName is selected, but no production has been invested yet. Treat this as a fresh project choice."
+            } else {
+                "$currentName is only the current placeholder project with no invested production yet. This city still needs an explicit project choice."
+            }
+            return AgentCityProjectObservation(
+                name = currentName,
+                turnsLeft = turnsLeft,
+                productionInvested = workDone,
+                productionRemaining = workRemaining,
+                status = "needs_choice",
+                note = note,
+                switchCost = "low",
+            )
+        }
         val intentMatches = projectIntent?.target == currentName
         val status = when {
             turnsLeft <= 2 -> if (intentMatches) "nearly_complete" else "committed"

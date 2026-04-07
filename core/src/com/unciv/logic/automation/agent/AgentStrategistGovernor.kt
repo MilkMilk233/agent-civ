@@ -10,6 +10,11 @@ object AgentStrategistGovernor {
         val citySnapshots = observation.cities
             .sortedByDescending { cityStrategistScore(it) }
             .map { city ->
+                val projectOptionLimit = if (city.project?.status == "needs_choice") {
+                    city.actions.chooseProject.size
+                } else {
+                    3
+                }
                 AgentStrategistCitySnapshot(
                     x = city.x,
                     y = city.y,
@@ -29,7 +34,7 @@ object AgentStrategistGovernor {
                     nearbyHostileUnits = city.state.nearbyHostileUnits,
                     nearbyHostileCities = city.state.nearbyHostileCities,
                     signals = city.signals.take(5),
-                    projectOptions = city.actions.chooseProject.take(3).map { option ->
+                    projectOptions = city.actions.chooseProject.take(projectOptionLimit).map { option ->
                         AgentStrategistCityProjectOptionSnapshot(
                             title = option.title,
                             estimatedTurns = option.estimatedTurns,

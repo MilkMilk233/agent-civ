@@ -1061,6 +1061,7 @@ function StrategistCitySnapshotsSection({
             const projectOptions = objectArray(city.projectOptions);
             const optionLabels = projectOptions.map((option) => formatStrategistProjectOption(option)).filter(Boolean);
             const signals = stringList(city.signals);
+            const needsProjectChoice = stringValue(city.projectStatus) === "needs_choice";
 
             return (
               <article key={`${stringValue(city.name)}-${index}`} className="structured-item">
@@ -1069,7 +1070,9 @@ function StrategistCitySnapshotsSection({
                   <div className="tag-list compact">
                     <span className="tag neutral">({formatNumber(numberValue(city.x))}, {formatNumber(numberValue(city.y))})</span>
                     <span className="tag neutral">Pop {formatNumber(numberValue(city.population))}</span>
-                    <span className="tag neutral">{stringValue(city.currentProject) || "Needs project"}</span>
+                    <span className="tag neutral">
+                      {needsProjectChoice ? "Needs project choice" : stringValue(city.currentProject) || "Needs project"}
+                    </span>
                   </div>
                 </div>
 
@@ -1096,7 +1099,7 @@ function StrategistCitySnapshotsSection({
 
                 {optionLabels.length ? (
                   <>
-                    <SectionLabel text="Top project alternatives" />
+                    <SectionLabel text={needsProjectChoice ? "Available project choices" : "Top project alternatives"} />
                     <TagList values={optionLabels} tone="accent" />
                   </>
                 ) : null}
@@ -1427,6 +1430,7 @@ function CityHighlightsSection({ title, cities }: { title: string; cities: Recor
             const tileChoices = objectArray(actions?.buyTile).map(formatCityActionCandidateLabel).filter(Boolean);
             const focusChoices = objectArray(actions?.focus).map(formatCityActionCandidateLabel).filter(Boolean);
             const growthChoices = objectArray(actions?.growthMode).map(formatCityActionCandidateLabel).filter(Boolean);
+            const needsProjectChoice = stringValue(project?.status) === "needs_choice";
 
             return (
               <article key={`${stringValue(city.name)}-${index}`} className="structured-item">
@@ -1435,7 +1439,9 @@ function CityHighlightsSection({ title, cities }: { title: string; cities: Recor
                   <div className="tag-list compact">
                     <span className="tag neutral">({formatNumber(numberValue(city.x))}, {formatNumber(numberValue(city.y))})</span>
                     <span className="tag neutral">Pop {formatNumber(numberValue(state?.population))}</span>
-                    <span className="tag neutral">{stringValue(project?.name) || "Needs project"}</span>
+                    <span className="tag neutral">
+                      {needsProjectChoice ? "Needs project choice" : stringValue(project?.name) || "Needs project"}
+                    </span>
                   </div>
                 </div>
 
@@ -1467,8 +1473,8 @@ function CityHighlightsSection({ title, cities }: { title: string; cities: Recor
 
                 {projectChoices.length ? (
                   <>
-                    <SectionLabel text="Choose project" />
-                    <TagList values={projectChoices.slice(0, 4)} tone="accent" />
+                    <SectionLabel text={needsProjectChoice ? "Available project choices" : "Choose project"} />
+                    <TagList values={needsProjectChoice ? projectChoices : projectChoices.slice(0, 4)} tone="accent" />
                   </>
                 ) : null}
 

@@ -6,6 +6,10 @@ import com.unciv.logic.map.HexCoord
 import com.unciv.models.UnitActionType
 import com.unciv.ui.screens.worldscreen.unit.actions.UnitActions
 
+data class ExecutionOptions(
+    val stopAfterCityCreation: Boolean = false,
+)
+
 class AgentActionExecutor {
     private enum class UnitCommandMode {
         CandidateOption,
@@ -34,6 +38,7 @@ class AgentActionExecutor {
         val executedActions: Int,
         val rejectedActions: Int,
         val outcomes: List<ActionOutcome>,
+        val haltedForCityCreationBoundary: Boolean = false,
     )
 
     enum class ValidationStatus {
@@ -45,13 +50,18 @@ class AgentActionExecutor {
     data class ValidationReport(
         val status: ValidationStatus,
         val outcomes: List<ActionOutcome>,
+        val haltedForCityCreationBoundary: Boolean = false,
     ) {
         val rejectedOutcomes: List<ActionOutcome> get() = outcomes.filter { it.status == ActionStatus.Rejected }
         val executedActionsPreview: Int get() = outcomes.count { it.status == ActionStatus.Executed && it.commandType != "end_turn" }
         val rejectedActionsPreview: Int get() = rejectedOutcomes.size
     }
 
-    fun validate(civInfo: Civilization, plan: AgentActionPlan): ValidationReport {
+    fun validate(
+        civInfo: Civilization,
+        plan: AgentActionPlan,
+        options: ExecutionOptions = ExecutionOptions(),
+    ): ValidationReport {
         val actionableCommands = plan.actions.filterNot { it is AgentActionCommand.EndTurn }
         if (actionableCommands.isEmpty()) {
             return ValidationReport(
@@ -63,10 +73,16 @@ class AgentActionExecutor {
         return runCatching {
             val cloneGame = civInfo.gameInfo.clone().also(GameInfo::setTransients)
             val cloneCiv = cloneGame.getCivilization(civInfo.civID)
-            val preview = executeInternal(cloneCiv, plan, recordActionErrors = false)
+            val preview = executeInternal(
+                cloneCiv,
+                plan,
+                recordActionErrors = false,
+                options = options,
+            )
             ValidationReport(
                 status = if (preview.rejectedActions > 0) ValidationStatus.Invalid else ValidationStatus.Valid,
                 outcomes = preview.outcomes,
+                haltedForCityCreationBoundary = preview.haltedForCityCreationBoundary,
             )
         }.getOrElse { ex ->
             ValidationReport(
@@ -82,23 +98,30 @@ class AgentActionExecutor {
         }
     }
 
-    fun execute(civInfo: Civilization, plan: AgentActionPlan): ExecutionReport {
-        return executeInternal(civInfo, plan, recordActionErrors = true)
+    fun execute(
+        civInfo: Civilization,
+        plan: AgentActionPlan,
+        options: ExecutionOptions = ExecutionOptions(),
+    ): ExecutionReport {
+        return executeInternal(civInfo, plan, recordActionErrors = true, options = options)
     }
 
     private fun executeInternal(
         civInfo: Civilization,
         plan: AgentActionPlan,
         recordActionErrors: Boolean,
+        options: ExecutionOptions,
     ): ExecutionReport {
         var executed = 0
         var rejected = 0
+        var haltedForCityCreationBoundary = false
         val outcomes = arrayListOf<ActionOutcome>()
         val sortedActions = plan.actions.sortedBy { it.priority }
         val usedEmpireCandidateIds = hashSetOf<String>()
         val usedCityCandidateIds = hashSetOf<String>()
         val usedUnitCandidateIds = hashSetOf<String>()
         val unitCommandModes = hashMapOf<Int, UnitCommandMode>()
+        val initialCityCount = civInfo.cities.size
 
         for (action in sortedActions) {
             when (action) {
@@ -476,9 +499,19 @@ class AgentActionExecutor {
                     )
                 }
             }
+
+            if (options.stopAfterCityCreation && civInfo.cities.size > initialCityCount) {
+                haltedForCityCreationBoundary = true
+                break
+            }
         }
 
-        return ExecutionReport(executedActions = executed, rejectedActions = rejected, outcomes = outcomes)
+        return ExecutionReport(
+            executedActions = executed,
+            rejectedActions = rejected,
+            outcomes = outcomes,
+            haltedForCityCreationBoundary = haltedForCityCreationBoundary,
+        )
     }
 
     private fun registerUnitCommand(
