@@ -220,6 +220,12 @@ pre {
   align-items: start;
 }
 
+.reading-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
 .panel-grid-asymmetric {
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
 }
@@ -228,6 +234,10 @@ pre {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.85rem;
+}
+
+.summary-grid-four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .mini-metric-grid {
@@ -718,7 +728,8 @@ pre {
   .workspace-grid,
   .hero-row,
   .panel-grid,
-  .story-strip {
+  .story-strip,
+  .summary-grid-four {
     display: grid;
     grid-template-columns: 1fr;
   }

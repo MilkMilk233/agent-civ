@@ -47,9 +47,13 @@ object AgentStrategicGovernor {
                 rivalCiv = memory.strategicPosture.rivalCiv,
                 rivalVictoryGoal = memory.strategicPosture.rivalVictoryGoal,
                 thesis = roadmap?.thesis ?: memory.strategicPosture.turnThesis,
-                commitments = ((roadmap?.midTermGoals ?: emptyList()) + (roadmap?.mustMaintain ?: emptyList()))
-                    .ifEmpty { memory.strategicPosture.commitments }
+                immediateObjectives = (roadmap?.immediateObjectives ?: emptyList())
+                    .ifEmpty { memory.strategicPosture.commitments.take(2) }
+                    .take(3),
+                nearTermGoals = (roadmap?.nearTermGoals ?: emptyList())
                     .take(4),
+                guardrails = (roadmap?.guardrails ?: emptyList())
+                    .take(3),
                 watchOuts = (roadmap?.watchOuts ?: memory.strategicPosture.watchOuts).take(3),
             ),
             tacticalPressure = tacticalPressure,
@@ -183,9 +187,9 @@ object AgentStrategicGovernor {
             priorityThisTurn += "Use scout and warrior movement to force contact instead of preserving low-value progress."
         }
 
-        if (isBelowReferenceMilitaryFloor(observation, empireObservation.gameContext)) {
-            mustActReasons += "The empire is below its military floor."
-            priorityThisTurn += "Use unit production, purchases, or force-preserving moves to raise military strength."
+        if (hasThinMilitaryCoverage(observation, empireObservation.gameContext)) {
+            mustActReasons += "Military coverage is thin for the current cities and contact state."
+            priorityThisTurn += "Use unit production, purchases, or safe positioning to avoid being under-defended."
         }
 
         if (hasHighGoldReserve(empireObservation)) {
@@ -207,15 +211,22 @@ object AgentStrategicGovernor {
             priorityThisTurn += "Keep expansion tempo moving instead of preserving low-impact progress."
         }
 
-        roadmap?.mustMaintain
+        roadmap?.immediateObjectives
             ?.take(2)
             ?.filter { it.isNotBlank() }
             ?.forEach { priorityThisTurn += it }
 
-        memory.strategicRoadmap.midTermGoals
-            .take(2)
-            .filter { it.isNotBlank() }
-            .forEach { priorityThisTurn += it }
+        roadmap?.guardrails
+            ?.take(2)
+            ?.filter { it.isNotBlank() }
+            ?.forEach { priorityThisTurn += it }
+
+        if (priorityThisTurn.isEmpty()) {
+            memory.strategicRoadmap.nearTermGoals
+                .take(2)
+                .filter { it.isNotBlank() }
+                .forEach { priorityThisTurn += it }
+        }
 
         val meaningfulLeversAvailable = hasMeaningfulImmediateLevers(cityHighlights, unitHighlights, empireObservation)
         val noOpPolicy = when {
@@ -364,25 +375,21 @@ object AgentStrategicGovernor {
         }
         if (isWorkerFact(fact) && (turn >= 120 || primaryThreat?.threatLevel == "critical")) score -= 80
         if (fact.headline.contains("gold reserve", ignoreCase = true)) score += 15
-        if (fact.headline.contains("military floor", ignoreCase = true)) score += 20
+        if (fact.headline.contains("military coverage", ignoreCase = true)) score += 20
         if (fact.headline.contains("main rival", ignoreCase = true)) score += 25
         return score
     }
 
-    private fun isBelowReferenceMilitaryFloor(
+    private fun hasThinMilitaryCoverage(
         observation: AgentObservation,
         gameContext: AgentPublicGameContextObservation,
     ): Boolean {
-        val floor = when {
-            gameContext.duelLike && observation.turn < 35 -> 2
-            gameContext.duelLike && observation.turn < 70 -> 4
-            gameContext.duelLike && observation.turn < 120 -> 6
-            gameContext.duelLike -> 8
-            observation.turn < 60 -> 3
-            observation.turn < 120 -> 5
-            else -> 7
-        }
-        return observation.empireSummary.militaryUnitCount < floor
+        val cityCount = observation.empireSummary.cityCount
+        if (cityCount <= 0) return false
+        var desiredCoverage = cityCount
+        if (observation.empireSummary.isAtWar) desiredCoverage += 1
+        else if (gameContext.contactComplete && cityCount >= 2) desiredCoverage += 1
+        return observation.empireSummary.militaryUnitCount < desiredCoverage
     }
 
     private fun hasHighGoldReserve(empireObservation: AgentEmpireObservation): Boolean {

@@ -33,24 +33,53 @@ data class AgentStrategistRoadmapRealityObservation(
 
 @Serializable
 data class AgentStrategistCitySnapshot(
+    val x: Int,
+    val y: Int,
     val name: String,
     val population: Int,
+    val focus: String,
     val currentProject: String? = null,
+    val projectStatus: String? = null,
+    val projectTurnsLeft: Int? = null,
+    val projectProductionInvested: Int? = null,
+    val projectProductionRemaining: Int? = null,
+    val productionPerTurn: Int,
+    val foodPerTurn: Int,
     val turnsToGrowth: Int? = null,
+    val turnsToStarvation: Int? = null,
     val cityStrength: Int,
+    val nearbyHostileUnits: Int,
+    val nearbyHostileCities: Int,
     val signals: List<String> = emptyList(),
-    val projectOptions: List<String> = emptyList(),
+    val projectOptions: List<AgentStrategistCityProjectOptionSnapshot> = emptyList(),
 )
 
 @Serializable
 data class AgentStrategistUnitSnapshot(
     val id: Int,
+    val x: Int,
+    val y: Int,
     val name: String,
     val role: String,
+    val detailLevel: String,
     val health: Int,
     val hasMovement: Boolean,
+    val movementPoints: String,
+    val strength: Int? = null,
+    val rangedStrength: Int? = null,
+    val range: Int? = null,
     val nearbyHostileUnits: Int,
     val nearbyHostileCities: Int,
     val reasons: List<String>,
+    val localFacts: List<String> = emptyList(),
     val assignmentProgress: UnitAssignmentProgressObservation? = null,
+)
+
+@Serializable
+data class AgentStrategistCityProjectOptionSnapshot(
+    val title: String,
+    val estimatedTurns: Int? = null,
+    val goldCost: Int? = null,
+    val switchCost: String? = null,
+    val yieldHints: List<String> = emptyList(),
 )

@@ -129,6 +129,18 @@ class TechManager : IsPartOfGameInfoSerialization {
         return if (techsToResearch.isEmpty()) null else techsToResearch[0]
     }
 
+    /**
+     * Select exactly one active research target and discard any queued follow-up techs.
+     * This keeps single-choice planners from carrying hidden queue state between turns.
+     */
+    fun selectTechnology(techName: String): Boolean {
+        if (!canBeResearched(techName)) return false
+        if (currentTechnologyName() == techName && techsToResearch.size == 1) return false
+        techsToResearch.clear()
+        techsToResearch.add(techName)
+        return true
+    }
+
     @Readonly fun researchOfTech(techName: String?) = techsInProgress[techName] ?: 0
     // Was once duplicated as fun scienceSpentOnTech(tech: String): Int
 

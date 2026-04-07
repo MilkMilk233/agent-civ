@@ -50,7 +50,7 @@ object AgentEmpireObservationBuilder {
             currentResearch == null -> "needs_research_choice"
             currentResearchTurnsLeft != null && currentResearchTurnsLeft <= 2 -> "nearly_complete"
             currentResearchProgress != null && currentResearchProgress > 0 -> "in_progress"
-            else -> "queued"
+            else -> "selected"
         }
         val enabledVictories = enabledVictories(civInfo)
         val preferredVictoryTypes = civInfo.getPreferredVictoryTypes().filter { it != Constants.neutralVictoryType }
@@ -208,7 +208,7 @@ object AgentEmpireObservationBuilder {
                     when {
                         !currentCiv.tech.canBeResearched(tech.name) -> "Empire option rejected: technology is no longer researchable"
                         currentCiv.tech.freeTechs <= 0 && currentCiv.tech.techsToResearch.isNotEmpty() ->
-                            "Empire option rejected: research is already queued"
+                            "Empire option rejected: research is already selected"
                         else -> null
                     }
                 },
@@ -217,8 +217,7 @@ object AgentEmpireObservationBuilder {
                         currentCiv.tech.getFreeTechnology(tech.name)
                         true
                     } else if (currentCiv.tech.techsToResearch.isEmpty()) {
-                        currentCiv.tech.techsToResearch.add(tech.name)
-                        true
+                        currentCiv.tech.selectTechnology(tech.name)
                     } else {
                         false
                     }
@@ -624,14 +623,15 @@ object AgentEmpireObservationBuilder {
                 detail = "Contact is still incomplete on turn ${civInfo.gameInfo.turns}.",
             )
         }
+        val cityCount = civInfo.cities.count()
         val militaryUnits = civInfo.units.getCivUnits().count { it.isMilitary() }
-        val referenceMilitaryFloor = referenceMilitaryFloor(gameContext, civInfo.gameInfo.turns)
-        if (militaryUnits < referenceMilitaryFloor) {
+        val desiredCoverage = desiredMilitaryCoverage(cityCount, civInfo.isAtWar(), gameContext.contactComplete)
+        if (desiredCoverage > 0 && militaryUnits < desiredCoverage) {
             facts += ObservationFact(
                 category = "war",
                 severity = "warning",
-                headline = "Military units: $militaryUnits / reference floor $referenceMilitaryFloor",
-                detail = "Reference floor is a simple setup check for turn ${civInfo.gameInfo.turns}.",
+                headline = "Military coverage is thin: $militaryUnits unit(s) for $cityCount city/cities",
+                detail = "This is a current-state reminder based on city count, war state, and contact status, not a strict turn rule.",
             )
         }
         val goldSpendCandidates = macroCandidates.count { candidate ->
@@ -681,16 +681,12 @@ object AgentEmpireObservationBuilder {
         return facts
     }
 
-    private fun referenceMilitaryFloor(gameContext: AgentPublicGameContextObservation, turn: Int): Int {
-        return when {
-            gameContext.duelLike && turn < 35 -> 2
-            gameContext.duelLike && turn < 70 -> 4
-            gameContext.duelLike && turn < 120 -> 6
-            gameContext.duelLike -> 8
-            turn < 60 -> 3
-            turn < 120 -> 5
-            else -> 7
-        }
+    private fun desiredMilitaryCoverage(cityCount: Int, isAtWar: Boolean, contactComplete: Boolean): Int {
+        if (cityCount <= 0) return 0
+        var coverage = cityCount
+        if (isAtWar) coverage += 1
+        else if (contactComplete && cityCount >= 2) coverage += 1
+        return coverage
     }
 
     private fun goldFingerprint(civInfo: Civilization): String {

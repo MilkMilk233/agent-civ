@@ -20,8 +20,9 @@ data class AgentMemory(
             watchOuts = ArrayList(strategicPosture.watchOuts),
         ),
         strategicRoadmap = strategicRoadmap.copy(
-            midTermGoals = ArrayList(strategicRoadmap.midTermGoals),
-            mustMaintain = ArrayList(strategicRoadmap.mustMaintain),
+            immediateObjectives = ArrayList(strategicRoadmap.immediateObjectives),
+            nearTermGoals = ArrayList(strategicRoadmap.nearTermGoals),
+            guardrails = ArrayList(strategicRoadmap.guardrails),
             watchOuts = ArrayList(strategicRoadmap.watchOuts),
             switchTriggers = ArrayList(strategicRoadmap.switchTriggers),
         ),

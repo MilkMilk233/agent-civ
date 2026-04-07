@@ -26,7 +26,9 @@ data class AgentPlannerDoctrineObservation(
     val rivalCiv: String? = null,
     val rivalVictoryGoal: String? = null,
     val thesis: String? = null,
-    val commitments: List<String> = emptyList(),
+    val immediateObjectives: List<String> = emptyList(),
+    val nearTermGoals: List<String> = emptyList(),
+    val guardrails: List<String> = emptyList(),
     val watchOuts: List<String> = emptyList(),
 )
 

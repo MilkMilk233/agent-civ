@@ -32,8 +32,9 @@ object AgentMemoryManager {
         val prepared = AgentMemory(
             strategicPosture = normalizeStrategicPosture(existing, observation, empireObservation, turn),
             strategicRoadmap = existing.strategicRoadmap.copy(
-                midTermGoals = ArrayList(existing.strategicRoadmap.midTermGoals),
-                mustMaintain = ArrayList(existing.strategicRoadmap.mustMaintain),
+                immediateObjectives = ArrayList(existing.strategicRoadmap.immediateObjectives),
+                nearTermGoals = ArrayList(existing.strategicRoadmap.nearTermGoals),
+                guardrails = ArrayList(existing.strategicRoadmap.guardrails),
                 watchOuts = ArrayList(existing.strategicRoadmap.watchOuts),
                 switchTriggers = ArrayList(existing.strategicRoadmap.switchTriggers),
             ),
@@ -188,8 +189,9 @@ object AgentMemoryManager {
             winPath = strategicPlan.roadmap.winPath?.trim().takeUnless { it.isNullOrEmpty() },
             phase = strategicPlan.roadmap.phase.trim(),
             thesis = strategicPlan.roadmap.thesis?.trim().takeUnless { it.isNullOrEmpty() },
-            midTermGoals = ArrayList(strategicPlan.roadmap.midTermGoals.map { it.trim() }.filter { it.isNotBlank() }.take(4)),
-            mustMaintain = ArrayList(strategicPlan.roadmap.mustMaintain.map { it.trim() }.filter { it.isNotBlank() }.take(4)),
+            immediateObjectives = ArrayList(strategicPlan.roadmap.immediateObjectives.map { it.trim() }.filter { it.isNotBlank() }.take(4)),
+            nearTermGoals = ArrayList(strategicPlan.roadmap.nearTermGoals.map { it.trim() }.filter { it.isNotBlank() }.take(4)),
+            guardrails = ArrayList(strategicPlan.roadmap.guardrails.map { it.trim() }.filter { it.isNotBlank() }.take(3)),
             watchOuts = ArrayList(strategicPlan.roadmap.watchOuts.map { it.trim() }.filter { it.isNotBlank() }.take(3)),
             switchTriggers = ArrayList(strategicPlan.roadmap.switchTriggers.map { it.trim() }.filter { it.isNotBlank() }.take(4)),
             reviewAfterTurn = turn + reviewInTurns,
@@ -312,8 +314,9 @@ object AgentMemoryManager {
 
     private fun cloneRoadmap(roadmap: AgentStrategicRoadmapMemory): AgentStrategicRoadmapMemory {
         return roadmap.copy(
-            midTermGoals = ArrayList(roadmap.midTermGoals),
-            mustMaintain = ArrayList(roadmap.mustMaintain),
+            immediateObjectives = ArrayList(roadmap.immediateObjectives),
+            nearTermGoals = ArrayList(roadmap.nearTermGoals),
+            guardrails = ArrayList(roadmap.guardrails),
             watchOuts = ArrayList(roadmap.watchOuts),
             switchTriggers = ArrayList(roadmap.switchTriggers),
         )
@@ -341,7 +344,7 @@ object AgentMemoryManager {
             doctrine = roadmap.doctrine,
             victoryGoal = roadmap.winPath,
             turnThesis = roadmap.thesis,
-            commitments = ArrayList((roadmap.midTermGoals + roadmap.mustMaintain).take(4)),
+            commitments = ArrayList((roadmap.immediateObjectives + roadmap.nearTermGoals + roadmap.guardrails).take(5)),
             watchOuts = ArrayList(roadmap.watchOuts.take(3)),
         )
         return StrategicPostureMemory(
@@ -354,7 +357,7 @@ object AgentMemoryManager {
             rivalCiv = primaryThreat?.civName ?: previous.rivalCiv,
             rivalVictoryGoal = primaryThreat?.likelyVictoryType ?: previous.rivalVictoryGoal,
             turnThesis = roadmap.thesis ?: previous.turnThesis,
-            commitments = ArrayList((roadmap.midTermGoals + roadmap.mustMaintain).take(4)),
+            commitments = ArrayList((roadmap.immediateObjectives + roadmap.nearTermGoals + roadmap.guardrails).take(5)),
             watchOuts = ArrayList(
                 (roadmap.watchOuts + listOfNotNull(primaryThreat?.takeIf { it.threatLevel == "critical" }?.let { "${it.civName} is an urgent rival." }))
                     .take(3)
@@ -541,8 +544,8 @@ object AgentMemoryManager {
         if (observation.empireSummary.cityCount < desiredCityFloor) {
             commitments += "Grow toward at least $desiredCityFloor productive cities if land is still available."
         }
-        if (isBelowReferenceMilitaryFloor(observation, empireObservation.gameContext)) {
-            commitments += "Raise the military floor before more worker polish."
+        if (hasThinMilitaryCoverage(observation, empireObservation.gameContext)) {
+            commitments += "Keep enough military coverage for the current cities and contact state before more worker polish."
         }
         if (hasHighGoldReserve(empireObservation)) {
             commitments += "Convert spare gold into city tempo, upgrades, or other immediate gains."
@@ -562,7 +565,7 @@ object AgentMemoryManager {
             "science_race", "science_race_with_military_floor" ->
                 "Convert the empire into a consistent science race while keeping enough force to contest the rival."
             "culture_push" -> "Keep the culture race coherent, but do not ignore military or expansion floors."
-            "domination_build_up", "deny_rival_domination" -> "Turn production, positioning, and military floor into decisive pressure on the rival."
+            "domination_build_up", "deny_rival_domination" -> "Turn production, positioning, and solid military coverage into decisive pressure on the rival."
             "deny_rival_science" -> "Slow the rival science snowball while converting our own cities and gold into catch-up tempo."
             "deny_rival_culture" -> "Contest the rival cultural lead with stronger empire tempo and enough force to punish greed."
             "war_execution" -> "Execute wartime priorities cleanly and stop low-value peacetime upkeep from stealing attention."
@@ -586,20 +589,16 @@ object AgentMemoryManager {
         }
     }
 
-    private fun isBelowReferenceMilitaryFloor(
+    private fun hasThinMilitaryCoverage(
         observation: AgentObservation,
         gameContext: AgentPublicGameContextObservation,
     ): Boolean {
-        val floor = when {
-            gameContext.duelLike && observation.turn < 35 -> 2
-            gameContext.duelLike && observation.turn < 70 -> 4
-            gameContext.duelLike && observation.turn < 120 -> 6
-            gameContext.duelLike -> 8
-            observation.turn < 60 -> 3
-            observation.turn < 120 -> 5
-            else -> 7
-        }
-        return observation.empireSummary.militaryUnitCount < floor
+        val cityCount = observation.empireSummary.cityCount
+        if (cityCount <= 0) return false
+        var desiredCoverage = cityCount
+        if (observation.empireSummary.isAtWar) desiredCoverage += 1
+        else if (gameContext.contactComplete && cityCount >= 2) desiredCoverage += 1
+        return observation.empireSummary.militaryUnitCount < desiredCoverage
     }
 
     private fun hasHighGoldReserve(empireObservation: AgentEmpireObservation): Boolean {

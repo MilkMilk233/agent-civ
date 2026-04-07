@@ -10,8 +10,9 @@ data class AgentStrategicRoadmapMemory(
     var winPath: String? = null,
     var phase: String = "",
     var thesis: String? = null,
-    var midTermGoals: ArrayList<String> = arrayListOf(),
-    var mustMaintain: ArrayList<String> = arrayListOf(),
+    var immediateObjectives: ArrayList<String> = arrayListOf(),
+    var nearTermGoals: ArrayList<String> = arrayListOf(),
+    var guardrails: ArrayList<String> = arrayListOf(),
     var watchOuts: ArrayList<String> = arrayListOf(),
     var switchTriggers: ArrayList<String> = arrayListOf(),
     var reviewAfterTurn: Int = 0,
@@ -19,7 +20,7 @@ data class AgentStrategicRoadmapMemory(
     var lastReviewedTurn: Int = 0,
     var lastRefreshReason: String? = null,
 ) : IsPartOfGameInfoSerialization {
-    constructor() : this("", "", null, "", null, arrayListOf(), arrayListOf(), arrayListOf(), arrayListOf(), 0, 0, 0, null)
+    constructor() : this("", "", null, "", null, arrayListOf(), arrayListOf(), arrayListOf(), arrayListOf(), arrayListOf(), 0, 0, 0, null)
 }
 
 @Serializable
@@ -34,8 +35,9 @@ data class AgentStrategicRoadmapDraft(
     val winPath: String? = null,
     val phase: String,
     val thesis: String? = null,
-    val midTermGoals: List<String> = emptyList(),
-    val mustMaintain: List<String> = emptyList(),
+    val immediateObjectives: List<String> = emptyList(),
+    val nearTermGoals: List<String> = emptyList(),
+    val guardrails: List<String> = emptyList(),
     val watchOuts: List<String> = emptyList(),
     val switchTriggers: List<String> = emptyList(),
     val reviewInTurns: Int = 5,

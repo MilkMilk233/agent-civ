@@ -9,32 +9,58 @@ object AgentStrategistGovernor {
     ): AgentStrategistBrief {
         val citySnapshots = observation.cities
             .sortedByDescending { cityStrategistScore(it) }
-            .take(4)
             .map { city ->
                 AgentStrategistCitySnapshot(
+                    x = city.x,
+                    y = city.y,
                     name = city.name,
                     population = city.state.population,
+                    focus = city.state.focus,
                     currentProject = city.project?.name,
+                    projectStatus = city.project?.status,
+                    projectTurnsLeft = city.project?.turnsLeft,
+                    projectProductionInvested = city.project?.productionInvested,
+                    projectProductionRemaining = city.project?.productionRemaining,
+                    productionPerTurn = city.state.productionPerTurn,
+                    foodPerTurn = city.state.foodPerTurn,
                     turnsToGrowth = city.state.turnsToGrowth,
+                    turnsToStarvation = city.state.turnsToStarvation,
                     cityStrength = city.state.cityStrength,
-                    signals = city.signals.take(4),
-                    projectOptions = city.actions.chooseProject.map { it.title }.take(4),
+                    nearbyHostileUnits = city.state.nearbyHostileUnits,
+                    nearbyHostileCities = city.state.nearbyHostileCities,
+                    signals = city.signals.take(5),
+                    projectOptions = city.actions.chooseProject.take(3).map { option ->
+                        AgentStrategistCityProjectOptionSnapshot(
+                            title = option.title,
+                            estimatedTurns = option.estimatedTurns,
+                            goldCost = option.goldCost,
+                            switchCost = option.switchCost,
+                            yieldHints = option.yieldHints,
+                        )
+                    },
                 )
             }
 
         val unitSnapshots = observation.units
             .sortedByDescending { unitStrategistScore(it, empireObservation.gameContext.contactComplete) }
-            .take(5)
             .map { unit ->
                 AgentStrategistUnitSnapshot(
                     id = unit.id,
+                    x = unit.x,
+                    y = unit.y,
                     name = unit.name,
                     role = unit.role,
+                    detailLevel = unit.detailLevel,
                     health = unit.health,
                     hasMovement = unit.hasMovement,
+                    movementPoints = unit.movementPoints,
+                    strength = unit.strength,
+                    rangedStrength = unit.rangedStrength,
+                    range = unit.range,
                     nearbyHostileUnits = unit.nearbyHostileUnits,
                     nearbyHostileCities = unit.nearbyHostileCities,
                     reasons = unit.reasons.take(4),
+                    localFacts = unit.localFacts.take(4),
                     assignmentProgress = unit.assignmentProgress,
                 )
             }
@@ -51,7 +77,7 @@ object AgentStrategistGovernor {
             currentResearchStatus = empireObservation.currentResearchStatus,
             currentRoadmap = memory.strategicRoadmap.takeIf { it.doctrine.isNotBlank() },
             roadmapReality = roadmapReality,
-            rivalThreats = empireObservation.victoryThreats.take(2),
+            rivalThreats = empireObservation.victoryThreats,
             stateFacts = empireObservation.stateFacts,
             progressInMotion = progressInMotion,
             citySnapshots = citySnapshots,
@@ -68,14 +94,14 @@ object AgentStrategistGovernor {
         val roadmap = memory.strategicRoadmap.takeIf { it.doctrine.isNotBlank() } ?: return null
         val gameContext = empireObservation.gameContext
         val desiredCityFloor = desiredCityFloor(gameContext, observation.turn)
-        val desiredMilitaryFloor = desiredMilitaryFloor(gameContext, observation.turn)
+        val desiredMilitaryCoverage = desiredMilitaryCoverage(observation, gameContext)
         val primaryThreat = empireObservation.victoryThreats.firstOrNull()
 
         val currentPhaseReality = when {
             primaryThreat?.threatLevel == "critical" -> "contest_rival"
             gameContext.duelLike && !gameContext.contactComplete && observation.turn >= 20 -> "find_rival"
             observation.empireSummary.cityCount < desiredCityFloor -> "expand"
-            observation.empireSummary.militaryUnitCount < desiredMilitaryFloor -> "build_force"
+            desiredMilitaryCoverage > 0 && observation.empireSummary.militaryUnitCount < desiredMilitaryCoverage -> "build_force"
             else -> "convert_advantage"
         }
 
@@ -91,15 +117,18 @@ object AgentStrategistGovernor {
             else -> "incomplete"
         }
 
-        val militaryStatus = if (observation.empireSummary.militaryUnitCount >= desiredMilitaryFloor) {
-            "met (${observation.empireSummary.militaryUnitCount}/$desiredMilitaryFloor units)"
+        val militaryStatus = if (desiredMilitaryCoverage <= 0) {
+            "not_applicable"
+        } else if (observation.empireSummary.militaryUnitCount >= desiredMilitaryCoverage) {
+            "covered (${observation.empireSummary.militaryUnitCount}/$desiredMilitaryCoverage units)"
         } else {
-            "below_floor (${observation.empireSummary.militaryUnitCount}/$desiredMilitaryFloor units)"
+            "thin (${observation.empireSummary.militaryUnitCount}/$desiredMilitaryCoverage units)"
         }
 
-        val completedGoals = roadmap.midTermGoals
+        val activeGoals = roadmap.immediateObjectives + roadmap.nearTermGoals
+        val completedGoals = activeGoals
             .mapNotNull { goal ->
-                when (evaluateRoadmapGoal(goal, observation, empireObservation, desiredCityFloor, desiredMilitaryFloor)) {
+                when (evaluateRoadmapGoal(goal, observation, empireObservation, desiredCityFloor, desiredMilitaryCoverage)) {
                     GoalState.Completed -> goal
                     else -> null
                 }
@@ -110,8 +139,8 @@ object AgentStrategistGovernor {
                 add("Roadmap is still in opener phase at turn ${observation.turn}.")
             }
             addAll(
-                roadmap.midTermGoals.mapNotNull { goal ->
-                    when (evaluateRoadmapGoal(goal, observation, empireObservation, desiredCityFloor, desiredMilitaryFloor)) {
+                activeGoals.mapNotNull { goal ->
+                    when (evaluateRoadmapGoal(goal, observation, empireObservation, desiredCityFloor, desiredMilitaryCoverage)) {
                         GoalState.Stale -> "Stale goal: $goal"
                         else -> null
                     }
@@ -123,8 +152,8 @@ object AgentStrategistGovernor {
             if (gameContext.duelLike && !gameContext.contactComplete && observation.turn >= 20) {
                 add("You still have not found the only rival in this duel.")
             }
-            if (observation.empireSummary.militaryUnitCount < desiredMilitaryFloor) {
-                add("Military floor is still below the roadmap target.")
+            if (desiredMilitaryCoverage > 0 && observation.empireSummary.militaryUnitCount < desiredMilitaryCoverage) {
+                add("Military coverage is still thin for the current cities and contact state.")
             }
             if (observation.empireSummary.happiness <= 1) {
                 add("Happiness is low enough to constrain further greed.")
@@ -183,7 +212,7 @@ object AgentStrategistGovernor {
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
         desiredCityFloor: Int,
-        desiredMilitaryFloor: Int,
+        desiredMilitaryCoverage: Int,
     ): GoalState {
         val lower = goal.lowercase()
         val cityCount = observation.empireSummary.cityCount
@@ -196,7 +225,7 @@ object AgentStrategistGovernor {
             "expand" in lower && cityCount >= desiredCityFloor -> GoalState.Completed
             ("contact" in lower || "find rival" in lower || "locate rival" in lower || "scout" in lower) && contactComplete -> GoalState.Completed
             ("spearmen" in lower || "archer" in lower || "military" in lower || "combat unit" in lower || "force" in lower) &&
-                militaryCount >= desiredMilitaryFloor -> GoalState.Completed
+                desiredMilitaryCoverage > 0 && militaryCount >= desiredMilitaryCoverage -> GoalState.Completed
             "second city" in lower && cityCount >= 3 -> GoalState.Stale
             "third city" in lower && cityCount >= 4 -> GoalState.Stale
             ("contact" in lower || "find rival" in lower || "locate rival" in lower || "scout" in lower) && contactComplete -> GoalState.Stale
@@ -214,14 +243,15 @@ object AgentStrategistGovernor {
         }
     }
 
-    private fun desiredMilitaryFloor(gameContext: AgentPublicGameContextObservation, turn: Int): Int {
-        return when {
-            gameContext.duelLike && turn < 35 -> 2
-            gameContext.duelLike && turn < 70 -> 4
-            gameContext.duelLike -> 6
-            turn < 70 -> 3
-            turn < 140 -> 5
-            else -> 7
-        }
+    private fun desiredMilitaryCoverage(
+        observation: AgentObservation,
+        gameContext: AgentPublicGameContextObservation,
+    ): Int {
+        val cityCount = observation.empireSummary.cityCount
+        if (cityCount <= 0) return 0
+        var coverage = cityCount
+        if (observation.empireSummary.isAtWar) coverage += 1
+        else if (gameContext.contactComplete && cityCount >= 2) coverage += 1
+        return coverage
     }
 }

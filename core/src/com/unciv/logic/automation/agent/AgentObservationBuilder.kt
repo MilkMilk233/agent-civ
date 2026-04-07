@@ -262,13 +262,13 @@ object AgentObservationBuilder {
         if (peacefulGrowthWindow && nearbyHostileUnits == 0 && nearbyHostileCities == 0) {
             rankedConstructionChoices.firstOrNull()?.let { topChoice ->
                 score += 55
-                reasons += "Peaceful opener should snowball"
+                reasons += "Quiet opener window"
                 opportunities += fact(
                     priority = 135,
                     category = "expand",
-                    severity = "warning",
-                    headline = "${city.name} should convert safety into growth",
-                    detail = "This calm opener favors decisive city development such as ${topChoice.name} instead of passive unit posture.",
+                    severity = "info",
+                    headline = "${city.name} has a calm development window",
+                    detail = "No local hostiles are visible, and ${topChoice.name} is a strong current build option.",
                 )
             }
 
@@ -494,7 +494,7 @@ object AgentObservationBuilder {
             nearbyHostileCities == 0
         ) {
             score -= 18
-            localFacts += "Calm opener: military posturing is lower priority than city growth and expansion."
+            localFacts += "No local hostiles are visible around this military unit."
         }
 
         if (unit.hasMovement() && unit.isIdle()) {
@@ -680,9 +680,9 @@ object AgentObservationBuilder {
             facts += fact(
                 priority = 160,
                 category = "expand",
-                severity = "warning",
-                headline = "The opener is peaceful and should snowball now",
-                detail = "Use this quiet window for worker tempo, capital growth, and second-city expansion instead of passive military posture.",
+                severity = "info",
+                headline = "The opening remains quiet",
+                detail = "No visible local pressure is interrupting early expansion, growth, or worker tempo.",
             )
         }
 
@@ -911,12 +911,13 @@ object AgentObservationBuilder {
     ): AgentCityProjectObservation? {
         val currentName = city.cityConstructions.currentConstructionName()
         val cityIntent = findCityIntent(memory, city)
-        if (currentName.isBlank() && cityIntent == null) return null
+        val projectIntent = cityIntent?.takeIf { it.intent == "develop_city" }
+        if (currentName.isBlank() && projectIntent == null) return null
         if (currentName.isBlank()) {
             return AgentCityProjectObservation(
                 name = null,
                 status = "needs_choice",
-                note = cityIntent?.target?.let { "No active project is selected even though memory was carrying $it." }
+                note = projectIntent?.target?.let { "No active project is selected even though memory was carrying $it." }
                     ?: "No active project is selected for this city.",
                 switchCost = "low",
             )
@@ -925,17 +926,17 @@ object AgentObservationBuilder {
         val turnsLeft = city.cityConstructions.turnsToConstruction(currentName)
         val workDone = city.cityConstructions.getWorkDone(currentName)
         val workRemaining = city.cityConstructions.getRemainingWork(currentName)
-        val intentMatches = cityIntent?.target == currentName
+        val intentMatches = projectIntent?.target == currentName
         val status = when {
             turnsLeft <= 2 -> if (intentMatches) "nearly_complete" else "committed"
             intentMatches -> "following_intent"
-            cityIntent?.target != null && cityIntent.target != currentName -> "drifted_from_intent"
+            projectIntent?.target != null && projectIntent.target != currentName -> "drifted_from_intent"
             else -> "in_progress"
         }
         val progressNote = when (status) {
             "nearly_complete" -> "$currentName is already underway and should finish in $turnsLeft turns."
             "following_intent" -> "$currentName matches the carried city intent and is still in progress."
-            "drifted_from_intent" -> "Memory expected ${cityIntent?.target}, but the city is currently building $currentName."
+            "drifted_from_intent" -> "Memory expected ${projectIntent?.target}, but the city is currently building $currentName."
             else -> "$currentName is the active build with $workDone production invested and $workRemaining remaining."
         }
         val switchCost = when {

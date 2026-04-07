@@ -90,13 +90,7 @@ object AgentCityOptionBuilder {
                     observation = AgentCityActionCandidateObservation(
                         candidateId = candidateId,
                         title = "Build ${choice.name}",
-                        detail = buildString {
-                            append(choice.detail)
-                            currentConstructionProgressText(city, choice.name)?.let {
-                                append(". ")
-                                append(it)
-                            }
-                        },
+                        detail = choice.detail,
                         estimatedTurns = city.cityConstructions.turnsToConstruction(choice.name),
                         switchCost = buildProjectSwitchCost(city, choice.name),
                         yieldHints = yieldHintsForConstruction(construction),
@@ -416,7 +410,7 @@ object AgentCityOptionBuilder {
                     }
                 }
                 if (construction.name == "Scout" && peacefulGrowthWindow && civInfo.units.getCivUnits().count { it.name == construction.name } == 0) {
-                    score += 25
+                    score += 55
                 }
             }
             is Building -> {
@@ -449,10 +443,10 @@ object AgentCityOptionBuilder {
                     reasons += "Safe one-city opener; a second city accelerates the snowball"
                 }
                 if (construction.name == "Scout" && peacefulGrowthWindow) {
-                    reasons += "Extra map vision is still useful while the map is quiet"
+                    reasons += "Finishes quickly and improves contact, city-site certainty, and map knowledge while the opener is still quiet"
                 }
                 if (construction.isMilitary && peacefulGrowthWindow && singleCity) {
-                    reasons += "Military value is lower than growth and expansion right now"
+                    reasons += "A slower combat unit is less urgent than fast recon and growth tempo right now"
                 }
             }
             is Building -> {
@@ -514,11 +508,13 @@ object AgentCityOptionBuilder {
                 when {
                     construction.isCityFounder() -> hints += "expansion"
                     construction.hasUnique(UniqueType.BuildImprovements, GameContext.IgnoreConditionals) -> hints += "tile_improvement"
+                    construction.name == "Scout" -> hints += "recon"
                     construction.isMilitary -> hints += "military"
                     else -> hints += "unit"
                 }
                 if (construction.isRanged()) hints += "ranged"
-                if (construction.isMilitary && !construction.isRanged()) hints += "frontline"
+                if (construction.isMilitary && !construction.isRanged() && construction.name != "Scout") hints += "frontline"
+                if (construction.name == "Scout") hints += "tempo"
             }
             else -> hints += "tempo"
         }

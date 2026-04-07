@@ -273,7 +273,7 @@ object NextTurnAutomation {
                     (cheapestTechs + techsAdvanced).randomWeighted { it.getWeightForAiDecision(stateForConditionals) }
                 }
 
-            civInfo.tech.techsToResearch.add(techToResearch.name)
+            civInfo.tech.selectTechnology(techToResearch.name)
         }
     }
 

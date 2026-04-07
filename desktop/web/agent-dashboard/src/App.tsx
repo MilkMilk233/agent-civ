@@ -474,6 +474,8 @@ function TurnDetail({
   const progressInMotion = objectArray(plannerBrief?.progressInMotion);
   const strategistStateFacts = objectArray(strategistBrief?.stateFacts);
   const strategistRivalThreats = objectArray(strategistBrief?.rivalThreats ?? empireObservation?.victoryThreats);
+  const strategistCitySnapshots = objectArray(strategistBrief?.citySnapshots);
+  const strategistUnitSnapshots = objectArray(strategistBrief?.unitSnapshots);
   const threatHighlights = objectArray(plannerBrief?.threatHighlights ?? observation?.visibleThreatsAndTargets);
   const opportunityHighlights = objectArray(plannerBrief?.opportunityHighlights ?? observation?.opportunities);
   const cityHighlights = objectArray(plannerBrief?.cityHighlights ?? observation?.cities);
@@ -608,7 +610,7 @@ function TurnDetail({
         id="section-strategist"
         eyebrow="Strategist"
         title="What the strategist saw"
-        body="The strategist owns doctrine and roadmap updates. This section shows the compact state that shaped long-horizon commitments and watch-outs."
+        body="The strategist owns doctrine and roadmap updates. This section shows what it wanted done now, what it wanted done soon, and which guardrails it expected the tactician to preserve."
       >
         <div className="panel-grid panel-grid-asymmetric">
           <Card title="Strategist roadmap" subtitle="The long and mid-term plan that tactical turns should serve.">
@@ -638,10 +640,12 @@ function TurnDetail({
                     </div>
                   </>
                 ) : null}
-                <SectionLabel text="Mid-term goals" />
-                <TagList values={stringList(roadmap.midTermGoals)} />
-                <SectionLabel text="Must maintain" />
-                <TagList values={stringList(roadmap.mustMaintain)} tone="accent" />
+                <SectionLabel text="Immediate objectives" />
+                <TagList values={stringList(roadmap.immediateObjectives)} tone="accent" />
+                <SectionLabel text="Near-term goals" />
+                <TagList values={stringList(roadmap.nearTermGoals)} />
+                <SectionLabel text="Guardrails" />
+                <TagList values={stringList(roadmap.guardrails)} tone="accent" />
                 <SectionLabel text="Watch-outs" />
                 <TagList values={stringList(roadmap.watchOuts)} tone="warning" />
                 <SectionLabel text="Switch triggers" />
@@ -659,6 +663,11 @@ function TurnDetail({
             stateFacts={strategistStateFacts}
           />
         </div>
+
+        <div className="panel-grid">
+          <StrategistCitySnapshotsSection title="Strategist city snapshots" cities={strategistCitySnapshots} />
+          <StrategistUnitSnapshotsSection title="Strategist unit snapshots" units={strategistUnitSnapshots} />
+        </div>
       </SectionShell>
 
       <SectionShell
@@ -667,20 +676,7 @@ function TurnDetail({
         title="What the tactician saw"
         body="This is the compressed tactical packet that the planner actually used. It separates full board reality from the smaller planner brief so you can see what was surfaced and what stayed hidden."
       >
-        <div className="panel-grid panel-grid-asymmetric">
-          <PerceptionCoverageSection
-            observation={observation}
-            perceptionSummary={perceptionSummary}
-            attentionFacts={attentionFacts}
-            cityHighlights={cityHighlights}
-            unitHighlights={unitHighlights}
-            threatHighlights={threatHighlights}
-            hiddenCities={hiddenCities}
-            hiddenUnits={hiddenUnits}
-            hiddenThreats={hiddenThreats}
-            suppressedContext={suppressedContext}
-          />
-
+        <div className="reading-flow">
           <Card title="Tactical brief" subtitle="Roadmap doctrine plus the final brief that the tactical prompt called the current truth.">
             {plannerBrief ? (
               <>
@@ -693,8 +689,12 @@ function TurnDetail({
                   <SummaryStat label="Rival plan" value={stringValue(doctrine?.rivalVictoryGoal)} />
                 </div>
                 <p className="card-paragraph">{stringValue(doctrine?.thesis) || "No tactical thesis recorded."}</p>
-                <SectionLabel text="Commitments" />
-                <TagList values={stringList(doctrine?.commitments)} />
+                <SectionLabel text="Immediate objectives" />
+                <TagList values={stringList(doctrine?.immediateObjectives)} tone="accent" />
+                <SectionLabel text="Near-term goals" />
+                <TagList values={stringList(doctrine?.nearTermGoals)} />
+                <SectionLabel text="Guardrails" />
+                <TagList values={stringList(doctrine?.guardrails)} tone="accent" />
                 <SectionLabel text="Watch-outs" />
                 <TagList values={stringList(doctrine?.watchOuts)} tone="warning" />
                 <SectionLabel text="Immediate pressure" />
@@ -704,37 +704,48 @@ function TurnDetail({
               <p className="muted-text">Planner brief missing from this turn.</p>
             )}
           </Card>
-        </div>
 
-        <div className="panel-grid">
-          <AlertSection title="Attention facts" facts={attentionFacts} />
-          <ProgressSection title="Progress already in motion" items={progressInMotion} />
-        </div>
+          <div className="panel-grid">
+            <PerceptionCoverageSection
+              observation={observation}
+              perceptionSummary={perceptionSummary}
+              attentionFacts={attentionFacts}
+              cityHighlights={cityHighlights}
+              unitHighlights={unitHighlights}
+              threatHighlights={threatHighlights}
+              hiddenCities={hiddenCities}
+              hiddenUnits={hiddenUnits}
+              hiddenThreats={hiddenThreats}
+              suppressedContext={suppressedContext}
+            />
+            <Card title="Empire picture" subtitle="Macro state shared around the tactical turn.">
+              {empireObservation ? (
+                <div className="summary-grid compact">
+                  <SummaryStat label="Ruleset" value={stringValue(asRecord(empireObservation.gameContext)?.rulesetName)} />
+                  <SummaryStat label="Map" value={`${stringValue(asRecord(empireObservation.gameContext)?.mapSize)} ${stringValue(asRecord(empireObservation.gameContext)?.mapType)}`.trim()} />
+                  <SummaryStat label="Victory goal" value={stringValue(empireObservation.victoryGoal)} />
+                  <SummaryStat label="Research" value={stringValue(empireObservation.currentResearch)} />
+                  <SummaryStat label="Gold" value={formatNumber(numberValue(empireObservation.gold))} />
+                  <SummaryStat label="Happiness" value={formatNumber(numberValue(empireObservation.happiness))} />
+                </div>
+              ) : (
+                <p className="muted-text">No empire observation captured.</p>
+              )}
+            </Card>
+          </div>
 
-        <div className="panel-grid">
-          <ThreatHighlightsSection title="Threats the tactician could see" threats={threatHighlights} />
-          <ObservationFactSection title="Opportunities surfaced" facts={opportunityHighlights} emptyText="No opportunity highlights were surfaced for this turn." />
-        </div>
+          <div className="panel-grid">
+            <AlertSection title="Attention facts" facts={attentionFacts} />
+            <ProgressSection title="Progress already in motion" items={progressInMotion} />
+          </div>
 
-        <div className="panel-grid">
-          <Card title="Empire picture" subtitle="Macro state shared around the tactical turn.">
-            {empireObservation ? (
-              <div className="summary-grid compact">
-                <SummaryStat label="Ruleset" value={stringValue(asRecord(empireObservation.gameContext)?.rulesetName)} />
-                <SummaryStat label="Map" value={`${stringValue(asRecord(empireObservation.gameContext)?.mapSize)} ${stringValue(asRecord(empireObservation.gameContext)?.mapType)}`.trim()} />
-                <SummaryStat label="Victory goal" value={stringValue(empireObservation.victoryGoal)} />
-                <SummaryStat label="Research" value={stringValue(empireObservation.currentResearch)} />
-                <SummaryStat label="Gold" value={formatNumber(numberValue(empireObservation.gold))} />
-                <SummaryStat label="Happiness" value={formatNumber(numberValue(empireObservation.happiness))} />
-              </div>
-            ) : (
-              <p className="muted-text">No empire observation captured.</p>
-            )}
-          </Card>
+          <div className="panel-grid">
+            <ThreatHighlightsSection title="Threats the tactician could see" threats={threatHighlights} />
+            <ObservationFactSection title="Opportunities surfaced" facts={opportunityHighlights} emptyText="No opportunity highlights were surfaced for this turn." />
+          </div>
+
           <EmpireChoicesSection title="Empire choices" choices={empireChoices} />
-        </div>
 
-        <div className="panel-grid">
           <CityHighlightsSection title="Surfaced city cards" cities={cityHighlights} />
           <UnitHighlightsSection title="Surfaced unit cards" units={unitHighlights} />
         </div>
@@ -961,7 +972,7 @@ function StrategistContextSection({
     <Card title={title} subtitle="Neutral setup and state checks before the roadmap was chosen or refreshed.">
       {brief ? (
         <>
-          <div className="summary-grid compact">
+          <div className="summary-grid compact summary-grid-four">
             <SummaryStat label="Map archetype" value={stringValue(gameContext?.archetype)} />
             <SummaryStat label="Exploration value" value={stringValue(gameContext?.explorationValue)} />
             <SummaryStat label="Expansion window" value={stringValue(gameContext?.expansionWindow)} />
@@ -1033,6 +1044,131 @@ function ObservationFactSection({
   }
 
   return <Card title={title}>{content}</Card>;
+}
+
+function StrategistCitySnapshotsSection({
+  title,
+  cities,
+}: {
+  title: string;
+  cities: Record<string, unknown>[];
+}) {
+  return (
+    <Card title={title} subtitle="All current cities shared with the strategist in compact form.">
+      {cities.length ? (
+        <div className="structured-list">
+          {cities.map((city, index) => {
+            const projectOptions = objectArray(city.projectOptions);
+            const optionLabels = projectOptions.map((option) => formatStrategistProjectOption(option)).filter(Boolean);
+            const signals = stringList(city.signals);
+
+            return (
+              <article key={`${stringValue(city.name)}-${index}`} className="structured-item">
+                <div className="structured-item-header">
+                  <strong>{stringValue(city.name) || "Unnamed city"}</strong>
+                  <div className="tag-list compact">
+                    <span className="tag neutral">({formatNumber(numberValue(city.x))}, {formatNumber(numberValue(city.y))})</span>
+                    <span className="tag neutral">Pop {formatNumber(numberValue(city.population))}</span>
+                    <span className="tag neutral">{stringValue(city.currentProject) || "Needs project"}</span>
+                  </div>
+                </div>
+
+                <div className="mini-metric-grid">
+                  <MiniMetric label="Food" value={formatNumber(numberValue(city.foodPerTurn))} />
+                  <MiniMetric label="Prod" value={formatNumber(numberValue(city.productionPerTurn))} />
+                  <MiniMetric label="Growth" value={nullableNumberText(city.turnsToGrowth)} />
+                  <MiniMetric label="Focus" value={stringValue(city.focus)} />
+                </div>
+
+                <div className="mini-metric-grid">
+                  <MiniMetric label="Project turns" value={nullableNumberText(city.projectTurnsLeft)} />
+                  <MiniMetric label="Invested" value={nullableNumberText(city.projectProductionInvested)} />
+                  <MiniMetric label="Remaining" value={nullableNumberText(city.projectProductionRemaining)} />
+                  <MiniMetric label="Threats" value={`${formatNumber(numberValue(city.nearbyHostileUnits))}u · ${formatNumber(numberValue(city.nearbyHostileCities))}c`} />
+                </div>
+
+                {signals.length ? (
+                  <>
+                    <SectionLabel text="Signals" />
+                    <TagList values={signals.slice(0, 5)} />
+                  </>
+                ) : null}
+
+                {optionLabels.length ? (
+                  <>
+                    <SectionLabel text="Top project alternatives" />
+                    <TagList values={optionLabels} tone="accent" />
+                  </>
+                ) : null}
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <EmptyCardState title="No strategist city snapshots" body="No city snapshots were captured for the strategist on this turn." />
+      )}
+    </Card>
+  );
+}
+
+function StrategistUnitSnapshotsSection({
+  title,
+  units,
+}: {
+  title: string;
+  units: Record<string, unknown>[];
+}) {
+  return (
+    <Card title={title} subtitle="All current units shared with the strategist in compact form.">
+      {units.length ? (
+        <div className="structured-list">
+          {units.map((unit, index) => {
+            const progress = asRecord(unit.assignmentProgress);
+            const signals = [...stringList(unit.reasons), ...stringList(unit.localFacts)].slice(0, 6);
+
+            return (
+              <article key={`${stringValue(unit.name)}-${numberValue(unit.id) ?? index}`} className="structured-item">
+                <div className="structured-item-header">
+                  <strong>{stringValue(unit.name) || "Unnamed unit"}</strong>
+                  <div className="tag-list compact">
+                    <span className="tag neutral">({formatNumber(numberValue(unit.x))}, {formatNumber(numberValue(unit.y))})</span>
+                    <span className="tag neutral">{stringValue(unit.role) || "unit"}</span>
+                    <span className="tag neutral">{stringValue(unit.detailLevel) || "compact"}</span>
+                    <span className="tag neutral">{stringValue(unit.movementPoints) || "0/0"}</span>
+                  </div>
+                </div>
+
+                <div className="mini-metric-grid">
+                  <MiniMetric label="HP" value={formatNumber(numberValue(unit.health))} />
+                  <MiniMetric label="Strength" value={nullableNumberText(unit.strength)} />
+                  <MiniMetric label="Ranged" value={nullableNumberText(unit.rangedStrength)} />
+                  <MiniMetric label="Range" value={nullableNumberText(unit.range)} />
+                </div>
+
+                <div className="mini-metric-grid">
+                  <MiniMetric label="Has move" value={booleanText(unit.hasMovement)} />
+                  <MiniMetric label="Hostile units" value={formatNumber(numberValue(unit.nearbyHostileUnits))} />
+                  <MiniMetric label="Hostile cities" value={formatNumber(numberValue(unit.nearbyHostileCities))} />
+                  <MiniMetric label="Assigned" value={progress ? "yes" : "no"} />
+                </div>
+
+                {progress ? <p className="card-paragraph">{stringValue(progress.progressNote)}</p> : null}
+
+                {signals.length ? (
+                  <>
+                    <SectionLabel text="Signals" />
+                    <TagList values={signals} />
+                  </>
+                ) : null}
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <EmptyCardState title="No strategist unit snapshots" body="No unit snapshots were captured for the strategist on this turn." />
+      )}
+    </Card>
+  );
 }
 
 function ThreatHighlightsSection({
@@ -1198,7 +1334,7 @@ function PerceptionCoverageSection({
     <Card title="Perception coverage" subtitle="How full observation was compressed before the tactical model planned the turn.">
       {observation ? (
         <>
-          <div className="summary-grid compact">
+          <div className="summary-grid compact summary-grid-four">
             <SummaryStat
               label="World cities"
               value={formatNumber(numberValue(perceptionSummary?.totalCities))}
@@ -1297,6 +1433,7 @@ function CityHighlightsSection({ title, cities }: { title: string; cities: Recor
                 <div className="structured-item-header">
                   <strong>{stringValue(city.name) || "Unnamed city"}</strong>
                   <div className="tag-list compact">
+                    <span className="tag neutral">({formatNumber(numberValue(city.x))}, {formatNumber(numberValue(city.y))})</span>
                     <span className="tag neutral">Pop {formatNumber(numberValue(state?.population))}</span>
                     <span className="tag neutral">{stringValue(project?.name) || "Needs project"}</span>
                   </div>
@@ -1309,7 +1446,17 @@ function CityHighlightsSection({ title, cities }: { title: string; cities: Recor
                   <MiniMetric label="Strength" value={formatNumber(numberValue(state?.cityStrength))} />
                 </div>
 
-                {project ? <p className="card-paragraph">{stringValue(project.note)}</p> : null}
+                {project ? (
+                  <>
+                    <div className="mini-metric-grid">
+                      <MiniMetric label="Status" value={humanizeKey(stringValue(project.status) || "unknown")} />
+                      <MiniMetric label="Turns left" value={nullableNumberText(project.turnsLeft)} />
+                      <MiniMetric label="Invested" value={nullableNumberText(project.productionInvested)} />
+                      <MiniMetric label="Remaining" value={nullableNumberText(project.productionRemaining)} />
+                    </div>
+                    <p className="card-paragraph">{stringValue(project.note)}</p>
+                  </>
+                ) : null}
 
                 {signals.length ? (
                   <>
@@ -1381,6 +1528,7 @@ function UnitHighlightsSection({ title, units }: { title: string; units: Record<
                 <div className="structured-item-header">
                   <strong>{stringValue(unit.name) || "Unnamed unit"}</strong>
                   <div className="tag-list compact">
+                    <span className="tag neutral">({formatNumber(numberValue(unit.x))}, {formatNumber(numberValue(unit.y))})</span>
                     <span className="tag neutral">{stringValue(unit.role) || "unit"}</span>
                     <span className="tag neutral">HP {formatNumber(numberValue(unit.health))}</span>
                     <span className="tag neutral">{stringValue(unit.movementPoints) || "0/0"}</span>
@@ -1890,6 +2038,22 @@ function formatCityActionCandidateLabel(candidate: Record<string, unknown>): str
   if (estimatedTurns !== null) parts.push(`${formatNumber(estimatedTurns)}t`);
   if (goldCost !== null) parts.push(`${formatNumber(goldCost)}g`);
   return parts.join(" · ");
+}
+
+function formatStrategistProjectOption(option: Record<string, unknown>): string {
+  const title = stringValue(option.title) || "Unnamed project";
+  const estimatedTurns = numberValue(option.estimatedTurns);
+  const goldCost = numberValue(option.goldCost);
+  const yieldHints = stringList(option.yieldHints);
+  const parts = [title];
+  if (estimatedTurns !== null) parts.push(`${formatNumber(estimatedTurns)}t`);
+  if (goldCost !== null) parts.push(`${formatNumber(goldCost)}g`);
+  if (yieldHints.length) parts.push(yieldHints.slice(0, 2).join("/"));
+  return parts.join(" · ");
+}
+
+function booleanText(value: unknown): string {
+  return value === true ? "Yes" : value === false ? "No" : "—";
 }
 
 type CandidateLookupEntry = {
