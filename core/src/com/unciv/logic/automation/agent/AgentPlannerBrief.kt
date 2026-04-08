@@ -36,7 +36,6 @@ data class AgentPlannerTacticalPressureObservation(
     val noOpPolicy: String,
     val noOpReason: String? = null,
     val mustActReasons: List<String> = emptyList(),
-    val priorityThisTurn: List<String> = emptyList(),
 )
 
 @Serializable

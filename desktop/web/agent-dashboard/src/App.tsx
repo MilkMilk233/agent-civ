@@ -591,8 +591,9 @@ function TurnDetail({
 
       <TurnSectionNav
         items={[
-          { id: "section-strategist", label: "Strategist" },
-          { id: "section-perception", label: "Perception" },
+          { id: "section-strategist-input", label: "Strategist saw" },
+          { id: "section-strategist-output", label: "Strategist output" },
+          { id: "section-perception", label: "Tactician saw" },
           { id: "section-decision", label: "Decision" },
           { id: "section-literal", label: "Literal" },
           { id: "section-events", label: "Events" },
@@ -600,60 +601,65 @@ function TurnDetail({
       />
 
       <SectionShell
-        id="section-strategist"
+        id="section-strategist-input"
         eyebrow="Strategist"
         title="What the strategist saw"
-        body="The strategist owns doctrine and roadmap updates. This report is intentionally small: what just happened, what is true now, and what the empire should try next."
+        body="This is the strategist's input space: broad current state, the previous memo, factual changes since then, and compact city/unit snapshots."
       >
-        <div className="panel-grid panel-grid-asymmetric">
-          <Card title="Strategist roadmap" subtitle="A compact report with fixed Past / Now / Future subtitles.">
-            {roadmap ? (
-              <>
-                <div className="summary-grid compact">
-                  <SummaryStat label="Doctrine" value={stringValue(roadmap.doctrine)} />
-                  <SummaryStat label="Win path" value={stringValue(roadmap.winPath)} />
-                  <SummaryStat label="Phase" value={stringValue(roadmap.phase)} />
-                  <SummaryStat label="Review turn" value={formatNumber(numberValue(roadmap.reviewAfterTurn))} />
-                  <SummaryStat label="Created" value={roadmapCreatedTurn === null ? "Unknown" : `Turn ${formatNumber(roadmapCreatedTurn)}`} />
-                  <SummaryStat label="Last reviewed" value={roadmapLastReviewedTurn === null ? "Unknown" : `Turn ${formatNumber(roadmapLastReviewedTurn)}`} />
-                </div>
-                <p className="card-paragraph">{stringValue(roadmap.thesis) || "No roadmap thesis recorded."}</p>
-                {stringValue(roadmap.pastSummary) ? (
-                  <>
-                    <SectionLabel text="Past" />
-                    <p className="card-paragraph">{stringValue(roadmap.pastSummary)}</p>
-                  </>
-                ) : null}
-                {stringValue(roadmap.currentSituation) ? (
-                  <>
-                    <SectionLabel text="Now" />
-                    <p className="card-paragraph">{stringValue(roadmap.currentSituation)}</p>
-                  </>
-                ) : null}
-                {stringValue(roadmap.futurePlan) ? (
-                  <>
-                    <SectionLabel text="Future" />
-                    <p className="card-paragraph">{stringValue(roadmap.futurePlan)}</p>
-                  </>
-                ) : null}
-              </>
-            ) : (
-              <p className="muted-text">No strategist roadmap was recorded for this turn.</p>
-            )}
-          </Card>
+        <StrategistContextSection
+          title="Strategist inputs"
+          brief={strategistBrief}
+          threats={strategistRivalThreats}
+          stateFacts={strategistStateFacts}
+        />
 
-          <StrategistContextSection
-            title="Strategist inputs"
-            brief={strategistBrief}
-            threats={strategistRivalThreats}
-            stateFacts={strategistStateFacts}
-          />
-        </div>
-
-        <div className="panel-grid">
+        <div className="reading-flow">
           <StrategistCitySnapshotsSection title="Strategist city snapshots" cities={strategistCitySnapshots} />
           <StrategistUnitSnapshotsSection title="Strategist unit snapshots" units={strategistUnitSnapshots} />
         </div>
+      </SectionShell>
+
+      <SectionShell
+        id="section-strategist-output"
+        eyebrow="Strategist"
+        title="What the strategist output"
+        body="This section contains only the strategist-generated roadmap report. It is kept separate from strategist inputs so you can compare what the strategist saw against what it concluded."
+      >
+        <Card title="Strategist roadmap" subtitle="A compact report with fixed Past / Now / Future subtitles.">
+          {roadmap ? (
+            <>
+              <div className="summary-grid compact">
+                <SummaryStat label="Doctrine" value={stringValue(roadmap.doctrine)} />
+                <SummaryStat label="Win path" value={stringValue(roadmap.winPath)} />
+                <SummaryStat label="Phase" value={stringValue(roadmap.phase)} />
+                <SummaryStat label="Review turn" value={formatNumber(numberValue(roadmap.reviewAfterTurn))} />
+                <SummaryStat label="Created" value={roadmapCreatedTurn === null ? "Unknown" : `Turn ${formatNumber(roadmapCreatedTurn)}`} />
+                <SummaryStat label="Last reviewed" value={roadmapLastReviewedTurn === null ? "Unknown" : `Turn ${formatNumber(roadmapLastReviewedTurn)}`} />
+              </div>
+              <p className="card-paragraph">{stringValue(roadmap.thesis) || "No roadmap thesis recorded."}</p>
+              {stringValue(roadmap.pastSummary) ? (
+                <>
+                  <SectionLabel text="Past" />
+                  <p className="card-paragraph">{stringValue(roadmap.pastSummary)}</p>
+                </>
+              ) : null}
+              {stringValue(roadmap.currentSituation) ? (
+                <>
+                  <SectionLabel text="Now" />
+                  <p className="card-paragraph">{stringValue(roadmap.currentSituation)}</p>
+                </>
+              ) : null}
+              {stringValue(roadmap.futurePlan) ? (
+                <>
+                  <SectionLabel text="Future" />
+                  <p className="card-paragraph">{stringValue(roadmap.futurePlan)}</p>
+                </>
+              ) : null}
+            </>
+          ) : (
+            <p className="muted-text">No strategist roadmap was recorded for this turn.</p>
+          )}
+        </Card>
       </SectionShell>
 
       <SectionShell
@@ -663,7 +669,7 @@ function TurnDetail({
         body="This is the compressed tactical packet that the planner actually used. It separates full board reality from the smaller planner brief so you can see what was surfaced and what stayed hidden."
       >
         <div className="reading-flow">
-          <Card title="Tactical brief" subtitle="The strategist report as the tactician received it, plus the current tactical brief.">
+          <Card title="Tactical brief" subtitle="Only the tactician-specific tactical context that shaped this turn. The strategist's Past / Now / Future report is shown only in the strategist output section.">
             {plannerBrief ? (
               <>
                 <div className="summary-grid compact">
@@ -674,34 +680,16 @@ function TurnDetail({
                   <SummaryStat label="Rival" value={stringValue(doctrine?.rivalCiv)} />
                   <SummaryStat label="Rival plan" value={stringValue(doctrine?.rivalVictoryGoal)} />
                 </div>
-                <p className="card-paragraph">{stringValue(doctrine?.thesis) || "No tactical thesis recorded."}</p>
-                {stringValue(doctrine?.pastSummary) ? (
-                  <>
-                    <SectionLabel text="Past" />
-                    <p className="card-paragraph">{stringValue(doctrine?.pastSummary)}</p>
-                  </>
-                ) : null}
-                {stringValue(doctrine?.currentSituation) ? (
-                  <>
-                    <SectionLabel text="Now" />
-                    <p className="card-paragraph">{stringValue(doctrine?.currentSituation)}</p>
-                  </>
-                ) : null}
-                {stringValue(doctrine?.futurePlan) ? (
-                  <>
-                    <SectionLabel text="Future" />
-                    <p className="card-paragraph">{stringValue(doctrine?.futurePlan)}</p>
-                  </>
-                ) : null}
-                <SectionLabel text="Pressure reminders" />
-                <TagList values={stringList(asRecord(plannerBrief?.tacticalPressure)?.priorityThisTurn)} tone="accent" />
+                {stringValue(doctrine?.thesis) ? <p className="card-paragraph">{stringValue(doctrine?.thesis)}</p> : null}
+                <SectionLabel text="Hard pressure" />
+                <TagList values={stringList(asRecord(plannerBrief?.tacticalPressure)?.mustActReasons)} tone="warning" />
               </>
             ) : (
               <p className="muted-text">Planner brief missing from this turn.</p>
             )}
           </Card>
 
-          <div className="panel-grid">
+          <div className="reading-flow">
             <PerceptionCoverageSection
               observation={observation}
               perceptionSummary={perceptionSummary}
@@ -730,12 +718,12 @@ function TurnDetail({
             </Card>
           </div>
 
-          <div className="panel-grid">
+          <div className="reading-flow">
             <AlertSection title="Attention facts" facts={attentionFacts} />
             <ProgressSection title="Progress already in motion" items={progressInMotion} />
           </div>
 
-          <div className="panel-grid">
+          <div className="reading-flow">
             <ThreatHighlightsSection title="Threats the tactician could see" threats={threatHighlights} />
             <ObservationFactSection title="Opportunities surfaced" facts={opportunityHighlights} emptyText="No opportunity highlights were surfaced for this turn." />
           </div>
@@ -753,7 +741,7 @@ function TurnDetail({
         title="What the agent decided"
         body="These are the structured actions the tactician returned, plus the retry and validation story that determined whether they stuck."
       >
-        <div className="panel-grid panel-grid-asymmetric">
+        <div className="reading-flow">
           <ActionPlanSection
             title="Planned actions"
             actions={plannedActions}

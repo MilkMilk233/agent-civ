@@ -68,7 +68,6 @@ object AgentPromptBuilder {
             - Use Memory JSON for continuity when the current brief still supports it: city intents, unit assignments, recent failures, and roadmap consistency.
             - Plan like a strong tactical player serving the roadmap. Use attentionFacts as simple reminders of what may need attention this turn, then do your own prioritization from the full brief.
             - Planner Brief JSON includes tacticalPressure. Treat tacticalPressure.mustActReasons as factual current-turn pressure, then use the strategist-authored roadmap fields plus surfaced options to choose the best response.
-            - tacticalPressure.priorityThisTurn, when present, is a compact echo of roadmap priorities rather than a script-written action prescription.
             - The planner brief already compressed noise. Do not let routine worker upkeep crowd out rival threats, thin defensive coverage, gold overflow, or important city tempo choices.
             - Use select_empire_option only with candidateId values from empireChoices. Never invent research, policy, diplomacy, gold, or bombardment commands outside those candidates.
             - Repeated diplomacy that does not materially improve the game state is low priority.

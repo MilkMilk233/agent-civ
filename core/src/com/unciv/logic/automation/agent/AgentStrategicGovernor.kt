@@ -170,7 +170,6 @@ object AgentStrategicGovernor {
     ): AgentPlannerTacticalPressureObservation {
         val primaryThreat = empireObservation.victoryThreats.firstOrNull()
         val mustActReasons = linkedSetOf<String>()
-        val priorityThisTurn = linkedSetOf<String>()
 
         if (primaryThreat?.threatLevel == "critical") {
             mustActReasons += "${primaryThreat.civName} is a critical ${primaryThreat.likelyVictoryType.lowercase()} rival."
@@ -200,20 +199,6 @@ object AgentStrategicGovernor {
             mustActReasons += "The roadmap still needs more cities to reach its expansion floor."
         }
 
-        roadmap?.currentSituation
-            ?.takeIf { it.isNotBlank() }
-            ?.let { priorityThisTurn += it }
-
-        roadmap?.futurePlan
-            ?.takeIf { it.isNotBlank() }
-            ?.let { priorityThisTurn += it }
-
-        if (priorityThisTurn.isEmpty()) {
-            memory.strategicRoadmap.futurePlan
-                ?.takeIf { it.isNotBlank() }
-                ?.let { priorityThisTurn += it }
-        }
-
         val meaningfulLeversAvailable = hasMeaningfulImmediateLevers(cityHighlights, unitHighlights, empireObservation)
         val noOpPolicy = when {
             !meaningfulLeversAvailable -> "allowed"
@@ -227,7 +212,6 @@ object AgentStrategicGovernor {
             noOpPolicy = noOpPolicy,
             noOpReason = mustActReasons.takeIf { it.isNotEmpty() }?.joinToString(" "),
             mustActReasons = mustActReasons.take(4),
-            priorityThisTurn = priorityThisTurn.take(4),
         )
     }
 
