@@ -19,6 +19,7 @@ object AgentDiplomacyOptionBuilder {
 
     internal fun build(civInfo: Civilization): AgentDiplomacyPlanningContext {
         val diplomacyCandidates = buildList {
+            addAll(buildDeclareWarCandidates(civInfo))
             addAll(buildFriendshipCandidates(civInfo))
             addAll(buildEmbassyCandidates(civInfo))
             addAll(buildOpenBordersCandidates(civInfo))
@@ -32,6 +33,46 @@ object AgentDiplomacyOptionBuilder {
         return AgentDiplomacyPlanningContext(
             diplomacyCandidates = diplomacyCandidates,
         )
+    }
+
+    private fun buildDeclareWarCandidates(civInfo: Civilization): List<AgentEmpireRuntimeCandidate> {
+        return civInfo.getKnownCivs()
+            .asSequence()
+            .filter { it.isMajorCiv() }
+            .filterNot { civInfo.isAtWarWith(it) }
+            .filter { civInfo.getDiplomacyManager(it)?.canDeclareWar() == true }
+            .map { otherCiv ->
+                val candidateId = "diplo:war:${otherCiv.civID}"
+                AgentEmpireRuntimeCandidate(
+                    observation = AgentEmpireChoiceCandidateObservation(
+                        candidateId = candidateId,
+                        category = "diplomacy",
+                        title = "Declare war on ${otherCiv.civName}",
+                        detail = "${relationshipSummary(civInfo, otherCiv)}. Immediate transition from peace to open war.",
+                    ),
+                    validate = { currentCiv ->
+                        val liveOther = currentCiv.gameInfo.civilizations.firstOrNull { it.civID == otherCiv.civID }
+                            ?: return@AgentEmpireRuntimeCandidate "Empire option rejected: civilization is missing"
+                        when {
+                            currentCiv.isAtWarWith(liveOther) ->
+                                "Empire option rejected: already at war with ${liveOther.civName}"
+                            currentCiv.getDiplomacyManager(liveOther)?.canDeclareWar() != true ->
+                                "Empire option rejected: war declaration is no longer available"
+                            else -> null
+                        }
+                    },
+                    execute = { currentCiv ->
+                        val liveOther = currentCiv.gameInfo.civilizations.firstOrNull { it.civID == otherCiv.civID }
+                            ?: return@AgentEmpireRuntimeCandidate false
+                        val liveDiploManager = currentCiv.getDiplomacyManager(liveOther) ?: return@AgentEmpireRuntimeCandidate false
+                        if (currentCiv.isAtWarWith(liveOther) || !liveDiploManager.canDeclareWar()) return@AgentEmpireRuntimeCandidate false
+                        liveDiploManager.declareWar()
+                        currentCiv.isAtWarWith(liveOther)
+                    },
+                    successMessage = "War declared on ${otherCiv.civName}",
+                )
+            }
+            .toList()
     }
 
     private fun buildFriendshipCandidates(civInfo: Civilization): List<AgentEmpireRuntimeCandidate> {
@@ -343,6 +384,7 @@ object AgentDiplomacyOptionBuilder {
     private fun scoreCandidate(observation: AgentEmpireChoiceCandidateObservation): Int {
         val lower = "${observation.title} ${observation.detail}".lowercase()
         return when {
+            observation.category == "diplomacy" && "declare war" in lower -> 140
             observation.category == "diplomacy" && "research agreement" in lower -> 130
             observation.category == "diplomacy" && "defensive pact" in lower -> 120
             observation.category == "trade" -> 110
