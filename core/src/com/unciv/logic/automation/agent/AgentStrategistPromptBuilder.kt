@@ -25,6 +25,19 @@ object AgentStrategistPromptBuilder {
         refreshRequest: AgentStrategistRefreshRequest,
     ): String {
         val strategistBriefJson = strategistBriefJson(memory, observation, empireObservation, refreshRequest)
+        val cheatSheet = AgentStrategicCheatSheetBank.resolve(
+            empireObservation.gameContext,
+            memory.strategicRoadmap
+        )
+        val cheatSheetSection = cheatSheet?.let { sheet ->
+            buildString {
+                appendLine("- Background knowledge from the strategist cheat sheet bank:")
+                appendLine("  - ${sheet.title}.")
+                for (bullet in sheet.bullets) {
+                    appendLine("  - $bullet")
+                }
+            }.trimEnd()
+        } ?: ""
         return """
             You are the Strategist for Unciv using the standard Civ V - Vanilla ruleset.
             Your job is to choose or revise the high-level roadmap for the next few turns like a strong human player.
@@ -48,6 +61,7 @@ object AgentStrategistPromptBuilder {
             - Build one coherent roadmap. Do not hedge across multiple win paths unless the game state truly demands a flexible fallback.
             - Prefer stable doctrine. If the existing roadmap still fits, refine it instead of thrashing.
             - On tiny duel maps, think about tempo, expansion, defensive coverage, and pressure on the only rival.
+            $cheatSheetSection
             - Use only public setup context and the summarized state in Strategist Brief JSON.
             - stateFacts in Strategist Brief JSON are neutral reminders from simple checks, not strategic conclusions. Do your own reasoning from them.
             - Your roadmap is the main narrative brain. Write it like a compact report with fixed subtitles: Past, Now, and Future.
