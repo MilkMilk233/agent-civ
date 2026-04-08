@@ -15,15 +15,19 @@ data class AgentStrategicRoadmapMemory(
     var futurePlan: String? = null,
     var reviewCityCount: Int = 0,
     var reviewMilitaryUnitCount: Int = 0,
+    var reviewIsAtWar: Boolean = false,
     var reviewContactComplete: Boolean = false,
     var reviewResearch: String? = null,
+    var reviewVisibleRivalCities: Int = 0,
+    var reviewVisibleRivalUnits: Int = 0,
+    var reviewPrimaryRivalCiv: String? = null,
     var reviewCityNames: ArrayList<String> = arrayListOf(),
     var reviewAfterTurn: Int = 0,
     var createdTurn: Int = 0,
     var lastReviewedTurn: Int = 0,
     var lastRefreshReason: String? = null,
 ) : IsPartOfGameInfoSerialization {
-    constructor() : this("", "", null, "", null, null, null, null, 0, 0, false, null, arrayListOf(), 0, 0, 0, null)
+    constructor() : this("", "", null, "", null, null, null, null, 0, 0, false, false, null, 0, 0, null, arrayListOf(), 0, 0, 0, null)
 }
 
 @Serializable

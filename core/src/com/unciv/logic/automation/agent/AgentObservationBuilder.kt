@@ -133,10 +133,10 @@ object AgentObservationBuilder {
         }
         val expandedUnits = units.filter { it.detailLevel == "expanded" }
 
-        val selectedTargets = visibleTargetCandidates
+        val visibleTargets = visibleTargetCandidates
             .sortedWith(compareByDescending<VisibleTargetCandidate> { it.score }.thenBy { it.observation.name })
-            .take(maxVisibleTargets)
             .map { it.observation }
+        val selectedTargets = visibleTargets.take(maxVisibleTargets)
 
         val opportunityFacts = selectFacts(
             buildOpportunityFacts(
@@ -194,14 +194,14 @@ object AgentObservationBuilder {
             priorityFacts = priorityFacts,
             cities = cities,
             units = units,
-            visibleThreatsAndTargets = selectedTargets,
+            visibleThreatsAndTargets = visibleTargets,
             opportunities = opportunityFacts,
             perceptionSummary = PerceptionSummaryObservation(
                 totalCities = cities.size,
                 expandedCities = cities.size,
                 totalUnits = units.size,
                 expandedUnits = expandedUnits.size,
-                visibleTargets = selectedTargets.size,
+                visibleTargets = visibleTargets.size,
             ),
         )
     }

@@ -87,8 +87,6 @@ object AgentTurnAutomation {
         var memoryJson = ""
         var plannerBrief = AgentPromptBuilder.plannerBrief(memory, observation, empireObservation)
         var plannerBriefJson = ""
-        var supportSnapshot = AgentTurnDiagnostics.supportSnapshot(observation, empireObservation)
-        var supportSnapshotJson = ""
 
         fun rebuildArtifacts() {
             observationJson = AgentPromptBuilder.observationJson(observation)
@@ -96,8 +94,6 @@ object AgentTurnAutomation {
             memoryJson = AgentMemoryManager.memoryJson(memory)
             plannerBrief = AgentPromptBuilder.plannerBrief(memory, observation, empireObservation)
             plannerBriefJson = AgentPromptBuilder.plannerBriefJson(plannerBrief)
-            supportSnapshot = AgentTurnDiagnostics.supportSnapshot(observation, empireObservation)
-            supportSnapshotJson = AgentTurnDiagnostics.supportSnapshotJson(supportSnapshot)
         }
 
         fun recordObservationStart(passIndex: Int, eventType: String, message: String, extraDetails: Map<String, String> = emptyMap()) {
@@ -135,7 +131,6 @@ object AgentTurnAutomation {
                     "observationJson" to observationJson,
                     "empireObservationJson" to empireObservationJson,
                     "plannerBriefJson" to plannerBriefJson,
-                    "domainSupportJson" to supportSnapshotJson,
                     "empireResearchCandidates" to empireObservation.researchCandidates.size.toString(),
                     "empirePolicyCandidates" to empireObservation.policyCandidates.size.toString(),
                     "empireMacroCandidates" to empireObservation.macroCandidates.size.toString(),
@@ -230,68 +225,6 @@ object AgentTurnAutomation {
                         break
                     }
                     AgentActionExecutor.ValidationStatus.NoOp -> {
-                        val noOpRejectionReason = AgentStrategicGovernor.noOpRejectionReason(plannerBrief)
-                        if (noOpRejectionReason != null) {
-                            AgentObservability.record(
-                                type = "plan_validation_failed",
-                                message = "No-op plan rejected by tactical pressure policy",
-                                civName = civInfo.civName,
-                                turn = civInfo.gameInfo.turns,
-                                details = mapOf(
-                                    "turnPass" to passIndex.toString(),
-                                    "attempt" to planningAttempts.toString(),
-                                    "maxAttempts" to maxPlanningAttemptsPerTurn.toString(),
-                                    "failedPlanJson" to AgentPromptBuilder.planJson(plan),
-                                    "plannedDomainCountsJson" to AgentTurnDiagnostics.plannedDomainCountsJson(plan),
-                                    "validationFailuresJson" to AgentPromptBuilder.retryContextJson(
-                                        AgentRetryContextFactory.fromNoOpPolicy(
-                                            plan = plan,
-                                            reason = noOpRejectionReason,
-                                            retryAttempt = minOf(planningAttempts, maxPlanningAttemptsPerTurn - 1),
-                                            maxRetries = maxPlanningAttemptsPerTurn - 1,
-                                        )
-                                    ),
-                                ),
-                            )
-
-                            if (planningAttempts >= maxPlanningAttemptsPerTurn) {
-                                selectedPlan = plan
-                                validationReport = AgentActionExecutor.ValidationReport(
-                                    status = AgentActionExecutor.ValidationStatus.Invalid,
-                                    outcomes = listOf(
-                                        AgentActionExecutor.ActionOutcome(
-                                            commandType = "no_op_policy",
-                                            status = AgentActionExecutor.ActionStatus.Rejected,
-                                            reason = noOpRejectionReason,
-                                        )
-                                    ),
-                                )
-                                fallbackReason = "Planner kept returning a no-op while tactical pressure required action"
-                                break
-                            }
-
-                            retryContext = AgentRetryContextFactory.fromNoOpPolicy(
-                                plan = plan,
-                                reason = noOpRejectionReason,
-                                retryAttempt = planningAttempts,
-                                maxRetries = maxPlanningAttemptsPerTurn - 1,
-                            )
-                            AgentObservability.record(
-                                type = "plan_retry_requested",
-                                message = "Requesting planner retry after no-op was rejected by tactical pressure policy",
-                                civName = civInfo.civName,
-                                turn = civInfo.gameInfo.turns,
-                                details = mapOf(
-                                    "turnPass" to passIndex.toString(),
-                                    "attempt" to planningAttempts.toString(),
-                                    "nextAttempt" to (planningAttempts + 1).toString(),
-                                    "maxAttempts" to maxPlanningAttemptsPerTurn.toString(),
-                                    "plannedDomainCountsJson" to AgentTurnDiagnostics.plannedDomainCountsJson(plan),
-                                    "retryContextJson" to AgentPromptBuilder.retryContextJson(retryContext),
-                                ),
-                            )
-                            continue
-                        }
                         selectedPlan = plan
                         validationReport = validation
                         break
@@ -307,7 +240,6 @@ object AgentTurnAutomation {
                                 "attempt" to planningAttempts.toString(),
                                 "maxAttempts" to maxPlanningAttemptsPerTurn.toString(),
                                 "failedPlanJson" to AgentPromptBuilder.planJson(plan),
-                                "plannedDomainCountsJson" to AgentTurnDiagnostics.plannedDomainCountsJson(plan),
                                 "affectedDomains" to AgentTurnDiagnostics.affectedDomainsCsv(validation.outcomes),
                                 "outcomeDomainSummaryJson" to AgentTurnDiagnostics.outcomeSummaryJson(validation.outcomes),
                                 "validationFailuresJson" to AgentPromptBuilder.retryContextJson(
@@ -344,7 +276,6 @@ object AgentTurnAutomation {
                                 "attempt" to planningAttempts.toString(),
                                 "nextAttempt" to (planningAttempts + 1).toString(),
                                 "maxAttempts" to maxPlanningAttemptsPerTurn.toString(),
-                                "plannedDomainCountsJson" to AgentTurnDiagnostics.plannedDomainCountsJson(plan),
                                 "retryContextJson" to AgentPromptBuilder.retryContextJson(retryContext),
                             ),
                         )
@@ -393,7 +324,6 @@ object AgentTurnAutomation {
                     "planningAttempts" to planningAttempts.toString(),
                     "fallbackReason" to (fallbackReason ?: "No plan produced"),
                 ) + memoryDetails(updatedMemory) + domainDetails(
-                    supportSnapshotJson = supportSnapshotJson,
                     plan = null,
                 ),
             )
@@ -425,7 +355,6 @@ object AgentTurnAutomation {
                     "plannedActions" to selectedPlan.actions.size.toString(),
                     "fallbackReason" to (fallbackReason ?: "Planner requested legacy handoff"),
                 ) + memoryDetails(updatedMemory) + domainDetails(
-                    supportSnapshotJson = supportSnapshotJson,
                     plan = selectedPlan,
                 ),
             )
@@ -457,7 +386,6 @@ object AgentTurnAutomation {
                     "plannedActions" to selectedPlan.actions.size.toString(),
                     "fallbackReason" to "Plan validation did not complete",
                 ) + memoryDetails(updatedMemory) + domainDetails(
-                    supportSnapshotJson = supportSnapshotJson,
                     plan = selectedPlan,
                 ),
             )
@@ -498,7 +426,6 @@ object AgentTurnAutomation {
                         )
                     ),
                 ) + memoryDetails(updatedMemory) + domainDetails(
-                    supportSnapshotJson = supportSnapshotJson,
                     plan = selectedPlan,
                     outcomes = validation.outcomes,
                 ),
@@ -530,7 +457,6 @@ object AgentTurnAutomation {
                     "plannedActions" to selectedPlan.actions.count { it !is AgentActionCommand.EndTurn }.toString(),
                     "intentionalNoOp" to "true",
                 ) + memoryDetails(updatedMemory) + domainDetails(
-                    supportSnapshotJson = supportSnapshotJson,
                     plan = selectedPlan,
                 ),
             )
@@ -579,7 +505,6 @@ object AgentTurnAutomation {
                     "fallbackReason" to "Validated plan still rejected during live execution",
                     "fallbackScope" to AgentTurnDiagnostics.affectedDomainsCsv(firstPassReport.outcomes.filter { it.status == AgentActionExecutor.ActionStatus.Rejected }),
                 ) + memoryDetails(updatedMemory) + domainDetails(
-                    supportSnapshotJson = supportSnapshotJson,
                     plan = selectedPlan,
                     outcomes = firstPassReport.outcomes,
                 ),
@@ -605,7 +530,6 @@ object AgentTurnAutomation {
                     "executedActions" to firstPassReport.executedActions.toString(),
                     "plannedActions" to selectedPlan.actions.size.toString(),
                 ) + domainDetails(
-                    supportSnapshotJson = supportSnapshotJson,
                     plan = selectedPlan,
                     outcomes = firstPassReport.outcomes,
                 ),
@@ -649,7 +573,6 @@ object AgentTurnAutomation {
                         "executedActions" to firstPassReport.executedActions.toString(),
                         "fallbackReason" to (fallbackReason ?: "No plan produced after city-creation replan"),
                     ) + memoryDetails(updatedMemory) + domainDetails(
-                        supportSnapshotJson = supportSnapshotJson,
                         plan = null,
                         outcomes = firstPassReport.outcomes,
                     ),
@@ -683,7 +606,6 @@ object AgentTurnAutomation {
                         "plannedActions" to selectedPlan.actions.size.toString(),
                         "fallbackReason" to (fallbackReason ?: "Planner requested legacy handoff after city-creation replan"),
                     ) + memoryDetails(updatedMemory) + domainDetails(
-                        supportSnapshotJson = supportSnapshotJson,
                         plan = selectedPlan,
                         outcomes = firstPassReport.outcomes,
                     ),
@@ -717,7 +639,6 @@ object AgentTurnAutomation {
                         "plannedActions" to selectedPlan.actions.size.toString(),
                         "fallbackReason" to "Second-pass validation did not complete",
                     ) + memoryDetails(updatedMemory) + domainDetails(
-                        supportSnapshotJson = supportSnapshotJson,
                         plan = selectedPlan,
                         outcomes = firstPassReport.outcomes,
                     ),
@@ -760,7 +681,6 @@ object AgentTurnAutomation {
                             )
                         ),
                     ) + memoryDetails(updatedMemory) + domainDetails(
-                        supportSnapshotJson = supportSnapshotJson,
                         plan = selectedPlan,
                         outcomes = firstPassReport.outcomes + secondValidation.outcomes,
                     ),
@@ -802,7 +722,6 @@ object AgentTurnAutomation {
                                 combinedFailureReport.outcomes.filter { it.status == AgentActionExecutor.ActionStatus.Rejected }
                             ),
                         ) + memoryDetails(updatedMemory) + domainDetails(
-                            supportSnapshotJson = supportSnapshotJson,
                             plan = selectedPlan,
                             outcomes = combinedFailureReport.outcomes,
                         ),
@@ -843,7 +762,6 @@ object AgentTurnAutomation {
                 "rejectedActions" to finalReport.rejectedActions.toString(),
                 "plannedActions" to finalPlan.actions.size.toString(),
             ) + memoryDetails(updatedMemory) + domainDetails(
-                supportSnapshotJson = supportSnapshotJson,
                 plan = finalPlan,
                 outcomes = finalReport.outcomes,
             ),
@@ -861,14 +779,10 @@ object AgentTurnAutomation {
     )
 
     private fun domainDetails(
-        supportSnapshotJson: String,
         plan: AgentActionPlan?,
         outcomes: List<AgentActionExecutor.ActionOutcome> = emptyList(),
     ): Map<String, String> {
-        val details = linkedMapOf(
-            "domainSupportJson" to supportSnapshotJson,
-            "plannedDomainCountsJson" to AgentTurnDiagnostics.plannedDomainCountsJson(plan),
-        )
+        val details = linkedMapOf<String, String>()
         if (outcomes.isNotEmpty()) {
             details["outcomeDomainSummaryJson"] = AgentTurnDiagnostics.outcomeSummaryJson(outcomes)
             details["affectedDomains"] = AgentTurnDiagnostics.affectedDomainsCsv(outcomes)

@@ -85,7 +85,6 @@ export function deriveTurns(events: ObservabilityEvent[], turnSummaries: TurnSum
       const strategistRequest = latestEventOfType(group, "strategist_llm_request");
       const planApplied = latestEventOfType(group, "plan_applied");
       const validationFailed = latestEventOfType(group, "plan_validation_failed");
-      const roadmapApplied = latestEventOfType(group, "strategist_roadmap_applied");
       const details = turnStart?.details ?? {};
       const summary = summariesByKey.get(key);
       const status = summarizeStatus(summary, group);
@@ -100,19 +99,12 @@ export function deriveTurns(events: ObservabilityEvent[], turnSummaries: TurnSum
         observation: parseJsonValue(details.observationJson),
         empireObservation: parseJsonValue(details.empireObservationJson),
         memory: parseJsonValue(details.memoryJson),
-        plannerBrief:
-          parseJsonValue(details.plannerBriefJson) ??
-          parseJsonValue(latestEventOfType(group, "llm_request")?.details?.plannerBriefJson),
+        plannerBrief: parseJsonValue(details.plannerBriefJson),
         strategistBrief: parseJsonValue(strategistRequest?.details?.strategistBriefJson),
-        strategicRoadmap:
-          parseJsonValue(details.strategicRoadmapJson) ??
-          parseJsonValue(roadmapApplied?.details?.roadmapJson),
+        strategicRoadmap: parseJsonValue(details.strategicRoadmapJson),
         parsedPlan: parseJsonValue(planParsed?.details?.parsedPlan),
         strategicPlan: parseJsonValue(strategistParsed?.details?.parsedPlan),
-        plannedDomainCounts: parseJsonValue(planApplied?.details?.plannedDomainCountsJson),
         outcomeDomainSummary: parseJsonValue(planApplied?.details?.outcomeDomainSummaryJson),
-        domainSupport:
-          parseJsonValue(details.domainSupportJson) ?? parseJsonValue(planApplied?.details?.domainSupportJson),
         validationFailures: parseJsonValue(validationFailed?.details?.validationFailuresJson),
         synopsis: status.synopsis,
         statusLabel: status.statusLabel,

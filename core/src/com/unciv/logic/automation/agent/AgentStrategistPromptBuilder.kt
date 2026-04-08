@@ -63,17 +63,22 @@ object AgentStrategistPromptBuilder {
             - On tiny duel maps, think about tempo, expansion, defensive coverage, and pressure on the only rival.
             $cheatSheetSection
             - Use only public setup context and the summarized state in Strategist Brief JSON.
-            - stateFacts in Strategist Brief JSON are neutral reminders from simple checks, not strategic conclusions. Do your own reasoning from them.
-            - Your roadmap is the main narrative brain. Write it like a compact report with fixed subtitles: Past, Now, and Future.
+            - Your roadmap is the main narrative brain. Write it like a compact commander memo with fixed subtitles: Past, Now, and Future.
             - lastStrategistReport is your previous compact commander memo. sinceLastReviewFacts are neutral factual deltas since that memo. Use them to update your thinking, not to repeat stale language.
             - citySnapshots and unitSnapshots cover the current empire in compact form. Use that broader perception to judge tempo, sequencing, and whether current projects still fit the roadmap.
-            - Strategist Brief JSON includes roadmapReality with phase/status checks, notable drift, and urgent problems. Use it to update stale assumptions instead of repeating them.
+            - rivalCities, rivalUnits, and campaignPicture are factual operational state. Use them to think about frontage, target priority, readiness to declare, readiness to capture, and whether the empire is still preparing or should be acting.
             - Do not repeat opener instructions that no longer fit the actual empire size, contact status, or military situation.
-            - If duel contact is still missing and roadmapReality marks it urgent, Future should make that priority legible without turning into local movement orders.
-            - pastSummary should briefly explain what happened since the last strategist memo and what background context still matters.
-            - currentSituation should briefly explain what is true now, what the empire's real bottleneck or tension is, and what changed in strategic terms.
-            - futurePlan should briefly explain what the empire should try to accomplish over the next few turns in natural language.
+            - Treat Strategist Brief JSON as a factual state packet, not a script-written strategic interpretation.
+            - Think like a strong human strategist: identify the real bottleneck, the current campaign state, and the next operational objective. Do not turn the report into a long step-by-step playbook.
+            - thesis should be a single compact sentence capturing the strategic idea of the roadmap.
+            - pastSummary should briefly explain what changed since the last strategist memo and what background context still matters. Keep it to 1-2 sentences.
+            - currentSituation should briefly explain what is true now, what the empire's real bottleneck or tension is, and what changed in strategic terms. Keep it to 1-3 sentences.
+            - futurePlan should briefly explain what the empire should try to accomplish over the next few turns in natural language. Keep it to 1-3 sentences.
+            - For domination-oriented states, reason in campaign terms when possible: preparing, marching, declaring, assaulting, exploiting, or stabilizing after losses.
+            - If a rival city or capital is visible, futurePlan should usually identify the next operational objective in campaign terms, not just list internal economy tasks.
+            - If war is not yet started, use the visible rival/campaign picture to judge what still blocks declaration. If war is already underway, focus on what must happen to take territory rather than repeating generic economy maintenance.
             - Do not issue exact tactical commands. Avoid wording like "cancel Scout now", "switch Berlin to Warrior", or specific movement orders. Express strategic sequencing and urgency instead.
+            - Do not write numbered plans, city-by-city build scripts, or long branch trees. Avoid "first/second/third", "if A then B else C" chains, or repetitive fallback ladders unless the state truly requires one key contingency.
             - Do not mention difficulty, hidden bonuses, or opponent implementation.
             - reviewInTurns should usually stay between 3 and 6 unless there is a strong reason to review sooner or later.
             - Prefer state-based milestones such as "before contact", "after the capital is founded", "once the current Scout finishes", or "before starting a settler".

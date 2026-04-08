@@ -13,9 +13,10 @@ data class AgentStrategistBrief(
     val currentRoadmap: AgentStrategicRoadmapMemory? = null,
     val lastStrategistReport: AgentStrategistReportMemo? = null,
     val sinceLastReviewFacts: List<String> = emptyList(),
-    val roadmapReality: AgentStrategistRoadmapRealityObservation? = null,
     val rivalThreats: List<AgentVictoryThreatObservation> = emptyList(),
-    val stateFacts: List<ObservationFact> = emptyList(),
+    val rivalCities: List<AgentStrategistRivalCitySnapshot> = emptyList(),
+    val rivalUnits: List<AgentStrategistRivalUnitSnapshot> = emptyList(),
+    val campaignPicture: AgentStrategistCampaignPicture? = null,
     val progressInMotion: List<AgentPlannerProgressObservation> = emptyList(),
     val citySnapshots: List<AgentStrategistCitySnapshot> = emptyList(),
     val unitSnapshots: List<AgentStrategistUnitSnapshot> = emptyList(),
@@ -31,16 +32,6 @@ data class AgentStrategistReportMemo(
     val pastSummary: String? = null,
     val currentSituation: String? = null,
     val futurePlan: String? = null,
-)
-
-@Serializable
-data class AgentStrategistRoadmapRealityObservation(
-    val currentPhaseReality: String,
-    val expansionStatus: String,
-    val contactStatus: String,
-    val militaryStatus: String,
-    val notableDrift: List<String> = emptyList(),
-    val urgentProblems: List<String> = emptyList(),
 )
 
 @Serializable
@@ -62,6 +53,8 @@ data class AgentStrategistCitySnapshot(
     val cityStrength: Int,
     val nearbyHostileUnits: Int,
     val nearbyHostileCities: Int,
+    val distanceToNearestRivalCity: Int? = null,
+    val distanceToNearestRivalCapital: Int? = null,
     val signals: List<String> = emptyList(),
     val projectOptions: List<AgentStrategistCityProjectOptionSnapshot> = emptyList(),
 )
@@ -82,6 +75,8 @@ data class AgentStrategistUnitSnapshot(
     val range: Int? = null,
     val nearbyHostileUnits: Int,
     val nearbyHostileCities: Int,
+    val distanceToNearestRivalCity: Int? = null,
+    val distanceToNearestRivalCapital: Int? = null,
     val reasons: List<String>,
     val localFacts: List<String> = emptyList(),
     val assignmentProgress: UnitAssignmentProgressObservation? = null,
@@ -94,4 +89,62 @@ data class AgentStrategistCityProjectOptionSnapshot(
     val goldCost: Int? = null,
     val switchCost: String? = null,
     val yieldHints: List<String> = emptyList(),
+)
+
+@Serializable
+data class AgentStrategistRivalCitySnapshot(
+    val civName: String,
+    val name: String,
+    val relation: String,
+    val x: Int,
+    val y: Int,
+    val isCapital: Boolean,
+    val health: Int? = null,
+    val combatStrength: Int? = null,
+    val distanceToClosestCity: Int? = null,
+    val distanceToClosestUnit: Int? = null,
+    val facts: List<String> = emptyList(),
+)
+
+@Serializable
+data class AgentStrategistRivalUnitSnapshot(
+    val civName: String,
+    val name: String,
+    val relation: String,
+    val x: Int,
+    val y: Int,
+    val health: Int? = null,
+    val combatStrength: Int? = null,
+    val distanceToClosestCity: Int? = null,
+    val distanceToClosestUnit: Int? = null,
+    val facts: List<String> = emptyList(),
+)
+
+@Serializable
+data class AgentStrategistTargetReference(
+    val civName: String,
+    val name: String,
+    val x: Int,
+    val y: Int,
+    val health: Int? = null,
+    val combatStrength: Int? = null,
+    val distanceToClosestCity: Int? = null,
+    val distanceToClosestUnit: Int? = null,
+)
+
+@Serializable
+data class AgentStrategistCampaignPicture(
+    val primaryRivalCiv: String? = null,
+    val visibleRivalCities: Int,
+    val visibleRivalCapitals: Int,
+    val visibleRivalUnits: Int,
+    val frontlineFriendlyCombatUnits: Int,
+    val frontlineMeleeUnits: Int,
+    val frontlineRangedUnits: Int,
+    val frontlineDamagedUnits: Int,
+    val frontlineCityBombards: Int,
+    val meleeUnitsNearNearestRivalCity: Int,
+    val rangedUnitsNearNearestRivalCity: Int,
+    val nearestRivalCity: AgentStrategistTargetReference? = null,
+    val nearestRivalCapital: AgentStrategistTargetReference? = null,
 )

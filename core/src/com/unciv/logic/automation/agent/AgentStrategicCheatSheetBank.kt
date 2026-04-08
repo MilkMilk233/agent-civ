@@ -33,6 +33,8 @@ object AgentStrategicCheatSheetBank {
             "Be specific about the policy roadmap: in Civ V Vanilla, the Liberty tree's Citizenship policy gives a free Worker. If the opener is leaning Liberty and Citizenship is realistically reachable soon, count that as part of the default economy and avoid building an early Worker too soon.",
             "Keep early Worker count lean; about one Worker per city is enough. Add or buy the second Worker at a sensible time, but only after the second-city timing is secure.",
             "Once two cities are online, the empire should stop playing like a peaceful opener and convert production into units that move toward the rival.",
+            "When the first serious army is assembled, move it toward the rival border and prepare to declare instead of sitting in a long peaceful buildup.",
+            "After war conversion starts, the normal aim is to seize the frontier city if needed and then the rival capital, while keeping reinforcements flowing from the rear.",
             "The main losing pattern to avoid is drifting into Worker, Monument, or Granary while contact is still unresolved and the second city is not yet secured.",
             "Only deviate from the default opener if contact and second-city certainty are already solved unusually early or if the rival is close enough that immediate military is clearly required.",
         ),

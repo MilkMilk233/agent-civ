@@ -190,8 +190,13 @@ object AgentMemoryManager {
             futurePlan = strategicPlan.roadmap.futurePlan?.trim().takeUnless { it.isNullOrEmpty() },
             reviewCityCount = observation.empireSummary.cityCount,
             reviewMilitaryUnitCount = observation.empireSummary.militaryUnitCount,
+            reviewIsAtWar = observation.empireSummary.isAtWar,
             reviewContactComplete = empireObservation.gameContext.contactComplete,
             reviewResearch = empireObservation.currentResearch,
+            reviewVisibleRivalCities = observation.visibleThreatsAndTargets.count { it.kind == "city" && it.civName != observation.civName },
+            reviewVisibleRivalUnits = observation.visibleThreatsAndTargets.count { it.kind == "unit" && it.civName != observation.civName },
+            reviewPrimaryRivalCiv = empireObservation.victoryThreats.firstOrNull()?.civName
+                ?: observation.visibleThreatsAndTargets.firstOrNull { it.civName != observation.civName }?.civName,
             reviewCityNames = ArrayList(observation.cities.map { it.name }.sorted()),
             reviewAfterTurn = turn + reviewInTurns,
             createdTurn = memory.strategicRoadmap.createdTurn.takeIf { it > 0 && memory.strategicRoadmap.doctrine == strategicPlan.roadmap.doctrine.trim() }
@@ -428,10 +433,6 @@ object AgentMemoryManager {
             val prefix = if (threat.threatLevel == "critical") "Urgent" else "Watch"
             focus += "$prefix ${threat.civName} ${threat.likelyVictoryType.lowercase()} push"
         }
-        empireObservation.stateFacts
-            .filter { it.severity in setOf("warning", "critical") }
-            .take(2)
-            .forEach { focus += it.headline }
         observation.priorityFacts.take(1).forEach { focus += it.headline }
         observation.opportunities.take(1).forEach { focus += it.headline }
         previous.focus

@@ -152,9 +152,7 @@ export interface TurnRecord {
   strategicRoadmap: unknown | null;
   parsedPlan: Record<string, unknown> | null;
   strategicPlan: Record<string, unknown> | null;
-  plannedDomainCounts: unknown | null;
   outcomeDomainSummary: unknown | null;
-  domainSupport: unknown | null;
   validationFailures: unknown | null;
   synopsis: string;
   statusLabel: string;

@@ -42,12 +42,6 @@ enum class AgentControlDomain(val wireName: String) {
 }
 
 @Serializable
-data class AgentDomainSupportSnapshot(
-    val supportedDomains: List<String>,
-    val availableCandidatesByDomain: Map<String, Int>,
-)
-
-@Serializable
 data class AgentDomainOutcomeSummary(
     val domain: String,
     val planned: Int = 0,
@@ -61,50 +55,6 @@ object AgentTurnDiagnostics {
         explicitNulls = false
         encodeDefaults = true
     }
-
-    fun supportSnapshot(
-        observation: AgentObservation,
-        empireObservation: AgentEmpireObservation,
-    ): AgentDomainSupportSnapshot {
-        val available = linkedMapOf(
-            AgentControlDomain.Empire.wireName to (
-                empireObservation.researchCandidates.size +
-                    empireObservation.policyCandidates.size +
-                    empireObservation.macroCandidates.count {
-                        !it.candidateId.startsWith("diplo:") &&
-                            !it.candidateId.startsWith("trade:")
-                    }
-                ),
-            AgentControlDomain.City.wireName to (
-                observation.cities.sumOf { it.allActionCandidates().size }
-                ),
-            AgentControlDomain.Unit.wireName to (
-                observation.units.sumOf { it.legalActionCandidates.size + it.unitOptionCandidates.size } +
-                    observation.units.count { it.hasMovement }
-                ),
-            AgentControlDomain.Diplomacy.wireName to (
-                empireObservation.diplomacyCandidates.size
-                ),
-        )
-        return AgentDomainSupportSnapshot(
-            supportedDomains = AgentControlDomain.entries.map { it.wireName },
-            availableCandidatesByDomain = available,
-        )
-    }
-
-    fun supportSnapshotJson(snapshot: AgentDomainSupportSnapshot): String = json.encodeToString(snapshot)
-
-    fun plannedDomainCounts(plan: AgentActionPlan?): Map<String, Int> {
-        if (plan == null) return emptyMap()
-        val counts = linkedMapOf<String, Int>()
-        for (action in plan.actions) {
-            val domain = AgentControlDomain.fromPlanAction(action) ?: continue
-            counts[domain.wireName] = (counts[domain.wireName] ?: 0) + 1
-        }
-        return counts
-    }
-
-    fun plannedDomainCountsJson(plan: AgentActionPlan?): String = json.encodeToString(plannedDomainCounts(plan))
 
     fun outcomeSummary(outcomes: List<AgentActionExecutor.ActionOutcome>): List<AgentDomainOutcomeSummary> {
         val byDomain = linkedMapOf<String, AgentDomainOutcomeSummary>()

@@ -86,14 +86,6 @@ object AgentEmpireObservationBuilder {
             freePolicies = civInfo.policies.freePolicies,
             gold = civInfo.gold,
             happiness = civInfo.getHappiness(),
-            stateFacts = buildStateFacts(
-                civInfo = civInfo,
-                gameContext = gameContext,
-                researchCandidates = researchCandidates,
-                policyCandidates = policyCandidates,
-                macroCandidates = macroCandidates,
-                diplomacyCandidates = diplomacyCandidates,
-            ),
             researchCandidates = researchCandidates.map { it.observation },
             policyCandidates = policyCandidates.map { it.observation },
             macroCandidates = macroCandidates.map { it.observation },
@@ -603,90 +595,6 @@ object AgentEmpireObservationBuilder {
             )
             .take(maxVictoryThreats)
             .toList()
-    }
-
-    private fun buildStateFacts(
-        civInfo: Civilization,
-        gameContext: AgentPublicGameContextObservation,
-        researchCandidates: List<AgentEmpireRuntimeCandidate>,
-        policyCandidates: List<AgentEmpireRuntimeCandidate>,
-        macroCandidates: List<AgentEmpireRuntimeCandidate>,
-        diplomacyCandidates: List<AgentEmpireRuntimeCandidate> = emptyList(),
-    ): List<ObservationFact> {
-        val facts = mutableListOf<ObservationFact>()
-        val knownMajorCivs = civInfo.getKnownCivs().count { it.isMajorCiv() && !it.isDefeated() }
-        if (!gameContext.contactComplete && (gameContext.duelLike || civInfo.gameInfo.turns >= 80)) {
-            facts += ObservationFact(
-                category = "contact",
-                severity = if (gameContext.duelLike && civInfo.gameInfo.turns >= 20) "warning" else "info",
-                headline = "Known major rivals: $knownMajorCivs/${(gameContext.majorCivCount - 1).coerceAtLeast(0)}",
-                detail = "Contact is still incomplete on turn ${civInfo.gameInfo.turns}.",
-            )
-        }
-        val cityCount = civInfo.cities.count()
-        val militaryUnits = civInfo.units.getCivUnits().count { it.isMilitary() }
-        val desiredCoverage = desiredMilitaryCoverage(cityCount, civInfo.isAtWar(), gameContext.contactComplete)
-        if (desiredCoverage > 0 && militaryUnits < desiredCoverage) {
-            facts += ObservationFact(
-                category = "war",
-                severity = "warning",
-                headline = "Military coverage is thin: $militaryUnits unit(s) for $cityCount city/cities",
-                detail = "This is a current-state reminder based on city count, war state, and contact status, not a strict turn rule.",
-            )
-        }
-        val goldSpendCandidates = macroCandidates.count { candidate ->
-            candidate.observation.candidateId == "macro:gold:auto"
-        }
-        if (civInfo.gold >= 300 && goldSpendCandidates > 0) {
-            facts += ObservationFact(
-                category = "economy",
-                severity = if (civInfo.gold >= 1000) "warning" else "info",
-                headline = "Gold reserve: ${civInfo.gold}",
-                detail = "$goldSpendCandidates spend candidates are available this turn.",
-            )
-        }
-        if (researchCandidates.isNotEmpty()) {
-            facts += ObservationFact(
-                category = "research",
-                severity = if (civInfo.tech.currentTechnologyName() == null) "warning" else "info",
-                headline = if (civInfo.tech.freeTechs > 0) "Free technology available" else "Research choice pending",
-                detail = "${researchCandidates.size} research candidates are available.",
-            )
-        }
-        if (policyCandidates.isNotEmpty()) {
-            facts += ObservationFact(
-                category = "policy",
-                severity = "info",
-                headline = "Policy choice pending",
-                detail = "${policyCandidates.size} policy candidates are available.",
-            )
-        }
-        val bombardCount = macroCandidates.count { it.observation.candidateId.startsWith("macro:bombard:") }
-        if (bombardCount > 0) {
-            facts += ObservationFact(
-                category = "war",
-                severity = if (civInfo.isAtWar()) "warning" else "info",
-                headline = "City bombard actions available: $bombardCount",
-                detail = "Bombard actions can be taken before unit planning.",
-            )
-        }
-        if (diplomacyCandidates.isNotEmpty()) {
-            facts += ObservationFact(
-                category = "diplomacy",
-                severity = "info",
-                headline = "Diplomatic actions available: ${diplomacyCandidates.size}",
-                detail = "${diplomacyCandidates.size} diplomacy or trade candidates can be chosen this turn.",
-            )
-        }
-        return facts
-    }
-
-    private fun desiredMilitaryCoverage(cityCount: Int, isAtWar: Boolean, contactComplete: Boolean): Int {
-        if (cityCount <= 0) return 0
-        var coverage = cityCount
-        if (isAtWar) coverage += 1
-        else if (contactComplete && cityCount >= 2) coverage += 1
-        return coverage
     }
 
     private fun goldFingerprint(civInfo: Civilization): String {

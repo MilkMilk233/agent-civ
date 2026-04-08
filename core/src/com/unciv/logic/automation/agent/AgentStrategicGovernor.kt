@@ -14,27 +14,16 @@ object AgentStrategicGovernor {
         val unitHighlights = selectUnitHighlights(observation, gameContext, primaryThreat)
         val progressInMotion = buildProgressInMotion(observation, empireObservation, cityHighlights, unitHighlights)
         val threatHighlights = observation.visibleThreatsAndTargets.take(if (observation.empireSummary.isAtWar) 3 else 2)
-        val opportunityHighlights = selectOpportunityHighlights(observation, gameContext, primaryThreat)
-        val tacticalPressure = buildTacticalPressure(
-            memory = memory,
-            observation = observation,
-            empireObservation = empireObservation,
-            roadmap = roadmap,
-            cityHighlights = cityHighlights,
-            unitHighlights = unitHighlights,
-        )
 
         val workerFacts = observation.priorityFacts.count { isWorkerFact(it) }
         val suppressedContext = buildList {
             val hiddenCities = observation.cities.size - cityHighlights.size
             val hiddenUnits = observation.units.size - unitHighlights.size
-            val hiddenOpportunities = observation.opportunities.size - opportunityHighlights.size
             if (hiddenCities > 0) add("$hiddenCities lower-priority city cards were hidden after strategic ranking.")
             if (hiddenUnits > 0) add("$hiddenUnits lower-priority unit cards were hidden after strategic ranking.")
             if (workerFacts > 2 && workerFacts > unitHighlights.count { it.role == "worker" }) {
                 add("${workerFacts - unitHighlights.count { it.role == "worker" }} worker facts were collapsed so broader strategy can dominate.")
             }
-            if (hiddenOpportunities > 0) add("$hiddenOpportunities quieter opportunities were hidden from the planner brief.")
         }
 
         return AgentPlannerBrief(
@@ -51,7 +40,6 @@ object AgentStrategicGovernor {
                 currentSituation = roadmap?.currentSituation,
                 futurePlan = roadmap?.futurePlan ?: memory.strategicPosture.turnThesis,
             ),
-            tacticalPressure = tacticalPressure,
             attentionFacts = attentionFacts,
             progressInMotion = progressInMotion,
             empireChoices = AgentPlannerEmpireChoicesObservation(
@@ -63,17 +51,8 @@ object AgentStrategicGovernor {
             cityHighlights = cityHighlights,
             unitHighlights = unitHighlights,
             threatHighlights = threatHighlights,
-            opportunityHighlights = opportunityHighlights,
             suppressedContext = suppressedContext,
         )
-    }
-
-    fun noOpRejectionReason(plannerBrief: AgentPlannerBrief): String? {
-        return when (plannerBrief.tacticalPressure.noOpPolicy.lowercase()) {
-            "forbidden" -> plannerBrief.tacticalPressure.noOpReason
-                ?: "A no-op is not acceptable under the current tactical pressure."
-            else -> null
-        }
     }
 
     internal fun buildProgressSummary(
@@ -155,64 +134,7 @@ object AgentStrategicGovernor {
                 )
             )
         }
-
-        empireObservation.stateFacts.forEach(::addFact)
         return facts.values.toList()
-    }
-
-    private fun buildTacticalPressure(
-        memory: AgentMemory,
-        observation: AgentObservation,
-        empireObservation: AgentEmpireObservation,
-        roadmap: AgentStrategicRoadmapMemory?,
-        cityHighlights: List<AgentCityObservation>,
-        unitHighlights: List<AgentUnitObservation>,
-    ): AgentPlannerTacticalPressureObservation {
-        val primaryThreat = empireObservation.victoryThreats.firstOrNull()
-        val mustActReasons = linkedSetOf<String>()
-
-        if (primaryThreat?.threatLevel == "critical") {
-            mustActReasons += "${primaryThreat.civName} is a critical ${primaryThreat.likelyVictoryType.lowercase()} rival."
-        }
-
-        if (empireObservation.gameContext.duelLike && !empireObservation.gameContext.contactComplete && observation.turn >= 20) {
-            mustActReasons += "You still have not found the only rival in this duel."
-        }
-
-        if (hasThinMilitaryCoverage(observation, empireObservation.gameContext)) {
-            mustActReasons += "Military coverage is thin for the current cities and contact state."
-        }
-
-        if (hasHighGoldReserve(empireObservation)) {
-            mustActReasons += "Large gold reserves should be converted into tempo now."
-        }
-
-        if (observation.empireSummary.happiness <= 0) {
-            mustActReasons += "The happiness floor is at risk."
-        }
-
-        val desiredCityFloor = desiredCityFloor(empireObservation.gameContext, observation.turn)
-        if (roadmap != null &&
-            (roadmap.phase.equals("expand", ignoreCase = true) || roadmap.doctrine.contains("expand", ignoreCase = true)) &&
-            observation.empireSummary.cityCount < desiredCityFloor
-        ) {
-            mustActReasons += "The roadmap still needs more cities to reach its expansion floor."
-        }
-
-        val meaningfulLeversAvailable = hasMeaningfulImmediateLevers(cityHighlights, unitHighlights, empireObservation)
-        val noOpPolicy = when {
-            !meaningfulLeversAvailable -> "allowed"
-            empireObservation.gameContext.duelLike && !empireObservation.gameContext.contactComplete && observation.turn >= 30 -> "forbidden"
-            mustActReasons.size >= 2 -> "forbidden"
-            mustActReasons.isNotEmpty() -> "discouraged"
-            else -> "allowed"
-        }
-
-        return AgentPlannerTacticalPressureObservation(
-            noOpPolicy = noOpPolicy,
-            noOpReason = mustActReasons.takeIf { it.isNotEmpty() }?.joinToString(" "),
-            mustActReasons = mustActReasons.take(4),
-        )
     }
 
     private fun selectCityHighlights(

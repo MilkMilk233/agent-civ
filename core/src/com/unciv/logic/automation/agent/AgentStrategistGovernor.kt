@@ -8,6 +8,18 @@ object AgentStrategistGovernor {
         refreshRequest: AgentStrategistRefreshRequest,
     ): AgentStrategistBrief {
         val currentRoadmap = memory.strategicRoadmap.takeIf { it.doctrine.isNotBlank() }
+        val rivalCities = buildRivalCitySnapshots(observation)
+        val rivalUnits = buildRivalUnitSnapshots(observation)
+        val nearestRivalCity = rivalCities.minWithOrNull(
+            compareBy<AgentStrategistRivalCitySnapshot> { it.distanceToClosestUnit ?: Int.MAX_VALUE }
+                .thenBy { it.distanceToClosestCity ?: Int.MAX_VALUE }
+        )
+        val nearestRivalCapital = rivalCities
+            .filter { it.isCapital }
+            .minWithOrNull(
+                compareBy<AgentStrategistRivalCitySnapshot> { it.distanceToClosestUnit ?: Int.MAX_VALUE }
+                    .thenBy { it.distanceToClosestCity ?: Int.MAX_VALUE }
+            )
         val citySnapshots = observation.cities
             .sortedByDescending { cityStrategistScore(it) }
             .map { city ->
@@ -34,6 +46,8 @@ object AgentStrategistGovernor {
                     cityStrength = city.state.cityStrength,
                     nearbyHostileUnits = city.state.nearbyHostileUnits,
                     nearbyHostileCities = city.state.nearbyHostileCities,
+                    distanceToNearestRivalCity = nearestRivalCity?.let { axialDistance(city.x, city.y, it.x, it.y) },
+                    distanceToNearestRivalCapital = nearestRivalCapital?.let { axialDistance(city.x, city.y, it.x, it.y) },
                     signals = city.signals.take(5),
                     projectOptions = city.actions.chooseProject.take(projectOptionLimit).map { option ->
                         AgentStrategistCityProjectOptionSnapshot(
@@ -65,6 +79,8 @@ object AgentStrategistGovernor {
                     range = unit.range,
                     nearbyHostileUnits = unit.nearbyHostileUnits,
                     nearbyHostileCities = unit.nearbyHostileCities,
+                    distanceToNearestRivalCity = nearestRivalCity?.let { axialDistance(unit.x, unit.y, it.x, it.y) },
+                    distanceToNearestRivalCapital = nearestRivalCapital?.let { axialDistance(unit.x, unit.y, it.x, it.y) },
                     reasons = unit.reasons.take(4),
                     localFacts = unit.localFacts.take(4),
                     assignmentProgress = unit.assignmentProgress,
@@ -72,9 +88,9 @@ object AgentStrategistGovernor {
             }
 
         val progressInMotion = AgentStrategicGovernor.buildProgressSummary(memory, observation, empireObservation)
-        val roadmapReality = buildRoadmapReality(memory, observation, empireObservation)
         val lastStrategistReport = currentRoadmap?.let(::buildLastStrategistReport)
         val sinceLastReviewFacts = buildSinceLastReviewFacts(currentRoadmap, observation, empireObservation)
+        val campaignPicture = buildCampaignPicture(observation, empireObservation, rivalCities, rivalUnits)
 
         return AgentStrategistBrief(
             refreshRequest = refreshRequest,
@@ -86,9 +102,10 @@ object AgentStrategistGovernor {
             currentRoadmap = currentRoadmap,
             lastStrategistReport = lastStrategistReport,
             sinceLastReviewFacts = sinceLastReviewFacts,
-            roadmapReality = roadmapReality,
             rivalThreats = empireObservation.victoryThreats,
-            stateFacts = empireObservation.stateFacts,
+            rivalCities = rivalCities,
+            rivalUnits = rivalUnits,
+            campaignPicture = campaignPicture,
             progressInMotion = progressInMotion,
             citySnapshots = citySnapshots,
             unitSnapshots = unitSnapshots,
@@ -142,6 +159,15 @@ object AgentStrategistGovernor {
                 add("Military unit count changed from ${roadmap.reviewMilitaryUnitCount} to ${observation.empireSummary.militaryUnitCount}.")
             }
 
+            if (roadmap.reviewIsAtWar != observation.empireSummary.isAtWar) {
+                add(
+                    if (observation.empireSummary.isAtWar)
+                        "The empire entered war since the last strategist review."
+                    else
+                        "The empire returned to peace since the last strategist review."
+                )
+            }
+
             val contactChanged = roadmap.reviewContactComplete != empireObservation.gameContext.contactComplete
             if (contactChanged) {
                 add(
@@ -157,88 +183,165 @@ object AgentStrategistGovernor {
             if (previousResearch != currentResearch) {
                 add("Research changed from ${previousResearch ?: "none"} to ${currentResearch ?: "none"}.")
             }
+
+            val currentVisibleRivalCities = observation.visibleThreatsAndTargets.count { it.kind == "city" && it.civName != observation.civName }
+            if (roadmap.reviewVisibleRivalCities != currentVisibleRivalCities) {
+                add("Visible rival cities changed from ${roadmap.reviewVisibleRivalCities} to $currentVisibleRivalCities.")
+            }
+
+            val currentVisibleRivalUnits = observation.visibleThreatsAndTargets.count { it.kind == "unit" && it.civName != observation.civName }
+            if (roadmap.reviewVisibleRivalUnits != currentVisibleRivalUnits) {
+                add("Visible rival units changed from ${roadmap.reviewVisibleRivalUnits} to $currentVisibleRivalUnits.")
+            }
+
+            val currentPrimaryRival = empireObservation.victoryThreats.firstOrNull()?.civName
+                ?: observation.visibleThreatsAndTargets.firstOrNull { it.civName != observation.civName }?.civName
+            if (roadmap.reviewPrimaryRivalCiv != currentPrimaryRival) {
+                add("Primary rival focus changed from ${roadmap.reviewPrimaryRivalCiv ?: "none"} to ${currentPrimaryRival ?: "none"}.")
+            }
         }
         return facts.ifEmpty { listOf("No major factual changes were recorded since the last strategist review.") }
     }
 
-    private fun buildRoadmapReality(
-        memory: AgentMemory,
+    private fun buildRivalCitySnapshots(observation: AgentObservation): List<AgentStrategistRivalCitySnapshot> {
+        return observation.visibleThreatsAndTargets
+            .asSequence()
+            .filter { it.kind == "city" && it.civName != observation.civName }
+            .map { target ->
+                AgentStrategistRivalCitySnapshot(
+                    civName = target.civName,
+                    name = target.name,
+                    relation = target.relation,
+                    x = target.x,
+                    y = target.y,
+                    isCapital = target.facts.any { it.equals("Capital", ignoreCase = true) },
+                    health = target.health,
+                    combatStrength = target.combatStrength,
+                    distanceToClosestCity = target.distanceToClosestCity,
+                    distanceToClosestUnit = target.distanceToClosestUnit,
+                    facts = target.facts,
+                )
+            }
+            .sortedWith(
+                compareBy<AgentStrategistRivalCitySnapshot> { it.distanceToClosestUnit ?: Int.MAX_VALUE }
+                    .thenBy { it.distanceToClosestCity ?: Int.MAX_VALUE }
+                    .thenByDescending { if (it.isCapital) 1 else 0 }
+                    .thenBy { it.name }
+            )
+            .toList()
+    }
+
+    private fun buildRivalUnitSnapshots(observation: AgentObservation): List<AgentStrategistRivalUnitSnapshot> {
+        return observation.visibleThreatsAndTargets
+            .asSequence()
+            .filter { it.kind == "unit" && it.civName != observation.civName }
+            .map { target ->
+                AgentStrategistRivalUnitSnapshot(
+                    civName = target.civName,
+                    name = target.name,
+                    relation = target.relation,
+                    x = target.x,
+                    y = target.y,
+                    health = target.health,
+                    combatStrength = target.combatStrength,
+                    distanceToClosestCity = target.distanceToClosestCity,
+                    distanceToClosestUnit = target.distanceToClosestUnit,
+                    facts = target.facts,
+                )
+            }
+            .sortedWith(
+                compareBy<AgentStrategistRivalUnitSnapshot> { it.distanceToClosestUnit ?: Int.MAX_VALUE }
+                    .thenBy { it.distanceToClosestCity ?: Int.MAX_VALUE }
+                    .thenBy { it.name }
+            )
+            .toList()
+    }
+
+    private fun buildCampaignPicture(
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
-    ): AgentStrategistRoadmapRealityObservation? {
-        val roadmap = memory.strategicRoadmap.takeIf { it.doctrine.isNotBlank() } ?: return null
-        val gameContext = empireObservation.gameContext
-        val desiredCityFloor = desiredCityFloor(gameContext, observation.turn)
-        val desiredMilitaryCoverage = desiredMilitaryCoverage(observation, gameContext)
-        val primaryThreat = empireObservation.victoryThreats.firstOrNull()
+        rivalCities: List<AgentStrategistRivalCitySnapshot>,
+        rivalUnits: List<AgentStrategistRivalUnitSnapshot>,
+    ): AgentStrategistCampaignPicture? {
+        if (rivalCities.isEmpty() && rivalUnits.isEmpty()) return null
 
-        val currentPhaseReality = when {
-            primaryThreat?.threatLevel == "critical" -> "contest_rival"
-            gameContext.duelLike && !gameContext.contactComplete && observation.turn >= 20 -> "find_rival"
-            observation.empireSummary.cityCount < desiredCityFloor -> "expand"
-            desiredMilitaryCoverage > 0 && observation.empireSummary.militaryUnitCount < desiredMilitaryCoverage -> "build_force"
-            else -> "convert_advantage"
-        }
+        val primaryRivalCiv = empireObservation.victoryThreats.firstOrNull()?.civName
+            ?: rivalCities.firstOrNull()?.civName
+            ?: rivalUnits.firstOrNull()?.civName
 
-        val expansionStatus = if (observation.empireSummary.cityCount >= desiredCityFloor) {
-            "met (${observation.empireSummary.cityCount}/$desiredCityFloor cities)"
-        } else {
-            "behind (${observation.empireSummary.cityCount}/$desiredCityFloor cities)"
-        }
-
-        val contactStatus = when {
-            gameContext.contactComplete -> "complete"
-            gameContext.duelLike && observation.turn >= 20 -> "urgent_missing"
-            else -> "incomplete"
-        }
-
-        val militaryStatus = if (desiredMilitaryCoverage <= 0) {
-            "not_applicable"
-        } else if (observation.empireSummary.militaryUnitCount >= desiredMilitaryCoverage) {
-            "covered (${observation.empireSummary.militaryUnitCount}/$desiredMilitaryCoverage units)"
-        } else {
-            "thin (${observation.empireSummary.militaryUnitCount}/$desiredMilitaryCoverage units)"
-        }
-
-        val notableDrift = buildList {
-            if (roadmap.phase.equals("opener", ignoreCase = true) && observation.turn >= 45) {
-                add("Roadmap is still in opener phase at turn ${observation.turn}.")
-            }
-            if (roadmap.doctrine.contains("scout", ignoreCase = true) && gameContext.contactComplete) {
-                add("Roadmap doctrine is still scouting-heavy even though rival contact is already complete.")
-            }
-            if ((roadmap.phase.equals("expand", ignoreCase = true) || roadmap.doctrine.contains("expand", ignoreCase = true)) &&
-                observation.empireSummary.cityCount < desiredCityFloor
-            ) {
-                add("Expansion doctrine is still behind the desired city count for this map state.")
-            }
-        }.take(4)
-
-        val urgentProblems = buildList {
-            if (gameContext.duelLike && !gameContext.contactComplete && observation.turn >= 20) {
-                add("You still have not found the only rival in this duel.")
-            }
-            if (desiredMilitaryCoverage > 0 && observation.empireSummary.militaryUnitCount < desiredMilitaryCoverage) {
-                add("Military coverage is still thin for the current cities and contact state.")
-            }
-            if (observation.empireSummary.happiness <= 1) {
-                add("Happiness is low enough to constrain further greed.")
-            }
-            if (empireObservation.gold >= 1000 &&
-                empireObservation.macroCandidates.any { it.candidateId == "macro:gold:auto" }
-            ) {
-                add("Gold reserve is high relative to currently surfaced spend options.")
-            }
-        }.take(4)
-
-        return AgentStrategistRoadmapRealityObservation(
-            currentPhaseReality = currentPhaseReality,
-            expansionStatus = expansionStatus,
-            contactStatus = contactStatus,
-            militaryStatus = militaryStatus,
-            notableDrift = notableDrift,
-            urgentProblems = urgentProblems,
+        val nearestRivalCity = rivalCities.minWithOrNull(
+            compareBy<AgentStrategistRivalCitySnapshot> { it.distanceToClosestUnit ?: Int.MAX_VALUE }
+                .thenBy { it.distanceToClosestCity ?: Int.MAX_VALUE }
         )
+        val nearestRivalCapital = rivalCities
+            .filter { it.isCapital }
+            .minWithOrNull(
+                compareBy<AgentStrategistRivalCitySnapshot> { it.distanceToClosestUnit ?: Int.MAX_VALUE }
+                    .thenBy { it.distanceToClosestCity ?: Int.MAX_VALUE }
+            )
+
+        val frontlineFriendlyUnits = observation.units.filter { unit ->
+            unit.role in setOf("melee", "ranged", "siege", "mounted", "armored", "naval_melee", "naval_ranged") &&
+                (unit.nearbyHostileUnits > 0 || unit.nearbyHostileCities > 0)
+        }
+        val frontlineMeleeUnits = frontlineFriendlyUnits.count { it.role in setOf("melee", "mounted", "armored", "naval_melee") }
+        val frontlineRangedUnits = frontlineFriendlyUnits.count { it.role in setOf("ranged", "siege", "naval_ranged") }
+        val frontlineDamagedUnits = frontlineFriendlyUnits.count { it.health < 100 }
+        val frontlineCityBombards = observation.cities.count { city ->
+            city.state.canBombard && (city.state.nearbyHostileUnits > 0 || city.state.nearbyHostileCities > 0)
+        }
+
+        val meleeNearNearestCity = nearestRivalCity?.let { target ->
+            observation.units.count { unit ->
+                unit.role in setOf("melee", "mounted", "armored", "naval_melee") &&
+                    manhattanDistance(unit.x, unit.y, target.x, target.y) <= 4
+            }
+        } ?: 0
+        val rangedNearNearestCity = nearestRivalCity?.let { target ->
+            observation.units.count { unit ->
+                unit.role in setOf("ranged", "siege", "naval_ranged") &&
+                    manhattanDistance(unit.x, unit.y, target.x, target.y) <= 4
+            }
+        } ?: 0
+
+        return AgentStrategistCampaignPicture(
+            primaryRivalCiv = primaryRivalCiv,
+            visibleRivalCities = rivalCities.size,
+            visibleRivalCapitals = rivalCities.count { it.isCapital },
+            visibleRivalUnits = rivalUnits.size,
+            frontlineFriendlyCombatUnits = frontlineFriendlyUnits.size,
+            frontlineMeleeUnits = frontlineMeleeUnits,
+            frontlineRangedUnits = frontlineRangedUnits,
+            frontlineDamagedUnits = frontlineDamagedUnits,
+            frontlineCityBombards = frontlineCityBombards,
+            meleeUnitsNearNearestRivalCity = meleeNearNearestCity,
+            rangedUnitsNearNearestRivalCity = rangedNearNearestCity,
+            nearestRivalCity = nearestRivalCity?.let(::toTargetReference),
+            nearestRivalCapital = nearestRivalCapital?.let(::toTargetReference),
+        )
+    }
+
+    private fun toTargetReference(target: AgentStrategistRivalCitySnapshot): AgentStrategistTargetReference {
+        return AgentStrategistTargetReference(
+            civName = target.civName,
+            name = target.name,
+            x = target.x,
+            y = target.y,
+            health = target.health,
+            combatStrength = target.combatStrength,
+            distanceToClosestCity = target.distanceToClosestCity,
+            distanceToClosestUnit = target.distanceToClosestUnit,
+        )
+    }
+
+    private fun manhattanDistance(x1: Int, y1: Int, x2: Int, y2: Int): Int {
+        return kotlin.math.abs(x1 - x2) + kotlin.math.abs(y1 - y2)
+    }
+
+    private fun axialDistance(x1: Int, y1: Int, x2: Int, y2: Int): Int {
+        val dx = x1 - x2
+        val dy = y1 - y2
+        return (kotlin.math.abs(dx) + kotlin.math.abs(dy) + kotlin.math.abs(dx + dy)) / 2
     }
 
     private fun cityStrategistScore(city: AgentCityObservation): Int {
@@ -266,25 +369,4 @@ object AgentStrategistGovernor {
         return score
     }
 
-    private fun desiredCityFloor(gameContext: AgentPublicGameContextObservation, turn: Int): Int {
-        return when {
-            gameContext.duelLike && gameContext.mapSize == "Tiny" && turn >= 120 -> 4
-            gameContext.duelLike && gameContext.mapSize == "Tiny" -> 3
-            gameContext.expansionWindow == "narrow" -> 4
-            gameContext.expansionWindow == "medium" -> 5
-            else -> 6
-        }
-    }
-
-    private fun desiredMilitaryCoverage(
-        observation: AgentObservation,
-        gameContext: AgentPublicGameContextObservation,
-    ): Int {
-        val cityCount = observation.empireSummary.cityCount
-        if (cityCount <= 0) return 0
-        var coverage = cityCount
-        if (observation.empireSummary.isAtWar) coverage += 1
-        else if (gameContext.contactComplete && cityCount >= 2) coverage += 1
-        return coverage
-    }
 }

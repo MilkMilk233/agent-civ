@@ -63,12 +63,13 @@ object AgentPromptBuilder {
             - Trust Planner Brief JSON over Memory JSON if they conflict on current-turn facts.
             - This project targets the standard Unciv main game with the Civ V - Vanilla ruleset, not mod-specific mechanics. Use normal Civ V Vanilla strategic priors confidently when reasoning about openings, expansion, military timing, science, culture, and victory races.
             - Planner Brief JSON already includes the current roadmap doctrine, phase, thesis, pastSummary, currentSituation, and futurePlan.
-            - Treat pastSummary as the relevant recent history, currentSituation as the strategist's read of what matters now, and futurePlan as the next-few-turn intent you should serve.
+            - Treat pastSummary as relevant recent history, currentSituation as the strategist's read of the current bottleneck or campaign state, and futurePlan as the next-few-turn intent you should serve.
             - Use only the surfaced legal candidate actions and exact action types from the brief. Do not invent unsupported commands or mod mechanics.
             - Use Memory JSON for continuity when the current brief still supports it: city intents, unit assignments, recent failures, and roadmap consistency.
             - Plan like a strong tactical player serving the roadmap. Use attentionFacts as simple reminders of what may need attention this turn, then do your own prioritization from the full brief.
-            - Planner Brief JSON includes tacticalPressure. Treat tacticalPressure.mustActReasons as factual current-turn pressure, then use the strategist-authored roadmap fields plus surfaced options to choose the best response.
-            - The planner brief already compressed noise. Do not let routine worker upkeep crowd out rival threats, thin defensive coverage, gold overflow, or important city tempo choices.
+            - The planner brief is a factual tactical packet, not a script-written strategy layer. Use the strategist report plus the surfaced state and legal options to decide what matters.
+            - The strategist report is a commander memo, not a literal step list. Serve its intent using the current legal options and visible local state instead of blindly copying its wording.
+            - Do not let routine worker upkeep crowd out rival threats, important city tempo choices, or concrete frontline opportunities visible in the current state.
             - Use select_empire_option only with candidateId values from empireChoices. Never invent research, policy, diplomacy, gold, or bombardment commands outside those candidates.
             - Repeated diplomacy that does not materially improve the game state is low priority.
             - Use select_city_option only with candidateId values from the grouped lists under cityHighlights.actions.
@@ -85,9 +86,8 @@ object AgentPromptBuilder {
             - In a peaceful opener, prioritize worker tempo, capital growth, and safe expansion. Do not spend the turn only on passive unit posture when strong city or expansion choices exist.
             - In the mid and late game, do not float large gold reserves when meaningful purchases, upgrades, or other tempo gains are available.
             - Avoid repeating actions that previously produced no state change unless the current brief shows a new reason they matter now.
-            - If tacticalPressure.noOpPolicy is "forbidden", do not return an empty actions list just to preserve progress. You should act unless every surfaced legal action would clearly be worse than doing nothing.
-            - If tacticalPressure.noOpPolicy is "discouraged", only return an empty actions list when the surfaced actions are genuinely low-value or disruptive relative to the roadmap.
-            - When roadmap guidance conflicts with preserve-progress instincts, follow the higher-urgency tacticalPressure and the immediate board state surfaced in attentionFacts and threatHighlights.
+            - Only return an empty actions list when the surfaced actions are genuinely low-value or disruptive relative to the roadmap and the current board state.
+            - When preserve-progress instincts conflict with concrete frontline state, rival pressure, or better city tempo choices visible in the brief, trust the visible state and the strategist report over inertia.
             - Use strategistRefreshRequest only for a real strategic emergency: the roadmap assumptions are broken by war, a critical rival surge, a collapse in the current plan, or another major shift that should trigger an immediate strategist review.
             - Use only unit IDs, cities, action types, tiles, and constructions present in Planner Brief JSON.
             - Do not invent entities.

@@ -472,12 +472,13 @@ function TurnDetail({
   const doctrine = asRecord(plannerBrief?.doctrine);
   const attentionFacts = objectArray(plannerBrief?.attentionFacts);
   const progressInMotion = objectArray(plannerBrief?.progressInMotion);
-  const strategistStateFacts = objectArray(strategistBrief?.stateFacts);
   const strategistRivalThreats = objectArray(strategistBrief?.rivalThreats);
+  const strategistRivalCities = objectArray(strategistBrief?.rivalCities);
+  const strategistRivalUnits = objectArray(strategistBrief?.rivalUnits);
+  const strategistCampaignPicture = asRecord(strategistBrief?.campaignPicture);
   const strategistCitySnapshots = objectArray(strategistBrief?.citySnapshots);
   const strategistUnitSnapshots = objectArray(strategistBrief?.unitSnapshots);
   const threatHighlights = objectArray(plannerBrief?.threatHighlights);
-  const opportunityHighlights = objectArray(plannerBrief?.opportunityHighlights);
   const cityHighlights = objectArray(plannerBrief?.cityHighlights);
   const unitHighlights = objectArray(plannerBrief?.unitHighlights);
   const perceptionSummary = asRecord(observation?.perceptionSummary);
@@ -610,10 +611,12 @@ function TurnDetail({
           title="Strategist inputs"
           brief={strategistBrief}
           threats={strategistRivalThreats}
-          stateFacts={strategistStateFacts}
+          campaignPicture={strategistCampaignPicture}
         />
 
         <div className="reading-flow">
+          <StrategistRivalCitiesSection title="Visible rival cities" cities={strategistRivalCities} />
+          <StrategistRivalUnitsSection title="Visible rival units" units={strategistRivalUnits} />
           <StrategistCitySnapshotsSection title="Strategist city snapshots" cities={strategistCitySnapshots} />
           <StrategistUnitSnapshotsSection title="Strategist unit snapshots" units={strategistUnitSnapshots} />
         </div>
@@ -681,8 +684,6 @@ function TurnDetail({
                   <SummaryStat label="Rival plan" value={stringValue(doctrine?.rivalVictoryGoal)} />
                 </div>
                 {stringValue(doctrine?.thesis) ? <p className="card-paragraph">{stringValue(doctrine?.thesis)}</p> : null}
-                <SectionLabel text="Hard pressure" />
-                <TagList values={stringList(asRecord(plannerBrief?.tacticalPressure)?.mustActReasons)} tone="warning" />
               </>
             ) : (
               <p className="muted-text">Planner brief missing from this turn.</p>
@@ -725,7 +726,6 @@ function TurnDetail({
 
           <div className="reading-flow">
             <ThreatHighlightsSection title="Threats the tactician could see" threats={threatHighlights} />
-            <ObservationFactSection title="Opportunities surfaced" facts={opportunityHighlights} emptyText="No opportunity highlights were surfaced for this turn." />
           </div>
 
           <EmpireChoicesSection title="Empire choices" choices={empireChoices} />
@@ -939,12 +939,12 @@ function StrategistContextSection({
   title,
   brief,
   threats,
-  stateFacts,
+  campaignPicture,
 }: {
   title: string;
   brief: Record<string, unknown> | null;
   threats: Record<string, unknown>[];
-  stateFacts: Record<string, unknown>[];
+  campaignPicture: Record<string, unknown> | null;
 }) {
   const gameContext = asRecord(brief?.gameContext);
   const empireSummary = asRecord(brief?.empireSummary);
@@ -1004,8 +1004,30 @@ function StrategistContextSection({
           <SectionLabel text="Since last review" />
           <TagList values={sinceLastReviewFacts} />
 
+          {campaignPicture ? (
+            <>
+              <SectionLabel text="Campaign picture" />
+              <div className="summary-grid compact summary-grid-four">
+                <SummaryStat label="Primary rival" value={stringValue(campaignPicture.primaryRivalCiv)} />
+                <SummaryStat label="Visible rival cities" value={formatNumber(numberValue(campaignPicture.visibleRivalCities))} />
+                <SummaryStat label="Visible rival units" value={formatNumber(numberValue(campaignPicture.visibleRivalUnits))} />
+                <SummaryStat label="Visible capitals" value={formatNumber(numberValue(campaignPicture.visibleRivalCapitals))} />
+                <SummaryStat label="Frontline combat" value={formatNumber(numberValue(campaignPicture.frontlineFriendlyCombatUnits))} />
+                <SummaryStat label="Frontline melee" value={formatNumber(numberValue(campaignPicture.frontlineMeleeUnits))} />
+                <SummaryStat label="Frontline ranged" value={formatNumber(numberValue(campaignPicture.frontlineRangedUnits))} />
+                <SummaryStat label="Frontline damaged" value={formatNumber(numberValue(campaignPicture.frontlineDamagedUnits))} />
+                <SummaryStat label="City bombard ready" value={formatNumber(numberValue(campaignPicture.frontlineCityBombards))} />
+                <SummaryStat label="Melee near nearest city" value={formatNumber(numberValue(campaignPicture.meleeUnitsNearNearestRivalCity))} />
+                <SummaryStat label="Ranged near nearest city" value={formatNumber(numberValue(campaignPicture.rangedUnitsNearNearestRivalCity))} />
+              </div>
+              <div className="structured-list">
+                {campaignTargetItem("Nearest rival city", asRecord(campaignPicture.nearestRivalCity))}
+                {campaignTargetItem("Nearest rival capital", asRecord(campaignPicture.nearestRivalCapital))}
+              </div>
+            </>
+          ) : null}
+
           <ThreatHighlightsSection title="Rival threats" threats={threats} embedded />
-          <ObservationFactSection title="State facts" facts={stateFacts} embedded emptyText="No strategist state facts were recorded." />
           <ProgressSection title="Strategist progress cues" items={progressInMotion.slice(0, 4)} embedded />
 
           {recentFailures.length ? (
@@ -1017,6 +1039,91 @@ function StrategistContextSection({
         </>
       ) : (
         <p className="muted-text">No strategist brief was captured for this turn.</p>
+      )}
+    </Card>
+  );
+}
+
+function StrategistRivalCitiesSection({
+  title,
+  cities,
+}: {
+  title: string;
+  cities: Record<string, unknown>[];
+}) {
+  return (
+    <Card title={title} subtitle="Factual foreign city sightings available to the strategist.">
+      {cities.length ? (
+        <div className="structured-list">
+          {cities.map((city, index) => (
+            <article key={`${stringValue(city.civName)}-${stringValue(city.name)}-${index}`} className="structured-item">
+              <div className="structured-item-header">
+                <strong>{stringValue(city.civName)} · {stringValue(city.name) || "Unnamed city"}</strong>
+                <div className="tag-list compact">
+                  <span className="tag neutral">({formatNumber(numberValue(city.x))}, {formatNumber(numberValue(city.y))})</span>
+                  {booleanValue(city.isCapital) ? <span className="tag warning">capital</span> : null}
+                  <span className="tag neutral">{stringValue(city.relation) || "foreign"}</span>
+                </div>
+              </div>
+              <div className="mini-metric-grid">
+                <MiniMetric label="Health" value={nullableNumberText(city.health)} />
+                <MiniMetric label="Strength" value={nullableNumberText(city.combatStrength)} />
+                <MiniMetric label="Nearest city" value={nullableNumberText(city.distanceToClosestCity)} />
+                <MiniMetric label="Nearest unit" value={nullableNumberText(city.distanceToClosestUnit)} />
+              </div>
+              {stringList(city.facts).length ? (
+                <>
+                  <SectionLabel text="Facts" />
+                  <TagList values={stringList(city.facts)} />
+                </>
+              ) : null}
+            </article>
+          ))}
+        </div>
+      ) : (
+        <EmptyCardState title="No visible rival cities" body="No foreign city sightings were available to the strategist on this turn." />
+      )}
+    </Card>
+  );
+}
+
+function StrategistRivalUnitsSection({
+  title,
+  units,
+}: {
+  title: string;
+  units: Record<string, unknown>[];
+}) {
+  return (
+    <Card title={title} subtitle="Factual foreign unit sightings available to the strategist.">
+      {units.length ? (
+        <div className="structured-list">
+          {units.map((unit, index) => (
+            <article key={`${stringValue(unit.civName)}-${stringValue(unit.name)}-${index}`} className="structured-item">
+              <div className="structured-item-header">
+                <strong>{stringValue(unit.civName)} · {stringValue(unit.name) || "Unnamed unit"}</strong>
+                <div className="tag-list compact">
+                  <span className="tag neutral">({formatNumber(numberValue(unit.x))}, {formatNumber(numberValue(unit.y))})</span>
+                  <span className="tag neutral">{stringValue(unit.relation) || "foreign"}</span>
+                </div>
+              </div>
+              <div className="mini-metric-grid">
+                <MiniMetric label="Health" value={nullableNumberText(unit.health)} />
+                <MiniMetric label="Combat" value={nullableNumberText(unit.combatStrength)} />
+                <MiniMetric label="Nearest city" value={nullableNumberText(unit.distanceToClosestCity)} />
+                <MiniMetric label="Nearest unit" value={nullableNumberText(unit.distanceToClosestUnit)} />
+              </div>
+              {stringList(unit.facts).length ? (
+                <>
+                  <SectionLabel text="Facts" />
+                  <TagList values={stringList(unit.facts)} />
+                </>
+              ) : null}
+            </article>
+          ))}
+        </div>
+      ) : (
+        <EmptyCardState title="No visible rival units" body="No foreign unit sightings were available to the strategist on this turn." />
       )}
     </Card>
   );
@@ -1066,6 +1173,28 @@ function ObservationFactSection({
   return <Card title={title}>{content}</Card>;
 }
 
+function campaignTargetItem(label: string, target: Record<string, unknown> | null) {
+  if (!target) return null;
+  return (
+    <article key={label} className="structured-item">
+      <div className="structured-item-header">
+        <strong>{label}</strong>
+        <div className="tag-list compact">
+          <span className="tag neutral">{stringValue(target.civName) || "Unknown rival"}</span>
+          <span className="tag neutral">{stringValue(target.name) || "Unknown target"}</span>
+          <span className="tag neutral">({formatNumber(numberValue(target.x))}, {formatNumber(numberValue(target.y))})</span>
+        </div>
+      </div>
+      <div className="mini-metric-grid">
+        <MiniMetric label="Health" value={nullableNumberText(target.health)} />
+        <MiniMetric label="Strength" value={nullableNumberText(target.combatStrength)} />
+        <MiniMetric label="Nearest city" value={nullableNumberText(target.distanceToClosestCity)} />
+        <MiniMetric label="Nearest unit" value={nullableNumberText(target.distanceToClosestUnit)} />
+      </div>
+    </article>
+  );
+}
+
 function StrategistCitySnapshotsSection({
   title,
   cities,
@@ -1108,6 +1237,11 @@ function StrategistCitySnapshotsSection({
                   <MiniMetric label="Invested" value={nullableNumberText(city.projectProductionInvested)} />
                   <MiniMetric label="Remaining" value={nullableNumberText(city.projectProductionRemaining)} />
                   <MiniMetric label="Threats" value={`${formatNumber(numberValue(city.nearbyHostileUnits))}u · ${formatNumber(numberValue(city.nearbyHostileCities))}c`} />
+                </div>
+
+                <div className="mini-metric-grid">
+                  <MiniMetric label="Nearest rival city" value={nullableNumberText(city.distanceToNearestRivalCity)} />
+                  <MiniMetric label="Nearest rival capital" value={nullableNumberText(city.distanceToNearestRivalCapital)} />
                 </div>
 
                 {signals.length ? (
@@ -1173,6 +1307,11 @@ function StrategistUnitSnapshotsSection({
                   <MiniMetric label="Hostile units" value={formatNumber(numberValue(unit.nearbyHostileUnits))} />
                   <MiniMetric label="Hostile cities" value={formatNumber(numberValue(unit.nearbyHostileCities))} />
                   <MiniMetric label="Assigned" value={progress ? "yes" : "no"} />
+                </div>
+
+                <div className="mini-metric-grid">
+                  <MiniMetric label="Nearest rival city" value={nullableNumberText(unit.distanceToNearestRivalCity)} />
+                  <MiniMetric label="Nearest rival capital" value={nullableNumberText(unit.distanceToNearestRivalCapital)} />
                 </div>
 
                 {progress ? <p className="card-paragraph">{stringValue(progress.progressNote)}</p> : null}
@@ -2080,6 +2219,10 @@ function formatStrategistProjectOption(option: Record<string, unknown>): string 
 
 function booleanText(value: unknown): string {
   return value === true ? "Yes" : value === false ? "No" : "—";
+}
+
+function booleanValue(value: unknown): boolean {
+  return value === true;
 }
 
 type CandidateLookupEntry = {
