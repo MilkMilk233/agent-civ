@@ -7,6 +7,7 @@ object AgentStrategistGovernor {
         empireObservation: AgentEmpireObservation,
         refreshRequest: AgentStrategistRefreshRequest,
     ): AgentStrategistBrief {
+        val currentRoadmap = memory.strategicRoadmap.takeIf { it.doctrine.isNotBlank() }
         val citySnapshots = observation.cities
             .sortedByDescending { cityStrategistScore(it) }
             .map { city ->
@@ -72,6 +73,8 @@ object AgentStrategistGovernor {
 
         val progressInMotion = AgentStrategicGovernor.buildProgressSummary(memory, observation, empireObservation)
         val roadmapReality = buildRoadmapReality(memory, observation, empireObservation)
+        val lastStrategistReport = currentRoadmap?.let(::buildLastStrategistReport)
+        val sinceLastReviewFacts = buildSinceLastReviewFacts(currentRoadmap, observation, empireObservation)
 
         return AgentStrategistBrief(
             refreshRequest = refreshRequest,
@@ -80,7 +83,9 @@ object AgentStrategistGovernor {
             empireSummary = observation.empireSummary,
             currentResearch = empireObservation.currentResearch,
             currentResearchStatus = empireObservation.currentResearchStatus,
-            currentRoadmap = memory.strategicRoadmap.takeIf { it.doctrine.isNotBlank() },
+            currentRoadmap = currentRoadmap,
+            lastStrategistReport = lastStrategistReport,
+            sinceLastReviewFacts = sinceLastReviewFacts,
             roadmapReality = roadmapReality,
             rivalThreats = empireObservation.victoryThreats,
             stateFacts = empireObservation.stateFacts,
@@ -89,6 +94,71 @@ object AgentStrategistGovernor {
             unitSnapshots = unitSnapshots,
             recentFailures = memory.recentFailures.takeLast(4).map { it.summary },
         )
+    }
+
+    private fun buildLastStrategistReport(
+        roadmap: AgentStrategicRoadmapMemory,
+    ): AgentStrategistReportMemo {
+        return AgentStrategistReportMemo(
+            doctrine = roadmap.doctrine,
+            phase = roadmap.phase,
+            winPath = roadmap.winPath,
+            thesis = roadmap.thesis,
+            pastSummary = roadmap.pastSummary,
+            currentSituation = roadmap.currentSituation,
+            futurePlan = roadmap.futurePlan,
+        )
+    }
+
+    private fun buildSinceLastReviewFacts(
+        roadmap: AgentStrategicRoadmapMemory?,
+        observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+    ): List<String> {
+        roadmap ?: return emptyList()
+        if (roadmap.lastReviewedTurn <= 0) return emptyList()
+
+        val facts = buildList {
+            val turnsSinceReview = observation.turn - roadmap.lastReviewedTurn
+            if (turnsSinceReview > 0) {
+                add("Last strategist review was $turnsSinceReview turn${if (turnsSinceReview == 1) "" else "s"} ago.")
+            }
+
+            if (roadmap.reviewCityCount != observation.empireSummary.cityCount) {
+                add("City count changed from ${roadmap.reviewCityCount} to ${observation.empireSummary.cityCount}.")
+            }
+
+            val currentCityNames = observation.cities.map { it.name }.sorted()
+            val foundedCities = currentCityNames - roadmap.reviewCityNames.toSet()
+            val lostCities = roadmap.reviewCityNames.filter { it !in currentCityNames.toSet() }
+            if (foundedCities.isNotEmpty()) {
+                add("Cities founded since review: ${foundedCities.joinToString(", ")}.")
+            }
+            if (lostCities.isNotEmpty()) {
+                add("Cities lost since review: ${lostCities.joinToString(", ")}.")
+            }
+
+            if (roadmap.reviewMilitaryUnitCount != observation.empireSummary.militaryUnitCount) {
+                add("Military unit count changed from ${roadmap.reviewMilitaryUnitCount} to ${observation.empireSummary.militaryUnitCount}.")
+            }
+
+            val contactChanged = roadmap.reviewContactComplete != empireObservation.gameContext.contactComplete
+            if (contactChanged) {
+                add(
+                    if (empireObservation.gameContext.contactComplete)
+                        "Rival contact became complete since the last review."
+                    else
+                        "Rival contact regressed from complete to incomplete since the last review."
+                )
+            }
+
+            val previousResearch = roadmap.reviewResearch
+            val currentResearch = empireObservation.currentResearch
+            if (previousResearch != currentResearch) {
+                add("Research changed from ${previousResearch ?: "none"} to ${currentResearch ?: "none"}.")
+            }
+        }
+        return facts.ifEmpty { listOf("No major factual changes were recorded since the last strategist review.") }
     }
 
     private fun buildRoadmapReality(
@@ -130,27 +200,18 @@ object AgentStrategistGovernor {
             "thin (${observation.empireSummary.militaryUnitCount}/$desiredMilitaryCoverage units)"
         }
 
-        val activeGoals = roadmap.immediateObjectives + roadmap.nearTermGoals
-        val completedGoals = activeGoals
-            .mapNotNull { goal ->
-                when (evaluateRoadmapGoal(goal, observation, empireObservation, desiredCityFloor, desiredMilitaryCoverage)) {
-                    GoalState.Completed -> goal
-                    else -> null
-                }
-            }
-
-        val staleGoals = buildList {
+        val notableDrift = buildList {
             if (roadmap.phase.equals("opener", ignoreCase = true) && observation.turn >= 45) {
                 add("Roadmap is still in opener phase at turn ${observation.turn}.")
             }
-            addAll(
-                activeGoals.mapNotNull { goal ->
-                    when (evaluateRoadmapGoal(goal, observation, empireObservation, desiredCityFloor, desiredMilitaryCoverage)) {
-                        GoalState.Stale -> "Stale goal: $goal"
-                        else -> null
-                    }
-                }
-            )
+            if (roadmap.doctrine.contains("scout", ignoreCase = true) && gameContext.contactComplete) {
+                add("Roadmap doctrine is still scouting-heavy even though rival contact is already complete.")
+            }
+            if ((roadmap.phase.equals("expand", ignoreCase = true) || roadmap.doctrine.contains("expand", ignoreCase = true)) &&
+                observation.empireSummary.cityCount < desiredCityFloor
+            ) {
+                add("Expansion doctrine is still behind the desired city count for this map state.")
+            }
         }.take(4)
 
         val urgentProblems = buildList {
@@ -175,8 +236,7 @@ object AgentStrategistGovernor {
             expansionStatus = expansionStatus,
             contactStatus = contactStatus,
             militaryStatus = militaryStatus,
-            completedGoals = completedGoals,
-            staleGoals = staleGoals,
+            notableDrift = notableDrift,
             urgentProblems = urgentProblems,
         )
     }
@@ -204,38 +264,6 @@ object AgentStrategistGovernor {
         if (unit.nearbyHostileUnits > 0 || unit.nearbyHostileCities > 0) score += 40
         if (unit.assignmentProgress != null) score += 15
         return score
-    }
-
-    private enum class GoalState {
-        Active,
-        Completed,
-        Stale,
-    }
-
-    private fun evaluateRoadmapGoal(
-        goal: String,
-        observation: AgentObservation,
-        empireObservation: AgentEmpireObservation,
-        desiredCityFloor: Int,
-        desiredMilitaryCoverage: Int,
-    ): GoalState {
-        val lower = goal.lowercase()
-        val cityCount = observation.empireSummary.cityCount
-        val militaryCount = observation.empireSummary.militaryUnitCount
-        val contactComplete = empireObservation.gameContext.contactComplete
-        return when {
-            "second city" in lower && cityCount >= 2 -> GoalState.Completed
-            "third city" in lower && cityCount >= 3 -> GoalState.Completed
-            "fourth city" in lower && cityCount >= 4 -> GoalState.Completed
-            "expand" in lower && cityCount >= desiredCityFloor -> GoalState.Completed
-            ("contact" in lower || "find rival" in lower || "locate rival" in lower || "scout" in lower) && contactComplete -> GoalState.Completed
-            ("spearmen" in lower || "archer" in lower || "military" in lower || "combat unit" in lower || "force" in lower) &&
-                desiredMilitaryCoverage > 0 && militaryCount >= desiredMilitaryCoverage -> GoalState.Completed
-            "second city" in lower && cityCount >= 3 -> GoalState.Stale
-            "third city" in lower && cityCount >= 4 -> GoalState.Stale
-            ("contact" in lower || "find rival" in lower || "locate rival" in lower || "scout" in lower) && contactComplete -> GoalState.Stale
-            else -> GoalState.Active
-        }
     }
 
     private fun desiredCityFloor(gameContext: AgentPublicGameContextObservation, turn: Int): Int {

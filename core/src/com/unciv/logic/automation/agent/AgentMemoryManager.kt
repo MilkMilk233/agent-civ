@@ -32,11 +32,7 @@ object AgentMemoryManager {
         val prepared = AgentMemory(
             strategicPosture = normalizeStrategicPosture(existing, observation, empireObservation, turn),
             strategicRoadmap = existing.strategicRoadmap.copy(
-                immediateObjectives = ArrayList(existing.strategicRoadmap.immediateObjectives),
-                nearTermGoals = ArrayList(existing.strategicRoadmap.nearTermGoals),
-                guardrails = ArrayList(existing.strategicRoadmap.guardrails),
-                watchOuts = ArrayList(existing.strategicRoadmap.watchOuts),
-                switchTriggers = ArrayList(existing.strategicRoadmap.switchTriggers),
+                reviewCityNames = ArrayList(existing.strategicRoadmap.reviewCityNames),
             ),
             cityIntents = ArrayList(
                 existing.cityIntents
@@ -189,11 +185,14 @@ object AgentMemoryManager {
             winPath = strategicPlan.roadmap.winPath?.trim().takeUnless { it.isNullOrEmpty() },
             phase = strategicPlan.roadmap.phase.trim(),
             thesis = strategicPlan.roadmap.thesis?.trim().takeUnless { it.isNullOrEmpty() },
-            immediateObjectives = ArrayList(strategicPlan.roadmap.immediateObjectives.map { it.trim() }.filter { it.isNotBlank() }.take(4)),
-            nearTermGoals = ArrayList(strategicPlan.roadmap.nearTermGoals.map { it.trim() }.filter { it.isNotBlank() }.take(4)),
-            guardrails = ArrayList(strategicPlan.roadmap.guardrails.map { it.trim() }.filter { it.isNotBlank() }.take(3)),
-            watchOuts = ArrayList(strategicPlan.roadmap.watchOuts.map { it.trim() }.filter { it.isNotBlank() }.take(3)),
-            switchTriggers = ArrayList(strategicPlan.roadmap.switchTriggers.map { it.trim() }.filter { it.isNotBlank() }.take(4)),
+            pastSummary = strategicPlan.roadmap.pastSummary?.trim().takeUnless { it.isNullOrEmpty() },
+            currentSituation = strategicPlan.roadmap.currentSituation?.trim().takeUnless { it.isNullOrEmpty() },
+            futurePlan = strategicPlan.roadmap.futurePlan?.trim().takeUnless { it.isNullOrEmpty() },
+            reviewCityCount = observation.empireSummary.cityCount,
+            reviewMilitaryUnitCount = observation.empireSummary.militaryUnitCount,
+            reviewContactComplete = empireObservation.gameContext.contactComplete,
+            reviewResearch = empireObservation.currentResearch,
+            reviewCityNames = ArrayList(observation.cities.map { it.name }.sorted()),
             reviewAfterTurn = turn + reviewInTurns,
             createdTurn = memory.strategicRoadmap.createdTurn.takeIf { it > 0 && memory.strategicRoadmap.doctrine == strategicPlan.roadmap.doctrine.trim() }
                 ?: turn,
@@ -314,11 +313,7 @@ object AgentMemoryManager {
 
     private fun cloneRoadmap(roadmap: AgentStrategicRoadmapMemory): AgentStrategicRoadmapMemory {
         return roadmap.copy(
-            immediateObjectives = ArrayList(roadmap.immediateObjectives),
-            nearTermGoals = ArrayList(roadmap.nearTermGoals),
-            guardrails = ArrayList(roadmap.guardrails),
-            watchOuts = ArrayList(roadmap.watchOuts),
-            switchTriggers = ArrayList(roadmap.switchTriggers),
+            reviewCityNames = ArrayList(roadmap.reviewCityNames),
         )
     }
 
@@ -340,12 +335,16 @@ object AgentMemoryManager {
                 observation.opportunities.any { it.looksLikeImprovementOpportunity() } -> "improve_infrastructure"
             else -> previous.mode.ifBlank { "stabilize_empire" }
         }
+        val narrativeCommitments = buildList {
+            roadmap.futurePlan?.takeIf { it.isNotBlank() }?.let { add(it) }
+            roadmap.currentSituation?.takeIf { it.isNotBlank() }?.let { add(it) }
+        }.take(3)
         val focusSource = previous.copy(
             doctrine = roadmap.doctrine,
             victoryGoal = roadmap.winPath,
-            turnThesis = roadmap.thesis,
-            commitments = ArrayList((roadmap.immediateObjectives + roadmap.nearTermGoals + roadmap.guardrails).take(5)),
-            watchOuts = ArrayList(roadmap.watchOuts.take(3)),
+            turnThesis = roadmap.futurePlan ?: roadmap.thesis,
+            commitments = ArrayList(narrativeCommitments),
+            watchOuts = ArrayList(emptyList()),
         )
         return StrategicPostureMemory(
             mode = mode,
@@ -356,10 +355,10 @@ object AgentMemoryManager {
             victoryGoal = roadmap.winPath ?: empireObservation.victoryGoal ?: previous.victoryGoal,
             rivalCiv = primaryThreat?.civName ?: previous.rivalCiv,
             rivalVictoryGoal = primaryThreat?.likelyVictoryType ?: previous.rivalVictoryGoal,
-            turnThesis = roadmap.thesis ?: previous.turnThesis,
-            commitments = ArrayList((roadmap.immediateObjectives + roadmap.nearTermGoals + roadmap.guardrails).take(5)),
+            turnThesis = roadmap.futurePlan ?: roadmap.thesis ?: previous.turnThesis,
+            commitments = ArrayList(narrativeCommitments),
             watchOuts = ArrayList(
-                (roadmap.watchOuts + listOfNotNull(primaryThreat?.takeIf { it.threatLevel == "critical" }?.let { "${it.civName} is an urgent rival." }))
+                (listOfNotNull(primaryThreat?.takeIf { it.threatLevel == "critical" }?.let { "${it.civName} is an urgent rival." }))
                     .take(3)
             ),
             sinceTurn = if (previous.doctrine == roadmap.doctrine && previous.sinceTurn > 0) previous.sinceTurn else turn,

@@ -470,30 +470,23 @@ function TurnDetail({
   const parsedPlan = asRecord(turn.parsedPlan);
   const empireSummary = asRecord(observation?.empireSummary);
   const doctrine = asRecord(plannerBrief?.doctrine);
-  const attentionFacts = objectArray(plannerBrief?.attentionFacts ?? observation?.priorityFacts);
+  const attentionFacts = objectArray(plannerBrief?.attentionFacts);
   const progressInMotion = objectArray(plannerBrief?.progressInMotion);
   const strategistStateFacts = objectArray(strategistBrief?.stateFacts);
-  const strategistRivalThreats = objectArray(strategistBrief?.rivalThreats ?? empireObservation?.victoryThreats);
+  const strategistRivalThreats = objectArray(strategistBrief?.rivalThreats);
   const strategistCitySnapshots = objectArray(strategistBrief?.citySnapshots);
   const strategistUnitSnapshots = objectArray(strategistBrief?.unitSnapshots);
-  const threatHighlights = objectArray(plannerBrief?.threatHighlights ?? observation?.visibleThreatsAndTargets);
-  const opportunityHighlights = objectArray(plannerBrief?.opportunityHighlights ?? observation?.opportunities);
-  const cityHighlights = objectArray(plannerBrief?.cityHighlights ?? observation?.cities);
-  const unitHighlights = objectArray(plannerBrief?.unitHighlights ?? observation?.units);
+  const threatHighlights = objectArray(plannerBrief?.threatHighlights);
+  const opportunityHighlights = objectArray(plannerBrief?.opportunityHighlights);
+  const cityHighlights = objectArray(plannerBrief?.cityHighlights);
+  const unitHighlights = objectArray(plannerBrief?.unitHighlights);
   const perceptionSummary = asRecord(observation?.perceptionSummary);
   const empireChoices = asRecord(plannerBrief?.empireChoices);
   const suppressedContext = stringList(plannerBrief?.suppressedContext);
   const plannedActions = objectArray(parsedPlan?.actions);
-  const roadmapNotes = stringValue(strategicPlan?.notes);
   const roadmapCreatedTurn = numberValue(roadmap?.createdTurn);
   const roadmapLastReviewedTurn = numberValue(roadmap?.lastReviewedTurn);
-  const roadmapRefreshReason = stringValue(roadmap?.lastRefreshReason);
-  const roadmapSwitchTriggers = stringList(roadmap?.switchTriggers);
   const turnMetrics = deriveTurnMetrics(turn);
-  const strategistRefresh = latestEventDetails(turn.events, [
-    "strategist_refresh_requested_by_tactical",
-    "strategist_refresh_requested",
-  ]);
   const candidateLookup = buildCandidateLookup(empireChoices, cityHighlights, unitHighlights);
   const tacticalAttempts = buildTacticalAttempts(turn.events);
   const strategistArtifacts = buildStrategistArtifacts(turn.events);
@@ -610,10 +603,10 @@ function TurnDetail({
         id="section-strategist"
         eyebrow="Strategist"
         title="What the strategist saw"
-        body="The strategist owns doctrine and roadmap updates. This section shows what it wanted done now, what it wanted done soon, and which guardrails it expected the tactician to preserve."
+        body="The strategist owns doctrine and roadmap updates. This report is intentionally small: what just happened, what is true now, and what the empire should try next."
       >
         <div className="panel-grid panel-grid-asymmetric">
-          <Card title="Strategist roadmap" subtitle="The long and mid-term plan that tactical turns should serve.">
+          <Card title="Strategist roadmap" subtitle="A compact report with fixed Past / Now / Future subtitles.">
             {roadmap ? (
               <>
                 <div className="summary-grid compact">
@@ -625,31 +618,24 @@ function TurnDetail({
                   <SummaryStat label="Last reviewed" value={roadmapLastReviewedTurn === null ? "Unknown" : `Turn ${formatNumber(roadmapLastReviewedTurn)}`} />
                 </div>
                 <p className="card-paragraph">{stringValue(roadmap.thesis) || "No roadmap thesis recorded."}</p>
-                {roadmapNotes ? <p className="mini-note">{roadmapNotes}</p> : null}
-                {roadmapRefreshReason || strategistRefresh ? (
+                {stringValue(roadmap.pastSummary) ? (
                   <>
-                    <SectionLabel text="Refresh context" />
-                    <div className="tag-list">
-                      {roadmapRefreshReason ? <span className="tag accent">{roadmapRefreshReason}</span> : null}
-                      {stringValue(strategistRefresh?.urgency) ? (
-                        <StatusPill tone={toneFromUrgency(stringValue(strategistRefresh?.urgency))}>
-                          {stringValue(strategistRefresh?.urgency)}
-                        </StatusPill>
-                      ) : null}
-                      {stringValue(strategistRefresh?.reason) ? <span className="tag neutral">{stringValue(strategistRefresh?.reason)}</span> : null}
-                    </div>
+                    <SectionLabel text="Past" />
+                    <p className="card-paragraph">{stringValue(roadmap.pastSummary)}</p>
                   </>
                 ) : null}
-                <SectionLabel text="Immediate objectives" />
-                <TagList values={stringList(roadmap.immediateObjectives)} tone="accent" />
-                <SectionLabel text="Near-term goals" />
-                <TagList values={stringList(roadmap.nearTermGoals)} />
-                <SectionLabel text="Guardrails" />
-                <TagList values={stringList(roadmap.guardrails)} tone="accent" />
-                <SectionLabel text="Watch-outs" />
-                <TagList values={stringList(roadmap.watchOuts)} tone="warning" />
-                <SectionLabel text="Switch triggers" />
-                <TagList values={roadmapSwitchTriggers} />
+                {stringValue(roadmap.currentSituation) ? (
+                  <>
+                    <SectionLabel text="Now" />
+                    <p className="card-paragraph">{stringValue(roadmap.currentSituation)}</p>
+                  </>
+                ) : null}
+                {stringValue(roadmap.futurePlan) ? (
+                  <>
+                    <SectionLabel text="Future" />
+                    <p className="card-paragraph">{stringValue(roadmap.futurePlan)}</p>
+                  </>
+                ) : null}
               </>
             ) : (
               <p className="muted-text">No strategist roadmap was recorded for this turn.</p>
@@ -677,7 +663,7 @@ function TurnDetail({
         body="This is the compressed tactical packet that the planner actually used. It separates full board reality from the smaller planner brief so you can see what was surfaced and what stayed hidden."
       >
         <div className="reading-flow">
-          <Card title="Tactical brief" subtitle="Roadmap doctrine plus the final brief that the tactical prompt called the current truth.">
+          <Card title="Tactical brief" subtitle="The strategist report as the tactician received it, plus the current tactical brief.">
             {plannerBrief ? (
               <>
                 <div className="summary-grid compact">
@@ -689,15 +675,25 @@ function TurnDetail({
                   <SummaryStat label="Rival plan" value={stringValue(doctrine?.rivalVictoryGoal)} />
                 </div>
                 <p className="card-paragraph">{stringValue(doctrine?.thesis) || "No tactical thesis recorded."}</p>
-                <SectionLabel text="Immediate objectives" />
-                <TagList values={stringList(doctrine?.immediateObjectives)} tone="accent" />
-                <SectionLabel text="Near-term goals" />
-                <TagList values={stringList(doctrine?.nearTermGoals)} />
-                <SectionLabel text="Guardrails" />
-                <TagList values={stringList(doctrine?.guardrails)} tone="accent" />
-                <SectionLabel text="Watch-outs" />
-                <TagList values={stringList(doctrine?.watchOuts)} tone="warning" />
-                <SectionLabel text="Immediate pressure" />
+                {stringValue(doctrine?.pastSummary) ? (
+                  <>
+                    <SectionLabel text="Past" />
+                    <p className="card-paragraph">{stringValue(doctrine?.pastSummary)}</p>
+                  </>
+                ) : null}
+                {stringValue(doctrine?.currentSituation) ? (
+                  <>
+                    <SectionLabel text="Now" />
+                    <p className="card-paragraph">{stringValue(doctrine?.currentSituation)}</p>
+                  </>
+                ) : null}
+                {stringValue(doctrine?.futurePlan) ? (
+                  <>
+                    <SectionLabel text="Future" />
+                    <p className="card-paragraph">{stringValue(doctrine?.futurePlan)}</p>
+                  </>
+                ) : null}
+                <SectionLabel text="Pressure reminders" />
                 <TagList values={stringList(asRecord(plannerBrief?.tacticalPressure)?.priorityThisTurn)} tone="accent" />
               </>
             ) : (
@@ -764,7 +760,7 @@ function TurnDetail({
             notes={stringValue(parsedPlan?.notes)}
             candidateLookup={candidateLookup}
           />
-          <DomainSummarySection title="Applied outcome" value={turn.outcomeDomainSummary ?? turn.plannedDomainCounts} />
+          <DomainSummarySection title="Applied outcome" value={turn.outcomeDomainSummary} />
         </div>
 
         <AttemptLadderSection attempts={tacticalAttempts} validationFailures={turn.validationFailures} />
@@ -964,12 +960,14 @@ function StrategistContextSection({
 }) {
   const gameContext = asRecord(brief?.gameContext);
   const empireSummary = asRecord(brief?.empireSummary);
+  const lastStrategistReport = asRecord(brief?.lastStrategistReport);
+  const sinceLastReviewFacts = stringList(brief?.sinceLastReviewFacts);
   const progressInMotion = objectArray(brief?.progressInMotion);
   const recentFailures = stringList(brief?.recentFailures);
   const enabledVictories = stringList(brief?.enabledVictoryTypes);
 
   return (
-    <Card title={title} subtitle="Neutral setup and state checks before the roadmap was chosen or refreshed.">
+    <Card title={title} subtitle="Broad current state plus the previous strategist memo and factual changes since that memo.">
       {brief ? (
         <>
           <div className="summary-grid compact summary-grid-four">
@@ -983,6 +981,40 @@ function StrategistContextSection({
 
           <SectionLabel text="Enabled victories" />
           <TagList values={enabledVictories} tone="accent" />
+
+          {lastStrategistReport ? (
+            <>
+              <SectionLabel text="Last strategist memo" />
+              <div className="structured-item">
+                <div className="summary-grid compact">
+                  <SummaryStat label="Doctrine" value={stringValue(lastStrategistReport.doctrine)} />
+                  <SummaryStat label="Phase" value={stringValue(lastStrategistReport.phase)} />
+                  <SummaryStat label="Win path" value={stringValue(lastStrategistReport.winPath)} />
+                </div>
+                {stringValue(lastStrategistReport.pastSummary) ? (
+                  <>
+                    <SectionLabel text="Past" />
+                    <p className="card-paragraph">{stringValue(lastStrategistReport.pastSummary)}</p>
+                  </>
+                ) : null}
+                {stringValue(lastStrategistReport.currentSituation) ? (
+                  <>
+                    <SectionLabel text="Now" />
+                    <p className="card-paragraph">{stringValue(lastStrategistReport.currentSituation)}</p>
+                  </>
+                ) : null}
+                {stringValue(lastStrategistReport.futurePlan) ? (
+                  <>
+                    <SectionLabel text="Future" />
+                    <p className="card-paragraph">{stringValue(lastStrategistReport.futurePlan)}</p>
+                  </>
+                ) : null}
+              </div>
+            </>
+          ) : null}
+
+          <SectionLabel text="Since last review" />
+          <TagList values={sinceLastReviewFacts} />
 
           <ThreatHighlightsSection title="Rival threats" threats={threats} embedded />
           <ObservationFactSection title="State facts" facts={stateFacts} embedded emptyText="No strategist state facts were recorded." />

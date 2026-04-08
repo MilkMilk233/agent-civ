@@ -47,14 +47,9 @@ object AgentStrategicGovernor {
                 rivalCiv = memory.strategicPosture.rivalCiv,
                 rivalVictoryGoal = memory.strategicPosture.rivalVictoryGoal,
                 thesis = roadmap?.thesis ?: memory.strategicPosture.turnThesis,
-                immediateObjectives = (roadmap?.immediateObjectives ?: emptyList())
-                    .ifEmpty { memory.strategicPosture.commitments.take(2) }
-                    .take(3),
-                nearTermGoals = (roadmap?.nearTermGoals ?: emptyList())
-                    .take(4),
-                guardrails = (roadmap?.guardrails ?: emptyList())
-                    .take(3),
-                watchOuts = (roadmap?.watchOuts ?: memory.strategicPosture.watchOuts).take(3),
+                pastSummary = roadmap?.pastSummary,
+                currentSituation = roadmap?.currentSituation,
+                futurePlan = roadmap?.futurePlan ?: memory.strategicPosture.turnThesis,
             ),
             tacticalPressure = tacticalPressure,
             attentionFacts = attentionFacts,
@@ -179,27 +174,22 @@ object AgentStrategicGovernor {
 
         if (primaryThreat?.threatLevel == "critical") {
             mustActReasons += "${primaryThreat.civName} is a critical ${primaryThreat.likelyVictoryType.lowercase()} rival."
-            priorityThisTurn += "Answer the rival surge before more routine upkeep."
         }
 
         if (empireObservation.gameContext.duelLike && !empireObservation.gameContext.contactComplete && observation.turn >= 20) {
             mustActReasons += "You still have not found the only rival in this duel."
-            priorityThisTurn += "Use scout and warrior movement to force contact instead of preserving low-value progress."
         }
 
         if (hasThinMilitaryCoverage(observation, empireObservation.gameContext)) {
             mustActReasons += "Military coverage is thin for the current cities and contact state."
-            priorityThisTurn += "Use unit production, purchases, or safe positioning to avoid being under-defended."
         }
 
         if (hasHighGoldReserve(empireObservation)) {
             mustActReasons += "Large gold reserves should be converted into tempo now."
-            priorityThisTurn += "Spend gold on meaningful city tempo, units, or other immediate gains if those options are surfaced."
         }
 
         if (observation.empireSummary.happiness <= 0) {
             mustActReasons += "The happiness floor is at risk."
-            priorityThisTurn += "Protect happiness before taking greedier tempo lines."
         }
 
         val desiredCityFloor = desiredCityFloor(empireObservation.gameContext, observation.turn)
@@ -208,24 +198,20 @@ object AgentStrategicGovernor {
             observation.empireSummary.cityCount < desiredCityFloor
         ) {
             mustActReasons += "The roadmap still needs more cities to reach its expansion floor."
-            priorityThisTurn += "Keep expansion tempo moving instead of preserving low-impact progress."
         }
 
-        roadmap?.immediateObjectives
-            ?.take(2)
-            ?.filter { it.isNotBlank() }
-            ?.forEach { priorityThisTurn += it }
+        roadmap?.currentSituation
+            ?.takeIf { it.isNotBlank() }
+            ?.let { priorityThisTurn += it }
 
-        roadmap?.guardrails
-            ?.take(2)
-            ?.filter { it.isNotBlank() }
-            ?.forEach { priorityThisTurn += it }
+        roadmap?.futurePlan
+            ?.takeIf { it.isNotBlank() }
+            ?.let { priorityThisTurn += it }
 
         if (priorityThisTurn.isEmpty()) {
-            memory.strategicRoadmap.nearTermGoals
-                .take(2)
-                .filter { it.isNotBlank() }
-                .forEach { priorityThisTurn += it }
+            memory.strategicRoadmap.futurePlan
+                ?.takeIf { it.isNotBlank() }
+                ?.let { priorityThisTurn += it }
         }
 
         val meaningfulLeversAvailable = hasMeaningfulImmediateLevers(cityHighlights, unitHighlights, empireObservation)

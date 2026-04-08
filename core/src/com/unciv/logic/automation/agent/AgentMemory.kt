@@ -20,11 +20,7 @@ data class AgentMemory(
             watchOuts = ArrayList(strategicPosture.watchOuts),
         ),
         strategicRoadmap = strategicRoadmap.copy(
-            immediateObjectives = ArrayList(strategicRoadmap.immediateObjectives),
-            nearTermGoals = ArrayList(strategicRoadmap.nearTermGoals),
-            guardrails = ArrayList(strategicRoadmap.guardrails),
-            watchOuts = ArrayList(strategicRoadmap.watchOuts),
-            switchTriggers = ArrayList(strategicRoadmap.switchTriggers),
+            reviewCityNames = ArrayList(strategicRoadmap.reviewCityNames),
         ),
         cityIntents = ArrayList(cityIntents.map { it.copy(reasons = ArrayList(it.reasons)) }),
         unitAssignments = ArrayList(unitAssignments.map { it.copy() }),
