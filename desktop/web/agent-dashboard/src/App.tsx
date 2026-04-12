@@ -466,10 +466,10 @@ function TurnDetail({
   const plannerBrief = asRecord(turn.plannerBrief);
   const strategistBrief = asRecord(turn.strategistBrief);
   const roadmap = asRecord(turn.strategicRoadmap);
-  const strategicPlan = asRecord(turn.strategicPlan);
   const parsedPlan = asRecord(turn.parsedPlan);
   const empireSummary = asRecord(observation?.empireSummary);
   const doctrine = asRecord(plannerBrief?.doctrine);
+  const campaignContext = asRecord(plannerBrief?.campaignContext);
   const attentionFacts = objectArray(plannerBrief?.attentionFacts);
   const progressInMotion = objectArray(plannerBrief?.progressInMotion);
   const strategistRivalThreats = objectArray(strategistBrief?.rivalThreats);
@@ -658,6 +658,12 @@ function TurnDetail({
                   <p className="card-paragraph">{stringValue(roadmap.futurePlan)}</p>
                 </>
               ) : null}
+              {stringValue(roadmap.tacticianHandoff) ? (
+                <>
+                  <SectionLabel text="Tactician handoff" />
+                  <p className="card-paragraph">{stringValue(roadmap.tacticianHandoff)}</p>
+                </>
+              ) : null}
             </>
           ) : (
             <p className="muted-text">No strategist roadmap was recorded for this turn.</p>
@@ -684,6 +690,12 @@ function TurnDetail({
                   <SummaryStat label="Rival plan" value={stringValue(doctrine?.rivalVictoryGoal)} />
                 </div>
                 {stringValue(doctrine?.thesis) ? <p className="card-paragraph">{stringValue(doctrine?.thesis)}</p> : null}
+                {stringValue(doctrine?.tacticianHandoff) ? (
+                  <>
+                    <SectionLabel text="Direct handoff" />
+                    <p className="card-paragraph">{stringValue(doctrine?.tacticianHandoff)}</p>
+                  </>
+                ) : null}
               </>
             ) : (
               <p className="muted-text">Planner brief missing from this turn.</p>
@@ -715,6 +727,33 @@ function TurnDetail({
                 </div>
               ) : (
                 <p className="muted-text">No empire observation captured.</p>
+              )}
+            </Card>
+            <Card title="Campaign context" subtitle="The factual rival/frontier packet the tactician received for pressure and war decisions.">
+              {campaignContext ? (
+                <>
+                  <div className="summary-grid compact summary-grid-four">
+                    <SummaryStat label="Primary rival" value={stringValue(campaignContext.primaryRivalCiv)} />
+                    <SummaryStat label="At war" value={booleanText(campaignContext.atWar)} />
+                    <SummaryStat label="War choice surfaced" value={booleanText(campaignContext.warChoiceAvailable)} />
+                    <SummaryStat label="Visible rival cities" value={formatNumber(numberValue(campaignContext.visibleRivalCities))} />
+                    <SummaryStat label="Visible rival units" value={formatNumber(numberValue(campaignContext.visibleRivalUnits))} />
+                    <SummaryStat label="Frontline combat" value={formatNumber(numberValue(campaignContext.frontlineFriendlyCombatUnits))} />
+                    <SummaryStat label="Melee near objective" value={formatNumber(numberValue(campaignContext.meleeUnitsNearObjective))} />
+                    <SummaryStat label="Ranged near objective" value={formatNumber(numberValue(campaignContext.rangedUnitsNearObjective))} />
+                  </div>
+                  <div className="structured-list">
+                    {campaignTargetItem("Visible target", asRecord(campaignContext.visibleTarget))}
+                    {campaignTargetItem("Visible capital", asRecord(campaignContext.visibleCapital))}
+                    {campaignTargetItem("Last-known target", asRecord(campaignContext.lastKnownTarget))}
+                    {campaignTargetItem("Last-known capital", asRecord(campaignContext.lastKnownCapital))}
+                  </div>
+                </>
+              ) : (
+                <EmptyCardState
+                  title="No campaign context"
+                  body="No rival/frontier packet was surfaced to the tactician on this turn."
+                />
               )}
             </Card>
           </div>
@@ -1127,50 +1166,6 @@ function StrategistRivalUnitsSection({
       )}
     </Card>
   );
-}
-
-function ObservationFactSection({
-  title,
-  facts,
-  emptyText,
-  embedded = false,
-}: {
-  title: string;
-  facts: Record<string, unknown>[];
-  emptyText: string;
-  embedded?: boolean;
-}) {
-  const content = facts.length ? (
-    <div className="structured-list">
-      {facts.map((fact, index) => (
-        <article key={`${stringValue(fact.headline)}-${index}`} className="structured-item">
-          <div className="structured-item-header">
-            <strong>{stringValue(fact.headline) || "Untitled fact"}</strong>
-            <div className="tag-list compact">
-              {stringValue(fact.severity) ? (
-                <StatusPill tone={toneFromSeverity(stringValue(fact.severity))}>{stringValue(fact.severity)}</StatusPill>
-              ) : null}
-              {stringValue(fact.category) ? <span className="tag neutral">{stringValue(fact.category)}</span> : null}
-            </div>
-          </div>
-          <p className="card-paragraph">{stringValue(fact.detail)}</p>
-        </article>
-      ))}
-    </div>
-      ) : (
-        <EmptyCardState body={emptyText} />
-      );
-
-  if (embedded) {
-    return (
-      <>
-        <SectionLabel text={title} />
-        {content}
-      </>
-    );
-  }
-
-  return <Card title={title}>{content}</Card>;
 }
 
 function campaignTargetItem(label: string, target: Record<string, unknown> | null) {
@@ -2001,15 +1996,6 @@ function objectArray(value: unknown): Record<string, unknown>[] {
     : [];
 }
 
-function latestEventDetails(events: TurnRecord["events"], eventTypes: string[]): Record<string, unknown> | null {
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    if (eventTypes.includes(events[index].type) && events[index].details) {
-      return events[index].details as Record<string, unknown>;
-    }
-  }
-  return null;
-}
-
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
@@ -2111,13 +2097,6 @@ function toneFromSeverity(severity: string): "success" | "warning" | "muted" {
   const normalized = severity.toLowerCase();
   if (normalized === "critical" || normalized === "warning") return "warning";
   if (normalized === "good" || normalized === "success") return "success";
-  return "muted";
-}
-
-function toneFromUrgency(urgency: string): "success" | "warning" | "muted" {
-  const normalized = urgency.toLowerCase();
-  if (normalized === "emergency") return "warning";
-  if (normalized === "scheduled") return "success";
   return "muted";
 }
 
@@ -2378,8 +2357,7 @@ function buildTacticalAttempts(events: ObservabilityEvent[]): TacticalAttemptVie
     const nextRequestId = requests[index + 1]?.id ?? Number.MAX_SAFE_INTEGER;
     const attemptNumber = (stringNumber(request.details?.retryAttempt) ?? 0) + 1;
     const parsed = parsedEvents.find((event) => event.id > request.id && event.id < nextRequestId);
-    const validation = validationEvents.find((event) => stringNumber(event.details?.attempt) === attemptNumber)
-      ?? validationEvents.find((event) => event.id > request.id && event.id < nextRequestId);
+    const validation = validationEvents.find((event) => event.id > request.id && event.id < nextRequestId);
     const response = responses.find((event) => event.id > request.id && event.id < nextRequestId);
 
     return {

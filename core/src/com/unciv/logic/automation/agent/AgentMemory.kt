@@ -41,10 +41,16 @@ data class StrategicPostureMemory(
     var turnThesis: String? = null,
     var commitments: ArrayList<String> = arrayListOf(),
     var watchOuts: ArrayList<String> = arrayListOf(),
+    var lastKnownRivalCityName: String? = null,
+    var lastKnownRivalCityX: Int? = null,
+    var lastKnownRivalCityY: Int? = null,
+    var lastKnownRivalCapitalName: String? = null,
+    var lastKnownRivalCapitalX: Int? = null,
+    var lastKnownRivalCapitalY: Int? = null,
     var sinceTurn: Int = 0,
     var lastUpdatedTurn: Int = 0,
 ) : IsPartOfGameInfoSerialization {
-    constructor() : this("", arrayListOf(), null, null, "", null, null, null, null, arrayListOf(), arrayListOf(), 0, 0)
+    constructor() : this("", arrayListOf(), null, null, "", null, null, null, null, arrayListOf(), arrayListOf(), null, null, null, null, null, null, 0, 0)
 }
 
 @Serializable

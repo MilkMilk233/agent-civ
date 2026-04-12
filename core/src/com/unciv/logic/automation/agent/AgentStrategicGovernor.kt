@@ -10,9 +10,11 @@ object AgentStrategicGovernor {
         val primaryThreat = empireObservation.victoryThreats.firstOrNull()
         val roadmap = memory.strategicRoadmap.takeIf { it.doctrine.isNotBlank() }
         val attentionFacts = buildAttentionFacts(observation, empireObservation)
+        val mustActNow = buildMustActNow(observation, empireObservation)
         val cityHighlights = selectCityHighlights(observation, gameContext)
-        val unitHighlights = selectUnitHighlights(observation, gameContext, primaryThreat)
-        val progressInMotion = buildProgressInMotion(observation, empireObservation, cityHighlights, unitHighlights)
+        val campaignContext = buildCampaignContext(memory, observation, empireObservation)
+        val unitHighlights = selectUnitHighlights(observation, gameContext, primaryThreat, campaignContext)
+        val progressInMotion = buildProgressInMotion(observation, empireObservation, cityHighlights, unitHighlights, campaignContext)
         val threatHighlights = observation.visibleThreatsAndTargets.take(if (observation.empireSummary.isAtWar) 3 else 2)
 
         val workerFacts = observation.priorityFacts.count { isWorkerFact(it) }
@@ -39,7 +41,10 @@ object AgentStrategicGovernor {
                 pastSummary = roadmap?.pastSummary,
                 currentSituation = roadmap?.currentSituation,
                 futurePlan = roadmap?.futurePlan ?: memory.strategicPosture.turnThesis,
+                tacticianHandoff = roadmap?.tacticianHandoff ?: roadmap?.futurePlan ?: memory.strategicPosture.turnThesis,
             ),
+            campaignContext = campaignContext,
+            mustActNow = mustActNow,
             attentionFacts = attentionFacts,
             progressInMotion = progressInMotion,
             empireChoices = AgentPlannerEmpireChoicesObservation(
@@ -55,14 +60,68 @@ object AgentStrategicGovernor {
         )
     }
 
+    private fun buildMustActNow(
+        observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+    ): List<AgentPlannerMustActObservation> {
+        val items = arrayListOf<AgentPlannerMustActObservation>()
+
+        val citiesNeedingChoice = observation.cities
+            .filter { it.project?.status == "needs_choice" || it.project == null }
+        if (citiesNeedingChoice.isNotEmpty()) {
+            items += AgentPlannerMustActObservation(
+                kind = "city_project_choice",
+                headline = "${citiesNeedingChoice.size} cities still need an explicit project choice",
+                detail = citiesNeedingChoice.take(3).joinToString(", ") { city ->
+                    "${city.name}${city.project?.name?.let { " ($it placeholder)" } ?: ""}"
+                },
+            )
+        }
+
+        val settlersReadyToFound = observation.units
+            .filter { unit ->
+                unit.role == "settler" &&
+                    (unit.unitActions.contains("FoundCity") ||
+                        unit.unitOptionCandidates.any { candidate ->
+                            candidate.candidateId.startsWith("unitsettle:") &&
+                                candidate.title.contains("found city here", ignoreCase = true)
+                        })
+            }
+        if (settlersReadyToFound.isNotEmpty()) {
+            items += AgentPlannerMustActObservation(
+                kind = "settler_can_found_now",
+                headline = "${settlersReadyToFound.size} settler units can found immediately",
+                detail = settlersReadyToFound.take(2).joinToString(", ") { unit ->
+                    "${unit.name} #${unit.id} at (${unit.x}, ${unit.y})"
+                },
+            )
+        }
+
+        if (empireObservation.currentResearch == null && empireObservation.researchCandidates.isNotEmpty()) {
+            items += AgentPlannerMustActObservation(
+                kind = "research_choice_missing",
+                headline = "Research choice is still unresolved",
+                detail = empireObservation.researchCandidates.take(3).joinToString(", ") { it.title },
+            )
+        }
+
+        return items
+    }
+
     internal fun buildProgressSummary(
         memory: AgentMemory,
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
     ): List<AgentPlannerProgressObservation> {
         val cityHighlights = selectCityHighlights(observation, empireObservation.gameContext)
-        val unitHighlights = selectUnitHighlights(observation, empireObservation.gameContext, empireObservation.victoryThreats.firstOrNull())
-        return buildProgressInMotion(observation, empireObservation, cityHighlights, unitHighlights)
+        val campaignContext = buildCampaignContext(memory, observation, empireObservation)
+        val unitHighlights = selectUnitHighlights(
+            observation,
+            empireObservation.gameContext,
+            empireObservation.victoryThreats.firstOrNull(),
+            campaignContext,
+        )
+        return buildProgressInMotion(observation, empireObservation, cityHighlights, unitHighlights, campaignContext)
     }
 
     private fun buildAttentionFacts(
@@ -151,13 +210,17 @@ object AgentStrategicGovernor {
         observation: AgentObservation,
         gameContext: AgentPublicGameContextObservation,
         primaryThreat: AgentVictoryThreatObservation?,
+        campaignContext: AgentPlannerCampaignContextObservation?,
     ): List<AgentUnitObservation> {
+        val warLikeContext = isPressureContext(observation, campaignContext)
         val maxUnits = when {
-            observation.empireSummary.isAtWar -> 6
+            observation.empireSummary.isAtWar -> 10
+            warLikeContext -> 8
             observation.turn >= 150 -> 5
             else -> 4
         }
         val workerCap = when {
+            warLikeContext -> 1
             primaryThreat?.threatLevel == "critical" -> 1
             gameContext.contactComplete && observation.turn >= 120 -> 1
             observation.turn >= 80 -> 2
@@ -167,7 +230,7 @@ object AgentStrategicGovernor {
         val candidateUnits = observation.units
             .filter { it.detailLevel == "expanded" }
             .ifEmpty { observation.units }
-        val ranked = candidateUnits.sortedByDescending { unitScore(it, observation, gameContext, primaryThreat) }
+        val ranked = candidateUnits.sortedByDescending { unitScore(it, observation, gameContext, primaryThreat, campaignContext) }
         val selected = arrayListOf<AgentUnitObservation>()
         var workerCount = 0
         for (unit in ranked) {
@@ -180,24 +243,14 @@ object AgentStrategicGovernor {
         return selected
     }
 
-    private fun selectOpportunityHighlights(
-        observation: AgentObservation,
-        gameContext: AgentPublicGameContextObservation,
-        primaryThreat: AgentVictoryThreatObservation?,
-    ): List<ObservationFact> {
-        return observation.opportunities
-            .filterNot { isWorkerFact(it) && (primaryThreat?.threatLevel == "critical" || observation.turn >= 120 || gameContext.contactComplete) }
-            .sortedByDescending { alertScore(it, observation.turn, gameContext, primaryThreat) }
-            .distinctBy { it.headline }
-            .take(3)
-    }
-
     private fun buildProgressInMotion(
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
         cityHighlights: List<AgentCityObservation>,
         unitHighlights: List<AgentUnitObservation>,
+        campaignContext: AgentPlannerCampaignContextObservation?,
     ): List<AgentPlannerProgressObservation> {
+        val warLikeContext = isPressureContext(observation, campaignContext)
         val progress = arrayListOf<AgentPlannerProgressObservation>()
         empireObservation.currentResearch?.let { research ->
             progress += AgentPlannerProgressObservation(
@@ -232,6 +285,7 @@ object AgentStrategicGovernor {
         unitHighlights
             .mapNotNull { unit ->
                 unit.assignmentProgress?.let { assignment ->
+                    if (warLikeContext && assignment.role in setOf("explore", "reposition")) return@let null
                     AgentPlannerProgressObservation(
                         category = "unit",
                         label = "${unit.name} #${unit.id}",
@@ -242,51 +296,6 @@ object AgentStrategicGovernor {
             .take(3)
             .forEach { progress += it }
         return progress.take(6)
-    }
-
-    private fun alertScore(
-        fact: ObservationFact,
-        turn: Int,
-        gameContext: AgentPublicGameContextObservation,
-        primaryThreat: AgentVictoryThreatObservation?,
-    ): Int {
-        var score = when (fact.severity) {
-            "critical" -> 300
-            "warning" -> 200
-            else -> 100
-        }
-        score += when (fact.category) {
-            "victory" -> 120
-            "war" -> 110
-            "economy" -> 100
-            "expansion" -> 95
-            "research", "policy" -> 90
-            "contact" -> if (gameContext.contactComplete) -40 else 80
-            "tiles" -> if (turn >= 120 || primaryThreat?.threatLevel == "critical") 10 else 50
-            else -> 60
-        }
-        if (isWorkerFact(fact) && (turn >= 120 || primaryThreat?.threatLevel == "critical")) score -= 80
-        if (fact.headline.contains("gold reserve", ignoreCase = true)) score += 15
-        if (fact.headline.contains("military coverage", ignoreCase = true)) score += 20
-        if (fact.headline.contains("main rival", ignoreCase = true)) score += 25
-        return score
-    }
-
-    private fun hasThinMilitaryCoverage(
-        observation: AgentObservation,
-        gameContext: AgentPublicGameContextObservation,
-    ): Boolean {
-        val cityCount = observation.empireSummary.cityCount
-        if (cityCount <= 0) return false
-        var desiredCoverage = cityCount
-        if (observation.empireSummary.isAtWar) desiredCoverage += 1
-        else if (gameContext.contactComplete && cityCount >= 2) desiredCoverage += 1
-        return observation.empireSummary.militaryUnitCount < desiredCoverage
-    }
-
-    private fun hasHighGoldReserve(empireObservation: AgentEmpireObservation): Boolean {
-        return empireObservation.gold >= 1000 &&
-            empireObservation.macroCandidates.any { it.candidateId == "macro:gold:auto" }
     }
 
     private fun cityScore(city: AgentCityObservation): Int {
@@ -309,41 +318,20 @@ object AgentStrategicGovernor {
         return score
     }
 
-    private fun hasMeaningfulImmediateLevers(
-        cityHighlights: List<AgentCityObservation>,
-        unitHighlights: List<AgentUnitObservation>,
-        empireObservation: AgentEmpireObservation,
-    ): Boolean {
-        val cityLevers = cityHighlights.any { city ->
-            city.actions.chooseProject.isNotEmpty() ||
-                city.actions.purchase.isNotEmpty() ||
-                city.actions.buyTile.isNotEmpty()
-        }
-        val unitLevers = unitHighlights.any { unit ->
-            unit.unitOptionCandidates.isNotEmpty() || unit.legalActionCandidates.isNotEmpty()
-        }
-        val empireLevers =
-            empireObservation.macroCandidates.isNotEmpty() ||
-                empireObservation.policyCandidates.isNotEmpty() ||
-                empireObservation.diplomacyCandidates.isNotEmpty() ||
-                (empireObservation.researchCandidates.isNotEmpty() &&
-                    (empireObservation.currentResearch == null || empireObservation.freeTechs > 0))
-
-        return cityLevers || unitLevers || empireLevers
-    }
-
     private fun unitScore(
         unit: AgentUnitObservation,
         observation: AgentObservation,
         gameContext: AgentPublicGameContextObservation,
         primaryThreat: AgentVictoryThreatObservation?,
+        campaignContext: AgentPlannerCampaignContextObservation?,
     ): Int {
+        val warLikeContext = isPressureContext(observation, campaignContext)
         var score = 100
         score += when (unit.role) {
             "settler" -> 90
-            "melee", "ranged", "siege", "naval_melee", "naval_ranged" -> 70
+            "melee", "ranged", "siege", "naval_melee", "naval_ranged" -> if (warLikeContext) 95 else 70
             "worker" -> if (observation.turn >= 120 || primaryThreat?.threatLevel == "critical") 10 else 45
-            "scout" -> if (gameContext.contactComplete) 5 else 40
+            "scout" -> if (gameContext.contactComplete) if (warLikeContext) -10 else 5 else 40
             else -> 30
         }
         if (!gameContext.contactComplete && unit.hasMovement && unit.unitOptionCandidates.any { it.candidateId.startsWith("unitexplore:") }) {
@@ -355,11 +343,137 @@ object AgentStrategicGovernor {
         if (unit.detailLevel == "expanded") score += 20
         val assignment = unit.assignmentProgress
         if (assignment != null) {
-            if (assignment.status == "on_target") score += 20
-            if (assignment.switchCost.lowercase() == "high") score += 15
+            if (warLikeContext && assignment.role in setOf("explore", "reposition")) {
+                score -= 25
+            } else {
+                if (assignment.status == "on_target") score += 20
+                if (assignment.switchCost.lowercase() == "high") score += 15
+            }
+        }
+        val objective = campaignContext?.visibleTarget ?: campaignContext?.visibleCapital ?: campaignContext?.lastKnownTarget ?: campaignContext?.lastKnownCapital
+        if (warLikeContext && objective != null && unit.role in setOf("melee", "ranged", "siege", "naval_melee", "naval_ranged")) {
+            val distance = axialDistance(unit.x, unit.y, objective.x, objective.y)
+            score += (40 - distance * 4).coerceAtLeast(0)
+            if (unit.hasMovement) score += 10
         }
         if (unit.hasMovement && unit.unitActions.any { it == "Explore" } && !gameContext.contactComplete) score += 10
         return score
+    }
+
+    private fun buildCampaignContext(
+        memory: AgentMemory,
+        observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+    ): AgentPlannerCampaignContextObservation? {
+        val visibleRivalCities = observation.visibleThreatsAndTargets
+            .filter { it.kind == "city" && it.civName != observation.civName }
+        val visibleRivalUnits = observation.visibleThreatsAndTargets
+            .filter { it.kind == "unit" && it.civName != observation.civName }
+        val visibleTarget = visibleRivalCities.minWithOrNull(
+            compareBy<VisibleTargetObservation> { it.distanceToClosestUnit ?: Int.MAX_VALUE }
+                .thenBy { it.distanceToClosestCity ?: Int.MAX_VALUE }
+                .thenBy { it.name }
+        )
+        val visibleCapital = visibleRivalCities
+            .filter { it.facts.any { fact -> fact.equals("Capital", ignoreCase = true) } }
+            .minWithOrNull(
+                compareBy<VisibleTargetObservation> { it.distanceToClosestUnit ?: Int.MAX_VALUE }
+                    .thenBy { it.distanceToClosestCity ?: Int.MAX_VALUE }
+                    .thenBy { it.name }
+            )
+        val lastKnownTarget = if (memory.strategicPosture.lastKnownRivalCityX != null && memory.strategicPosture.lastKnownRivalCityY != null) {
+            AgentStrategistTargetReference(
+                civName = memory.strategicPosture.rivalCiv ?: empireObservation.victoryThreats.firstOrNull()?.civName ?: "",
+                name = memory.strategicPosture.lastKnownRivalCityName ?: "Unknown rival city",
+                x = memory.strategicPosture.lastKnownRivalCityX!!,
+                y = memory.strategicPosture.lastKnownRivalCityY!!,
+            )
+        } else null
+        val lastKnownCapital = if (memory.strategicPosture.lastKnownRivalCapitalX != null && memory.strategicPosture.lastKnownRivalCapitalY != null) {
+            AgentStrategistTargetReference(
+                civName = memory.strategicPosture.rivalCiv ?: empireObservation.victoryThreats.firstOrNull()?.civName ?: "",
+                name = memory.strategicPosture.lastKnownRivalCapitalName ?: "Unknown rival capital",
+                x = memory.strategicPosture.lastKnownRivalCapitalX!!,
+                y = memory.strategicPosture.lastKnownRivalCapitalY!!,
+            )
+        } else null
+        val objective = visibleTarget?.let(::toTargetReference)
+            ?: visibleCapital?.let(::toTargetReference)
+            ?: lastKnownTarget
+            ?: lastKnownCapital
+        val frontlineCombatUnits = objective?.let { target ->
+            observation.units.count { unit ->
+                unit.role in setOf("melee", "ranged", "siege", "naval_melee", "naval_ranged") &&
+                    axialDistance(unit.x, unit.y, target.x, target.y) <= 6
+            }
+        } ?: 0
+        val meleeUnitsNearObjective = objective?.let { target ->
+            observation.units.count { unit ->
+                unit.role in setOf("melee", "naval_melee") &&
+                    axialDistance(unit.x, unit.y, target.x, target.y) <= 5
+            }
+        } ?: 0
+        val rangedUnitsNearObjective = objective?.let { target ->
+            observation.units.count { unit ->
+                unit.role in setOf("ranged", "siege", "naval_ranged") &&
+                    axialDistance(unit.x, unit.y, target.x, target.y) <= 5
+            }
+        } ?: 0
+        val warChoiceAvailable = empireObservation.diplomacyCandidates.any { it.candidateId.startsWith("diplo:war:") }
+        if (
+            visibleRivalCities.isEmpty() &&
+            visibleRivalUnits.isEmpty() &&
+            lastKnownTarget == null &&
+            lastKnownCapital == null &&
+            !warChoiceAvailable &&
+            !observation.empireSummary.isAtWar
+        ) return null
+        return AgentPlannerCampaignContextObservation(
+            primaryRivalCiv = memory.strategicPosture.rivalCiv ?: empireObservation.victoryThreats.firstOrNull()?.civName,
+            atWar = observation.empireSummary.isAtWar,
+            warChoiceAvailable = warChoiceAvailable,
+            visibleRivalCities = visibleRivalCities.size,
+            visibleRivalUnits = visibleRivalUnits.size,
+            visibleTarget = visibleTarget?.let(::toTargetReference),
+            visibleCapital = visibleCapital?.let(::toTargetReference),
+            lastKnownTarget = lastKnownTarget,
+            lastKnownCapital = lastKnownCapital,
+            frontlineFriendlyCombatUnits = frontlineCombatUnits,
+            meleeUnitsNearObjective = meleeUnitsNearObjective,
+            rangedUnitsNearObjective = rangedUnitsNearObjective,
+        )
+    }
+
+    private fun toTargetReference(target: VisibleTargetObservation): AgentStrategistTargetReference {
+        return AgentStrategistTargetReference(
+            civName = target.civName,
+            name = target.name,
+            x = target.x,
+            y = target.y,
+            health = target.health,
+            combatStrength = target.combatStrength,
+            distanceToClosestCity = target.distanceToClosestCity,
+            distanceToClosestUnit = target.distanceToClosestUnit,
+        )
+    }
+
+    private fun isPressureContext(
+        observation: AgentObservation,
+        campaignContext: AgentPlannerCampaignContextObservation?,
+    ): Boolean {
+        if (observation.empireSummary.isAtWar) return true
+        campaignContext ?: return false
+        return campaignContext.warChoiceAvailable ||
+            (observation.empireSummary.militaryUnitCount >= 8 && campaignContext.primaryRivalCiv != null) ||
+            campaignContext.visibleTarget != null ||
+            campaignContext.lastKnownTarget != null ||
+            campaignContext.lastKnownCapital != null
+    }
+
+    private fun axialDistance(x1: Int, y1: Int, x2: Int, y2: Int): Int {
+        val dx = x1 - x2
+        val dy = y1 - y2
+        return (kotlin.math.abs(dx) + kotlin.math.abs(dy) + kotlin.math.abs(dx + dy)) / 2
     }
 
     private fun isWorkerFact(fact: ObservationFact): Boolean {
@@ -377,13 +491,4 @@ object AgentStrategicGovernor {
         else -> "endgame"
     }
 
-    private fun desiredCityFloor(gameContext: AgentPublicGameContextObservation, turn: Int): Int {
-        return when {
-            gameContext.duelLike && gameContext.mapSize == "Tiny" && turn >= 120 -> 4
-            gameContext.duelLike && gameContext.mapSize == "Tiny" -> 3
-            gameContext.expansionWindow == "narrow" -> 4
-            gameContext.expansionWindow == "medium" -> 5
-            else -> 6
-        }
-    }
 }

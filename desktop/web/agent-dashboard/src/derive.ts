@@ -81,7 +81,6 @@ export function deriveTurns(events: ObservabilityEvent[], turnSummaries: TurnSum
       const turn = Number(turnValue);
       const turnStart = latestEventOfType(group, "turn_start");
       const planParsed = latestEventOfType(group, "llm_plan_parsed");
-      const strategistParsed = latestEventOfType(group, "strategist_llm_plan_parsed");
       const strategistRequest = latestEventOfType(group, "strategist_llm_request");
       const planApplied = latestEventOfType(group, "plan_applied");
       const validationFailed = latestEventOfType(group, "plan_validation_failed");
@@ -103,7 +102,6 @@ export function deriveTurns(events: ObservabilityEvent[], turnSummaries: TurnSum
         strategistBrief: parseJsonValue(strategistRequest?.details?.strategistBriefJson),
         strategicRoadmap: parseJsonValue(details.strategicRoadmapJson),
         parsedPlan: parseJsonValue(planParsed?.details?.parsedPlan),
-        strategicPlan: parseJsonValue(strategistParsed?.details?.parsedPlan),
         outcomeDomainSummary: parseJsonValue(planApplied?.details?.outcomeDomainSummaryJson),
         validationFailures: parseJsonValue(validationFailed?.details?.validationFailuresJson),
         synopsis: status.synopsis,

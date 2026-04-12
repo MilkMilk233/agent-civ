@@ -151,7 +151,6 @@ export interface TurnRecord {
   strategistBrief: unknown | null;
   strategicRoadmap: unknown | null;
   parsedPlan: Record<string, unknown> | null;
-  strategicPlan: Record<string, unknown> | null;
   outcomeDomainSummary: unknown | null;
   validationFailures: unknown | null;
   synopsis: string;

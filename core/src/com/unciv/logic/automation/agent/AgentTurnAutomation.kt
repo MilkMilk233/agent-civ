@@ -230,6 +230,20 @@ object AgentTurnAutomation {
                         break
                     }
                     AgentActionExecutor.ValidationStatus.Invalid -> {
+                        val salvaged = trySalvageSoftValidationFailure(
+                            civInfo = civInfo,
+                            plan = plan,
+                            validation = validation,
+                            stopAfterCityCreation = allowCityCreationBoundary,
+                            passIndex = passIndex,
+                            planningAttempt = planningAttempts,
+                        )
+                        if (salvaged != null) {
+                            selectedPlan = salvaged.first
+                            validationReport = salvaged.second
+                            break
+                        }
+
                         AgentObservability.record(
                             type = "plan_validation_failed",
                             message = "Plan failed validation before real execution",
@@ -481,7 +495,7 @@ object AgentTurnAutomation {
             selectedPlan,
             ExecutionOptions(stopAfterCityCreation = maxPlanningPassesPerTurn > 1),
         )
-        if (firstPassReport.rejectedActions > 0) {
+        if (firstPassReport.rejectedActions > 0 && !canIgnoreSoftRejections(firstPassReport.outcomes)) {
             val updatedMemory = AgentMemoryManager.updateAfterTurn(
                 civInfo = civInfo,
                 observation = observation,
@@ -694,7 +708,7 @@ object AgentTurnAutomation {
                 finalReport = firstPassReport
             } else {
                 val secondPassReport = executor.execute(civInfo, selectedPlan)
-                if (secondPassReport.rejectedActions > 0) {
+                if (secondPassReport.rejectedActions > 0 && !canIgnoreSoftRejections(secondPassReport.outcomes)) {
                     val combinedFailureReport = combineReports(firstPassReport, secondPassReport)
                     val updatedMemory = AgentMemoryManager.updateAfterTurn(
                         civInfo = civInfo,
@@ -767,6 +781,94 @@ object AgentTurnAutomation {
             ),
         )
     }
+
+    private fun trySalvageSoftValidationFailure(
+        civInfo: Civilization,
+        plan: AgentActionPlan,
+        validation: AgentActionExecutor.ValidationReport,
+        stopAfterCityCreation: Boolean,
+        passIndex: Int,
+        planningAttempt: Int,
+    ): Pair<AgentActionPlan, AgentActionExecutor.ValidationReport>? {
+        val rejectedOutcomes = validation.rejectedOutcomes
+        if (rejectedOutcomes.isEmpty() || !rejectedOutcomes.all(::isSoftRejectedOutcome)) return null
+
+        val prunedActions = plan.actions.filterNot { action -> rejectedOutcomes.any { matchesOutcome(action, it) } }
+        if (prunedActions.size == plan.actions.size) return null
+        if (prunedActions.none { it !is AgentActionCommand.EndTurn }) return null
+
+        val salvagedPlan = plan.copy(
+            actions = prunedActions,
+            notes = appendPlanNote(plan.notes, "Auto-pruned ${rejectedOutcomes.size} low-value invalid action(s) after validation."),
+        )
+        val salvagedValidation = executor.validate(
+            civInfo,
+            salvagedPlan,
+            ExecutionOptions(stopAfterCityCreation = stopAfterCityCreation),
+        )
+        if (salvagedValidation.status == AgentActionExecutor.ValidationStatus.Invalid) return null
+
+        AgentObservability.record(
+            type = "plan_validation_soft_pruned",
+            message = "Removed low-value invalid actions and kept the rest of the plan",
+            civName = civInfo.civName,
+            turn = civInfo.gameInfo.turns,
+            details = mapOf(
+                "turnPass" to passIndex.toString(),
+                "attempt" to planningAttempt.toString(),
+                "originalPlanJson" to AgentPromptBuilder.planJson(plan),
+                "salvagedPlanJson" to AgentPromptBuilder.planJson(salvagedPlan),
+                "validationFailuresJson" to AgentPromptBuilder.retryContextJson(
+                    AgentRetryContextFactory.fromValidation(
+                        plan = plan,
+                        validation = validation,
+                        retryAttempt = minOf(planningAttempt, maxPlanningAttemptsPerTurn - 1),
+                        maxRetries = maxPlanningAttemptsPerTurn - 1,
+                    )
+                ),
+            ),
+        )
+
+        return salvagedPlan to salvagedValidation
+    }
+
+    private fun canIgnoreSoftRejections(outcomes: List<AgentActionExecutor.ActionOutcome>): Boolean {
+        val rejected = outcomes.filter { it.status == AgentActionExecutor.ActionStatus.Rejected }
+        if (rejected.isEmpty()) return false
+        val executedMeaningful = outcomes.any {
+            it.status == AgentActionExecutor.ActionStatus.Executed && it.commandType != "end_turn"
+        }
+        return executedMeaningful && rejected.all(::isSoftRejectedOutcome)
+    }
+
+    private fun isSoftRejectedOutcome(outcome: AgentActionExecutor.ActionOutcome): Boolean = when {
+        outcome.commandType == "select_unit_option" &&
+            outcome.reason == "Unit option rejected: frontier move is no longer attractive or reachable" -> true
+        outcome.commandType == "unit_move" &&
+            outcome.reason == "Unit move rejected: movement produced no position change" -> true
+        else -> false
+    }
+
+    private fun matchesOutcome(action: AgentActionCommand, outcome: AgentActionExecutor.ActionOutcome): Boolean = when (action) {
+        is AgentActionCommand.SelectEmpireOption ->
+            outcome.commandType == "select_empire_option" && action.candidateId == outcome.candidateId
+        is AgentActionCommand.SelectCityOption ->
+            outcome.commandType == "select_city_option" && action.candidateId == outcome.candidateId
+        is AgentActionCommand.SelectUnitOption ->
+            outcome.commandType == "select_unit_option" && action.candidateId == outcome.candidateId
+        is AgentActionCommand.UnitMove ->
+            outcome.commandType == "unit_move" && action.unitId == outcome.unitId
+        is AgentActionCommand.UnitAction ->
+            outcome.commandType == "unit_action" && action.unitId == outcome.unitId && action.actionType == outcome.actionType
+        is AgentActionCommand.EndTurn -> false
+    }
+
+    private fun appendPlanNote(existing: String?, extra: String): String =
+        when {
+            existing.isNullOrBlank() -> extra
+            existing.contains(extra) -> existing
+            else -> "$existing $extra"
+        }
 
     private fun memoryDetails(memory: AgentMemory): Map<String, String> = mapOf(
         "memoryMode" to memory.strategicPosture.mode,

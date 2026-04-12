@@ -9,7 +9,6 @@ object AgentMemoryManager {
     private const val maxRecentFailures = 8
     private const val cityIntentHorizonTurns = 5
     private const val unitAssignmentHorizonTurns = 4
-    private const val doctrineReviewCadenceTurns = 30
 
     private val json = Json {
         prettyPrint = false
@@ -188,6 +187,7 @@ object AgentMemoryManager {
             pastSummary = strategicPlan.roadmap.pastSummary?.trim().takeUnless { it.isNullOrEmpty() },
             currentSituation = strategicPlan.roadmap.currentSituation?.trim().takeUnless { it.isNullOrEmpty() },
             futurePlan = strategicPlan.roadmap.futurePlan?.trim().takeUnless { it.isNullOrEmpty() },
+            tacticianHandoff = strategicPlan.roadmap.tacticianHandoff?.trim().takeUnless { it.isNullOrEmpty() },
             reviewCityCount = observation.empireSummary.cityCount,
             reviewMilitaryUnitCount = observation.empireSummary.militaryUnitCount,
             reviewIsAtWar = observation.empireSummary.isAtWar,
@@ -322,6 +322,43 @@ object AgentMemoryManager {
         )
     }
 
+    private data class LastKnownRivalPicture(
+        val rivalCityName: String? = null,
+        val rivalCityX: Int? = null,
+        val rivalCityY: Int? = null,
+        val rivalCapitalName: String? = null,
+        val rivalCapitalX: Int? = null,
+        val rivalCapitalY: Int? = null,
+    )
+
+    private fun resolveLastKnownRivalPicture(
+        previous: StrategicPostureMemory,
+        observation: AgentObservation,
+    ): LastKnownRivalPicture {
+        val visibleRivalCities = observation.visibleThreatsAndTargets
+            .filter { it.kind == "city" && it.civName != observation.civName }
+        val nearestVisibleCity = visibleRivalCities.minWithOrNull(
+            compareBy<VisibleTargetObservation> { it.distanceToClosestUnit ?: Int.MAX_VALUE }
+                .thenBy { it.distanceToClosestCity ?: Int.MAX_VALUE }
+                .thenBy { it.name }
+        )
+        val nearestVisibleCapital = visibleRivalCities
+            .filter { it.facts.any { fact -> fact.equals("Capital", ignoreCase = true) } }
+            .minWithOrNull(
+                compareBy<VisibleTargetObservation> { it.distanceToClosestUnit ?: Int.MAX_VALUE }
+                    .thenBy { it.distanceToClosestCity ?: Int.MAX_VALUE }
+                    .thenBy { it.name }
+            )
+        return LastKnownRivalPicture(
+            rivalCityName = nearestVisibleCity?.name ?: previous.lastKnownRivalCityName,
+            rivalCityX = nearestVisibleCity?.x ?: previous.lastKnownRivalCityX,
+            rivalCityY = nearestVisibleCity?.y ?: previous.lastKnownRivalCityY,
+            rivalCapitalName = nearestVisibleCapital?.name ?: previous.lastKnownRivalCapitalName,
+            rivalCapitalX = nearestVisibleCapital?.x ?: previous.lastKnownRivalCapitalX,
+            rivalCapitalY = nearestVisibleCapital?.y ?: previous.lastKnownRivalCapitalY,
+        )
+    }
+
     private fun roadmapDrivenStrategicPosture(
         previous: StrategicPostureMemory,
         roadmap: AgentStrategicRoadmapMemory,
@@ -331,6 +368,7 @@ object AgentMemoryManager {
         turn: Int,
     ): StrategicPostureMemory {
         val primaryThreat = empireObservation.victoryThreats.firstOrNull()
+        val lastKnownRivalPicture = resolveLastKnownRivalPicture(previous, observation)
         val mode = when {
             observation.empireSummary.visibleHostileUnits > 0 ||
                 observation.cities.any { it.state.nearbyHostileUnits > 0 || it.state.nearbyHostileCities > 0 } -> "defend_and_stabilize"
@@ -341,13 +379,14 @@ object AgentMemoryManager {
             else -> previous.mode.ifBlank { "stabilize_empire" }
         }
         val narrativeCommitments = buildList {
+            roadmap.tacticianHandoff?.takeIf { it.isNotBlank() }?.let { add(it) }
             roadmap.futurePlan?.takeIf { it.isNotBlank() }?.let { add(it) }
             roadmap.currentSituation?.takeIf { it.isNotBlank() }?.let { add(it) }
         }.take(3)
         val focusSource = previous.copy(
             doctrine = roadmap.doctrine,
             victoryGoal = roadmap.winPath,
-            turnThesis = roadmap.futurePlan ?: roadmap.thesis,
+            turnThesis = roadmap.tacticianHandoff ?: roadmap.futurePlan ?: roadmap.thesis,
             commitments = ArrayList(narrativeCommitments),
             watchOuts = ArrayList(emptyList()),
         )
@@ -360,12 +399,18 @@ object AgentMemoryManager {
             victoryGoal = roadmap.winPath ?: empireObservation.victoryGoal ?: previous.victoryGoal,
             rivalCiv = primaryThreat?.civName ?: previous.rivalCiv,
             rivalVictoryGoal = primaryThreat?.likelyVictoryType ?: previous.rivalVictoryGoal,
-            turnThesis = roadmap.futurePlan ?: roadmap.thesis ?: previous.turnThesis,
+            turnThesis = roadmap.tacticianHandoff ?: roadmap.futurePlan ?: roadmap.thesis ?: previous.turnThesis,
             commitments = ArrayList(narrativeCommitments),
             watchOuts = ArrayList(
                 (listOfNotNull(primaryThreat?.takeIf { it.threatLevel == "critical" }?.let { "${it.civName} is an urgent rival." }))
                     .take(3)
             ),
+            lastKnownRivalCityName = lastKnownRivalPicture.rivalCityName,
+            lastKnownRivalCityX = lastKnownRivalPicture.rivalCityX,
+            lastKnownRivalCityY = lastKnownRivalPicture.rivalCityY,
+            lastKnownRivalCapitalName = lastKnownRivalPicture.rivalCapitalName,
+            lastKnownRivalCapitalX = lastKnownRivalPicture.rivalCapitalX,
+            lastKnownRivalCapitalY = lastKnownRivalPicture.rivalCapitalY,
             sinceTurn = if (previous.doctrine == roadmap.doctrine && previous.sinceTurn > 0) previous.sinceTurn else turn,
             lastUpdatedTurn = turn,
         )
@@ -379,6 +424,7 @@ object AgentMemoryManager {
         turn: Int,
     ): StrategicPostureMemory {
         val primaryThreat = empireObservation.victoryThreats.firstOrNull()
+        val lastKnownRivalPicture = resolveLastKnownRivalPicture(previous, observation)
         val mode = when {
             observation.empireSummary.visibleHostileUnits > 0 ||
                 observation.cities.any { it.state.nearbyHostileUnits > 0 || it.state.nearbyHostileCities > 0 } -> "defend_and_stabilize"
@@ -413,6 +459,12 @@ object AgentMemoryManager {
                     primaryThreat?.takeIf { it.threatLevel == "critical" }?.let { "${it.civName} is an urgent rival." },
                 ).take(3),
             ),
+            lastKnownRivalCityName = lastKnownRivalPicture.rivalCityName,
+            lastKnownRivalCityX = lastKnownRivalPicture.rivalCityX,
+            lastKnownRivalCityY = lastKnownRivalPicture.rivalCityY,
+            lastKnownRivalCapitalName = lastKnownRivalPicture.rivalCapitalName,
+            lastKnownRivalCapitalX = lastKnownRivalPicture.rivalCapitalX,
+            lastKnownRivalCapitalY = lastKnownRivalPicture.rivalCapitalY,
             sinceTurn = if (mode == previous.mode && previous.sinceTurn > 0) previous.sinceTurn else turn,
             lastUpdatedTurn = turn,
         )
@@ -425,13 +477,12 @@ object AgentMemoryManager {
         plan: AgentActionPlan?,
     ): ArrayList<String> {
         val focus = linkedSetOf<String>()
-        previous.doctrine?.takeIf { it.isNotBlank() }?.let { focus += "Doctrine: $it" }
         empireObservation.victoryGoal?.let { goal ->
-            focus += "Pursue $goal victory"
+            focus += "Playing for $goal victory."
         }
         empireObservation.victoryThreats.firstOrNull()?.let { threat ->
-            val prefix = if (threat.threatLevel == "critical") "Urgent" else "Watch"
-            focus += "$prefix ${threat.civName} ${threat.likelyVictoryType.lowercase()} push"
+            val prefix = if (threat.threatLevel == "critical") "Urgent:" else "Main rival:"
+            focus += "$prefix ${threat.civName} is on a ${threat.likelyVictoryType.lowercase()} path."
         }
         observation.priorityFacts.take(1).forEach { focus += it.headline }
         observation.opportunities.take(1).forEach { focus += it.headline }
@@ -444,183 +495,6 @@ object AgentMemoryManager {
             ?.takeIf { it.isNotEmpty() && shouldPersistStrategicFocusNote(it) }
             ?.let { focus += it.take(120) }
         return ArrayList(focus.take(4))
-    }
-
-    private data class DoctrineSnapshot(
-        val doctrine: String,
-        val phase: String,
-    )
-
-    private data class StrategicMemo(
-        val thesis: String?,
-        val commitments: List<String>,
-        val watchOuts: List<String>,
-    )
-
-    private fun chooseDoctrine(
-        previous: StrategicPostureMemory,
-        observation: AgentObservation,
-        empireObservation: AgentEmpireObservation,
-        turn: Int,
-    ): DoctrineSnapshot {
-        val primaryThreat = empireObservation.victoryThreats.firstOrNull()
-        val gameContext = empireObservation.gameContext
-        val proposed = when {
-            observation.empireSummary.isAtWar || observation.empireSummary.visibleHostileUnits > 0 -> "war_execution"
-            gameContext.duelLike && gameContext.mapType.equals("Pangaea", ignoreCase = true) && turn < 150 -> "duel_expansion_then_pressure"
-            primaryThreat?.threatLevel == "critical" && primaryThreat.likelyVictoryType.equals("Scientific", ignoreCase = true) -> "deny_rival_science"
-            primaryThreat?.threatLevel == "critical" && primaryThreat.likelyVictoryType.equals("Cultural", ignoreCase = true) -> "deny_rival_culture"
-            primaryThreat?.threatLevel == "critical" && primaryThreat.likelyVictoryType.equals("Domination", ignoreCase = true) -> "deny_rival_domination"
-            empireObservation.victoryGoal.equals("Scientific", ignoreCase = true) ->
-                if (primaryThreat?.threatLevel == "critical") "science_race_with_military_floor" else "science_race"
-            empireObservation.victoryGoal.equals("Cultural", ignoreCase = true) -> "culture_push"
-            empireObservation.victoryGoal.equals("Domination", ignoreCase = true) -> "domination_build_up"
-            empireObservation.victoryGoal.equals("Diplomatic", ignoreCase = true) -> "diplomatic_setup"
-            else -> previous.doctrine ?: previous.mode.ifBlank { "stabilize_empire" }
-        }
-
-        val doctrine = when {
-            previous.doctrine.isNullOrBlank() -> proposed
-            previous.doctrine == proposed -> proposed
-            shouldSwitchDoctrine(previous, proposed, observation, empireObservation, turn) -> proposed
-            else -> previous.doctrine
-        }.orEmpty()
-
-        return DoctrineSnapshot(
-            doctrine = doctrine,
-            phase = chooseDoctrinePhase(doctrine, observation, empireObservation, turn),
-        )
-    }
-
-    private fun shouldSwitchDoctrine(
-        previous: StrategicPostureMemory,
-        proposed: String,
-        observation: AgentObservation,
-        empireObservation: AgentEmpireObservation,
-        turn: Int,
-    ): Boolean {
-        val current = previous.doctrine.orEmpty()
-        if (current.isBlank()) return true
-        if (current == proposed) return true
-        if (turn - previous.lastUpdatedTurn >= doctrineReviewCadenceTurns) return true
-        if (observation.empireSummary.isAtWar && !current.contains("war")) return true
-        if (empireObservation.gameContext.contactComplete && current.contains("scout")) return true
-        val primaryThreat = empireObservation.victoryThreats.firstOrNull()
-        if (primaryThreat?.threatLevel == "critical" && !current.startsWith("deny_rival_") && !current.contains("military")) return true
-        return false
-    }
-
-    private fun chooseDoctrinePhase(
-        doctrine: String,
-        observation: AgentObservation,
-        empireObservation: AgentEmpireObservation,
-        turn: Int,
-    ): String {
-        val desiredCityFloor = desiredCityFloor(empireObservation.gameContext, turn)
-        return when {
-            turn < 60 -> "opener"
-            observation.empireSummary.cityCount < desiredCityFloor -> "expand"
-            empireObservation.victoryThreats.firstOrNull()?.threatLevel == "critical" -> "contest_rival"
-            doctrine.contains("war") || doctrine.contains("domination") -> "pressure"
-            doctrine.contains("science") || doctrine.contains("culture") -> "conversion"
-            else -> "stabilize"
-        }
-    }
-
-    private fun buildStrategicMemo(
-        doctrineSnapshot: DoctrineSnapshot,
-        observation: AgentObservation,
-        empireObservation: AgentEmpireObservation,
-    ): StrategicMemo {
-        val primaryThreat = empireObservation.victoryThreats.firstOrNull()
-        val gameContext = empireObservation.gameContext
-        val commitments = linkedSetOf<String>()
-        val watchOuts = linkedSetOf<String>()
-        val desiredCityFloor = desiredCityFloor(gameContext, observation.turn)
-
-        if (gameContext.duelLike) {
-            commitments += "Treat this as a known-rival duel and prioritize tempo over broad diplomacy."
-        }
-        if (observation.empireSummary.cityCount < desiredCityFloor) {
-            commitments += "Grow toward at least $desiredCityFloor productive cities if land is still available."
-        }
-        if (hasThinMilitaryCoverage(observation, empireObservation.gameContext)) {
-            commitments += "Keep enough military coverage for the current cities and contact state before more worker polish."
-        }
-        if (hasHighGoldReserve(empireObservation)) {
-            commitments += "Convert spare gold into city tempo, upgrades, or other immediate gains."
-        }
-        if (gameContext.contactComplete) {
-            watchOuts += "Contact is already complete; extra scouting has lower value now."
-        }
-        if (primaryThreat != null) {
-            watchOuts += "${primaryThreat.civName} is the main rival on a ${primaryThreat.likelyVictoryType.lowercase()} path."
-        }
-        if (observation.priorityFacts.count { it.category == "tiles" } >= 3) {
-            watchOuts += "Do not let worker upkeep crowd out higher-leverage empire actions."
-        }
-
-        val thesis = when (doctrineSnapshot.doctrine) {
-            "duel_expansion_then_pressure" -> "Use the small duel map to turn expansion and production into pressure on the only rival."
-            "science_race", "science_race_with_military_floor" ->
-                "Convert the empire into a consistent science race while keeping enough force to contest the rival."
-            "culture_push" -> "Keep the culture race coherent, but do not ignore military or expansion floors."
-            "domination_build_up", "deny_rival_domination" -> "Turn production, positioning, and solid military coverage into decisive pressure on the rival."
-            "deny_rival_science" -> "Slow the rival science snowball while converting our own cities and gold into catch-up tempo."
-            "deny_rival_culture" -> "Contest the rival cultural lead with stronger empire tempo and enough force to punish greed."
-            "war_execution" -> "Execute wartime priorities cleanly and stop low-value peacetime upkeep from stealing attention."
-            else -> "Keep the empire on a coherent win path instead of reacting only to local upkeep."
-        }
-
-        return StrategicMemo(
-            thesis = thesis,
-            commitments = commitments.take(4),
-            watchOuts = watchOuts.take(3),
-        )
-    }
-
-    private fun desiredCityFloor(gameContext: AgentPublicGameContextObservation, turn: Int): Int {
-        return when {
-            gameContext.duelLike && gameContext.mapSize == "Tiny" && turn >= 120 -> 4
-            gameContext.duelLike && gameContext.mapSize == "Tiny" -> 3
-            gameContext.expansionWindow == "narrow" -> 4
-            gameContext.expansionWindow == "medium" -> 5
-            else -> 6
-        }
-    }
-
-    private fun hasThinMilitaryCoverage(
-        observation: AgentObservation,
-        gameContext: AgentPublicGameContextObservation,
-    ): Boolean {
-        val cityCount = observation.empireSummary.cityCount
-        if (cityCount <= 0) return false
-        var desiredCoverage = cityCount
-        if (observation.empireSummary.isAtWar) desiredCoverage += 1
-        else if (gameContext.contactComplete && cityCount >= 2) desiredCoverage += 1
-        return observation.empireSummary.militaryUnitCount < desiredCoverage
-    }
-
-    private fun hasHighGoldReserve(empireObservation: AgentEmpireObservation): Boolean {
-        return empireObservation.gold >= 1000 &&
-            empireObservation.macroCandidates.any { it.candidateId == "macro:gold:auto" }
-    }
-
-    private fun victoryMode(victoryGoal: String?, victoryFocus: String?): String? {
-        return when (victoryGoal?.lowercase()) {
-            "scientific" -> "science_race"
-            "cultural" -> "culture_push"
-            "domination" -> "domination_build_up"
-            "diplomatic" -> "diplomatic_setup"
-            else -> when (victoryFocus?.lowercase()) {
-                "science" -> "science_race"
-                "culture" -> "culture_push"
-                "military" -> "domination_build_up"
-                "citystates", "gold" -> "diplomatic_setup"
-                "faith" -> "faith_push"
-                else -> null
-            }
-        }
     }
 
     private fun buildRecentFailures(

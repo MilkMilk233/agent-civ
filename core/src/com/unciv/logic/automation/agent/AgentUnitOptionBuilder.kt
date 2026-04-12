@@ -108,7 +108,13 @@ object AgentUnitOptionBuilder {
                             ?: return@AgentUnitRuntimeCandidate "Unit option rejected: unit missing"
                         val liveTarget = currentCiv.gameInfo.tileMap[HexCoord(targetTile.position.x, targetTile.position.y)]
                         if (!liveUnit.hasMovement()) return@AgentUnitRuntimeCandidate "Unit option rejected: unit has no movement left"
-                        if (!isGoodTileToExplore(liveUnit, liveTarget, liveUnit.getVisibilityRange())) {
+                        if (liveUnit.getTile() == liveTarget) {
+                            return@AgentUnitRuntimeCandidate "Unit option rejected: frontier move would not change position"
+                        }
+                        if (!liveUnit.movement.canMoveTo(liveTarget)) {
+                            return@AgentUnitRuntimeCandidate "Unit option rejected: frontier tile is no longer enterable"
+                        }
+                        if (!liveUnit.movement.canReach(liveTarget) && liveUnit.movement.getShortestPath(liveTarget).isEmpty()) {
                             return@AgentUnitRuntimeCandidate "Unit option rejected: frontier move is no longer attractive or reachable"
                         }
                         null

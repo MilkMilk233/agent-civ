@@ -6,6 +6,8 @@ import kotlinx.serialization.Serializable
 data class AgentPlannerBrief(
     val gameContext: AgentPublicGameContextObservation,
     val doctrine: AgentPlannerDoctrineObservation,
+    val campaignContext: AgentPlannerCampaignContextObservation? = null,
+    val mustActNow: List<AgentPlannerMustActObservation> = emptyList(),
     val attentionFacts: List<ObservationFact>,
     val progressInMotion: List<AgentPlannerProgressObservation>,
     val empireChoices: AgentPlannerEmpireChoicesObservation,
@@ -27,6 +29,30 @@ data class AgentPlannerDoctrineObservation(
     val pastSummary: String? = null,
     val currentSituation: String? = null,
     val futurePlan: String? = null,
+    val tacticianHandoff: String? = null,
+)
+
+@Serializable
+data class AgentPlannerCampaignContextObservation(
+    val primaryRivalCiv: String? = null,
+    val atWar: Boolean,
+    val warChoiceAvailable: Boolean,
+    val visibleRivalCities: Int,
+    val visibleRivalUnits: Int,
+    val visibleTarget: AgentStrategistTargetReference? = null,
+    val visibleCapital: AgentStrategistTargetReference? = null,
+    val lastKnownTarget: AgentStrategistTargetReference? = null,
+    val lastKnownCapital: AgentStrategistTargetReference? = null,
+    val frontlineFriendlyCombatUnits: Int = 0,
+    val meleeUnitsNearObjective: Int = 0,
+    val rangedUnitsNearObjective: Int = 0,
+)
+
+@Serializable
+data class AgentPlannerMustActObservation(
+    val kind: String,
+    val headline: String,
+    val detail: String,
 )
 
 @Serializable

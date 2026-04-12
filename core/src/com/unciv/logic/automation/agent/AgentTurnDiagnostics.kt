@@ -12,15 +12,6 @@ enum class AgentControlDomain(val wireName: String) {
     ;
 
     companion object {
-        fun fromPlanAction(action: AgentActionCommand): AgentControlDomain? = when (action) {
-            is AgentActionCommand.SelectEmpireOption -> fromEmpireCandidateId(action.candidateId)
-            is AgentActionCommand.SelectCityOption -> City
-            is AgentActionCommand.SelectUnitOption,
-            is AgentActionCommand.UnitMove,
-            is AgentActionCommand.UnitAction -> Unit
-            is AgentActionCommand.EndTurn -> null
-        }
-
         fun fromOutcome(
             commandType: String,
             candidateId: String?,

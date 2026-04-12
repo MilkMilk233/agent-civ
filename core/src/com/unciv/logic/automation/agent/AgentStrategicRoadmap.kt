@@ -13,6 +13,7 @@ data class AgentStrategicRoadmapMemory(
     var pastSummary: String? = null,
     var currentSituation: String? = null,
     var futurePlan: String? = null,
+    var tacticianHandoff: String? = null,
     var reviewCityCount: Int = 0,
     var reviewMilitaryUnitCount: Int = 0,
     var reviewIsAtWar: Boolean = false,
@@ -27,7 +28,7 @@ data class AgentStrategicRoadmapMemory(
     var lastReviewedTurn: Int = 0,
     var lastRefreshReason: String? = null,
 ) : IsPartOfGameInfoSerialization {
-    constructor() : this("", "", null, "", null, null, null, null, 0, 0, false, false, null, 0, 0, null, arrayListOf(), 0, 0, 0, null)
+    constructor() : this("", "", null, "", null, null, null, null, null, 0, 0, false, false, null, 0, 0, null, arrayListOf(), 0, 0, 0, null)
 }
 
 @Serializable
@@ -45,6 +46,7 @@ data class AgentStrategicRoadmapDraft(
     val pastSummary: String? = null,
     val currentSituation: String? = null,
     val futurePlan: String? = null,
+    val tacticianHandoff: String? = null,
     val reviewInTurns: Int = 5,
 )
 

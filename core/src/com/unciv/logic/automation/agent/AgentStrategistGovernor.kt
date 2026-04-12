@@ -124,6 +124,7 @@ object AgentStrategistGovernor {
             pastSummary = roadmap.pastSummary,
             currentSituation = roadmap.currentSituation,
             futurePlan = roadmap.futurePlan,
+            tacticianHandoff = roadmap.tacticianHandoff,
         )
     }
 

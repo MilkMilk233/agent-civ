@@ -32,6 +32,7 @@ data class AgentStrategistReportMemo(
     val pastSummary: String? = null,
     val currentSituation: String? = null,
     val futurePlan: String? = null,
+    val tacticianHandoff: String? = null,
 )
 
 @Serializable
