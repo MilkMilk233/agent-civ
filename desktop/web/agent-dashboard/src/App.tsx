@@ -497,9 +497,23 @@ function TurnDetail({
   const hiddenUnits = Math.max(0, (numberValue(perceptionSummary?.totalUnits) ?? unitHighlights.length) - unitHighlights.length);
   const hiddenThreats = Math.max(0, arrayLength(observation?.visibleThreatsAndTargets) - threatHighlights.length);
   const memoryRecord = asRecord(turn.memory);
+  const worldModelMemory = asRecord(memoryRecord?.worldModel);
+  const rivalMemories = objectArray(memoryRecord?.rivals);
+  const campaignMemory = asRecord(memoryRecord?.campaign);
+  const empirePlanMemory = asRecord(memoryRecord?.empirePlan);
+  const recentChangesMemory = objectArray(memoryRecord?.recentChanges);
+  const lessonsMemory = objectArray(memoryRecord?.lessons);
+  const lastStrategistMemoMemory = asRecord(memoryRecord?.lastStrategistMemo);
+  const worldModelNotes = objectArray(worldModelMemory?.notes);
+  const worldModelAnchors = objectArray(worldModelMemory?.anchors);
+  const campaignNotes = objectArray(campaignMemory?.notes);
+  const empirePlanNotes = objectArray(empirePlanMemory?.notes);
   const memoryCityIntents = arrayLength(memoryRecord?.cityIntents);
   const memoryUnitAssignments = arrayLength(memoryRecord?.unitAssignments);
   const memoryRecentFailures = arrayLength(memoryRecord?.recentFailures);
+  const cityIntentsMemory = objectArray(memoryRecord?.cityIntents);
+  const unitAssignmentsMemory = objectArray(memoryRecord?.unitAssignments);
+  const recentFailuresMemory = objectArray(memoryRecord?.recentFailures);
 
   return (
     <div className="detail-stack">
@@ -599,6 +613,7 @@ function TurnDetail({
 
       <TurnSectionNav
         items={[
+          { id: "section-memory", label: "Memory" },
           { id: "section-strategist-input", label: "Strategist saw" },
           { id: "section-strategist-output", label: "Strategist output" },
           { id: "section-perception", label: "Tactician saw" },
@@ -607,6 +622,120 @@ function TurnDetail({
           { id: "section-events", label: "Events" },
         ]}
       />
+
+      <SectionShell
+        id="section-memory"
+        eyebrow="Memory"
+        title="What's in the memory"
+        body="This is the shared notebook carried into the turn before any new strategist or tactical inference. It shows the durable world model, campaign notes, rival notes, and carried intents/failures."
+      >
+        <div className="reading-flow">
+          <Card title="Memory overview" subtitle="High-level shape of the notebook the agent brought into this turn.">
+            <div className="summary-grid compact">
+              <SummaryStat label="World notes" value={formatNumber(worldModelNotes.length)} note={`${formatNumber(worldModelAnchors.length)} anchors`} />
+              <SummaryStat label="Rival notebooks" value={formatNumber(rivalMemories.length)} />
+              <SummaryStat label="Campaign notes" value={formatNumber(campaignNotes.length)} note={`${formatNumber(stringList(campaignMemory?.doNotDo).length)} cautions`} />
+              <SummaryStat label="Empire notes" value={formatNumber(empirePlanNotes.length)} />
+              <SummaryStat label="Recent changes" value={formatNumber(recentChangesMemory.length)} />
+              <SummaryStat label="Lessons" value={formatNumber(lessonsMemory.length)} />
+              <SummaryStat label="City intents" value={formatNumber(cityIntentsMemory.length)} />
+              <SummaryStat label="Unit assignments" value={formatNumber(unitAssignmentsMemory.length)} />
+              <SummaryStat label="Recent failures" value={formatNumber(recentFailuresMemory.length)} />
+              <SummaryStat label="Last memo review" value={formatNumber(numberValue(lastStrategistMemoMemory?.lastReviewedTurn))} />
+            </div>
+          </Card>
+
+          <Card title="World model" subtitle="What the agent currently believes about the map and board-level reality across turns.">
+            {worldModelMemory ? (
+              <>
+                {stringValue(worldModelMemory.summary) ? <p className="card-paragraph">{stringValue(worldModelMemory.summary)}</p> : null}
+                <div className="summary-grid compact">
+                  <SummaryStat label="Last updated" value={formatNumber(numberValue(worldModelMemory.lastUpdatedTurn))} />
+                  <SummaryStat label="Notes" value={formatNumber(worldModelNotes.length)} />
+                  <SummaryStat label="Anchors" value={formatNumber(worldModelAnchors.length)} />
+                </div>
+                <MemoryNotesSection title="World notes" notes={worldModelNotes} />
+                <MemoryAnchorsSection title="World anchors" anchors={worldModelAnchors} />
+              </>
+            ) : (
+              <EmptyCardState title="No world model" body="No world-model notebook was stored for this turn." />
+            )}
+          </Card>
+
+          <div className="reading-flow">
+            <Card title="Campaign notebook" subtitle="What operation the agent thinks it is running right now.">
+              {campaignMemory ? (
+                <>
+                  <div className="summary-grid compact">
+                    <SummaryStat label="Title" value={stringValue(campaignMemory.title) || "—"} />
+                    <SummaryStat label="Stage" value={stringValue(campaignMemory.stage) || "—"} />
+                    <SummaryStat label="Objective" value={stringValue(campaignMemory.objective) || "—"} />
+                    <SummaryStat label="Primary rival" value={stringValue(campaignMemory.primaryRivalCiv) || "—"} />
+                  </div>
+                  {stringValue(campaignMemory.summary) ? <p className="card-paragraph">{stringValue(campaignMemory.summary)}</p> : null}
+                  {stringValue(campaignMemory.reinforcementPlan) ? (
+                    <>
+                      <SectionLabel text="Reinforcement plan" />
+                      <p className="card-paragraph">{stringValue(campaignMemory.reinforcementPlan)}</p>
+                    </>
+                  ) : null}
+                  {stringList(campaignMemory.doNotDo).length ? (
+                    <>
+                      <SectionLabel text="Do not do" />
+                      <TagList values={stringList(campaignMemory.doNotDo)} tone="warning" />
+                    </>
+                  ) : null}
+                  <MemoryNotesSection title="Campaign notes" notes={campaignNotes} embedded />
+                </>
+              ) : (
+                <EmptyCardState title="No campaign notebook" body="No campaign memory was stored for this turn." />
+              )}
+            </Card>
+
+            <Card title="Empire plan notebook" subtitle="How the empire's production and purchases are supposed to support the current game plan.">
+              {empirePlanMemory ? (
+                <>
+                  {stringValue(empirePlanMemory.summary) ? <p className="card-paragraph">{stringValue(empirePlanMemory.summary)}</p> : null}
+                  {stringValue(empirePlanMemory.purchaseIntent) ? (
+                    <>
+                      <SectionLabel text="Purchase intent" />
+                      <p className="card-paragraph">{stringValue(empirePlanMemory.purchaseIntent)}</p>
+                    </>
+                  ) : null}
+                  <MemoryNotesSection title="Empire notes" notes={empirePlanNotes} embedded />
+                </>
+              ) : (
+                <EmptyCardState title="No empire plan" body="No empire-plan notebook was stored for this turn." />
+              )}
+            </Card>
+          </div>
+
+          <RivalNotebookSection rivals={rivalMemories} />
+
+          <div className="reading-flow">
+            <MemoryNotesCard
+              title="Recent changes"
+              subtitle="What changed recently enough to still matter as context."
+              notes={recentChangesMemory}
+              emptyTitle="No recent changes"
+              emptyBody="No recent change notes were carried into this turn."
+            />
+            <MemoryNotesCard
+              title="Lessons and cautions"
+              subtitle="Short reminders of what not to repeat."
+              notes={lessonsMemory}
+              emptyTitle="No lessons"
+              emptyBody="No lessons or cautions were carried into this turn."
+            />
+          </div>
+
+          <div className="reading-flow">
+            <CityIntentMemorySection intents={cityIntentsMemory} />
+            <UnitAssignmentMemorySection assignments={unitAssignmentsMemory} />
+            <RecentFailureMemorySection failures={recentFailuresMemory} />
+          </div>
+        </div>
+      </SectionShell>
 
       <SectionShell
         id="section-strategist-input"
@@ -922,6 +1051,225 @@ function EmptyCardState({
       <strong>{title}</strong>
       <p>{body}</p>
     </div>
+  );
+}
+
+function MemoryNotesSection({
+  title,
+  notes,
+  embedded = false,
+}: {
+  title: string;
+  notes: Record<string, unknown>[];
+  embedded?: boolean;
+}) {
+  if (!notes.length) return null;
+
+  const content = (
+    <div className="structured-list">
+      {notes.map((note, index) => (
+        <article key={`${stringValue(note.text)}-${index}`} className="structured-item">
+          <div className="structured-item-header">
+            <strong>{stringValue(note.text) || "Untitled memory note"}</strong>
+            <div className="tag-list compact">
+              {stringValue(note.kind) ? <span className="tag neutral">{stringValue(note.kind)}</span> : null}
+              {stringValue(note.topic) ? <span className="tag neutral">{stringValue(note.topic)}</span> : null}
+              {stringValue(note.confidence) ? <span className="tag neutral">{stringValue(note.confidence)}</span> : null}
+            </div>
+          </div>
+          {formatMemoryNoteMeta(note) ? <p className="mini-note">{formatMemoryNoteMeta(note)}</p> : null}
+        </article>
+      ))}
+    </div>
+  );
+
+  if (embedded) {
+    return (
+      <>
+        <SectionLabel text={title} />
+        {content}
+      </>
+    );
+  }
+
+  return <Card title={title}>{content}</Card>;
+}
+
+function MemoryAnchorsSection({
+  title,
+  anchors,
+}: {
+  title: string;
+  anchors: Record<string, unknown>[];
+}) {
+  if (!anchors.length) return null;
+  return (
+    <>
+      <SectionLabel text={title} />
+      <div className="structured-list">
+        {anchors.map((anchor, index) => (
+          <article key={`${stringValue(anchor.label)}-${index}`} className="structured-item">
+            <div className="structured-item-header">
+              <strong>{stringValue(anchor.label) || "Untitled anchor"}</strong>
+              <div className="tag-list compact">
+                {stringValue(anchor.kind) ? <span className="tag neutral">{stringValue(anchor.kind)}</span> : null}
+                {stringValue(anchor.civName) ? <span className="tag neutral">{stringValue(anchor.civName)}</span> : null}
+              </div>
+            </div>
+            <p className="mini-note">
+              {formatAnchorLocation(anchor)}
+              {formatAnchorLocation(anchor) && formatAnchorTurns(anchor) ? " · " : ""}
+              {formatAnchorTurns(anchor)}
+            </p>
+          </article>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function MemoryNotesCard({
+  title,
+  subtitle,
+  notes,
+  emptyTitle,
+  emptyBody,
+}: {
+  title: string;
+  subtitle: string;
+  notes: Record<string, unknown>[];
+  emptyTitle: string;
+  emptyBody: string;
+}) {
+  return (
+    <Card title={title} subtitle={subtitle}>
+      {notes.length ? (
+        <MemoryNotesSection title={title} notes={notes} embedded />
+      ) : (
+        <EmptyCardState title={emptyTitle} body={emptyBody} />
+      )}
+    </Card>
+  );
+}
+
+function RivalNotebookSection({ rivals }: { rivals: Record<string, unknown>[] }) {
+  return (
+    <Card title="Rival notebooks" subtitle="Per-rival notes and anchors carried across turns.">
+      {rivals.length ? (
+        <div className="structured-list">
+          {rivals.map((rival, index) => {
+            const notes = objectArray(rival.notes);
+            const anchors = objectArray(rival.anchors);
+            return (
+              <article key={`${stringValue(rival.rivalCiv)}-${index}`} className="structured-item">
+                <div className="structured-item-header">
+                  <strong>{stringValue(rival.rivalCiv) || "Unknown rival"}</strong>
+                  <div className="tag-list compact">
+                    <span className="tag neutral">{formatNumber(notes.length)} notes</span>
+                    <span className="tag neutral">{formatNumber(anchors.length)} anchors</span>
+                    <span className="tag neutral">updated {formatNumber(numberValue(rival.lastUpdatedTurn))}</span>
+                  </div>
+                </div>
+                {stringValue(rival.summary) ? <p className="card-paragraph">{stringValue(rival.summary)}</p> : null}
+                <MemoryNotesSection title="Rival notes" notes={notes} embedded />
+                <MemoryAnchorsSection title="Rival anchors" anchors={anchors} />
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <EmptyCardState title="No rival notebooks" body="No rival-specific memory was stored for this turn." />
+      )}
+    </Card>
+  );
+}
+
+function CityIntentMemorySection({ intents }: { intents: Record<string, unknown>[] }) {
+  return (
+    <Card title="City intents" subtitle="Carry-over purpose attached to cities from earlier turns.">
+      {intents.length ? (
+        <div className="structured-list">
+          {intents.map((intent, index) => (
+            <article key={`${stringValue(intent.cityName)}-${index}`} className="structured-item">
+              <div className="structured-item-header">
+                <strong>{stringValue(intent.cityName) || "Unknown city"}</strong>
+                <div className="tag-list compact">
+                  {stringValue(intent.intent) ? <span className="tag neutral">{stringValue(intent.intent)}</span> : null}
+                  {stringValue(intent.target) ? <span className="tag neutral">{stringValue(intent.target)}</span> : null}
+                </div>
+              </div>
+              {stringList(intent.reasons).length ? <p className="card-paragraph">{stringList(intent.reasons).join(" ")}</p> : null}
+              <p className="mini-note">
+                {formatCoordinateText(numberValue(intent.cityX), numberValue(intent.cityY))}
+                {` · last progress ${formatNumber(numberValue(intent.lastProgressTurn))}`}
+                {` · stale after ${formatNumber(numberValue(intent.staleAfterTurn))}`}
+              </p>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <EmptyCardState title="No city intents" body="No city-level intent memory was carried into this turn." />
+      )}
+    </Card>
+  );
+}
+
+function UnitAssignmentMemorySection({ assignments }: { assignments: Record<string, unknown>[] }) {
+  return (
+    <Card title="Unit assignments" subtitle="Carry-over role and target hints attached to units from earlier turns.">
+      {assignments.length ? (
+        <div className="structured-list">
+          {assignments.map((assignment, index) => (
+            <article key={`${stringValue(assignment.unitName)}-${index}`} className="structured-item">
+              <div className="structured-item-header">
+                <strong>{stringValue(assignment.unitName) || `Unit ${formatNumber(numberValue(assignment.unitId))}`}</strong>
+                <div className="tag-list compact">
+                  {stringValue(assignment.role) ? <span className="tag neutral">{stringValue(assignment.role)}</span> : null}
+                  <span className="tag neutral">#{formatNumber(numberValue(assignment.unitId))}</span>
+                </div>
+              </div>
+              {stringValue(assignment.detail) ? <p className="card-paragraph">{stringValue(assignment.detail)}</p> : null}
+              <p className="mini-note">
+                {`target ${formatCoordinateText(numberValue(assignment.targetX), numberValue(assignment.targetY))}`}
+                {` · last progress ${formatNumber(numberValue(assignment.lastProgressTurn))}`}
+                {` · stale after ${formatNumber(numberValue(assignment.staleAfterTurn))}`}
+              </p>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <EmptyCardState title="No unit assignments" body="No unit-assignment memory was carried into this turn." />
+      )}
+    </Card>
+  );
+}
+
+function RecentFailureMemorySection({ failures }: { failures: Record<string, unknown>[] }) {
+  return (
+    <Card title="Recent failures" subtitle="Short memory of plan/execution failures the agent was carrying forward.">
+      {failures.length ? (
+        <div className="structured-list">
+          {failures.map((failure, index) => (
+            <article key={`${stringValue(failure.summary)}-${index}`} className="structured-item">
+              <div className="structured-item-header">
+                <strong>{stringValue(failure.summary) || "Untitled failure"}</strong>
+                <div className="tag-list compact">
+                  {stringValue(failure.kind) ? <span className="tag warning">{stringValue(failure.kind)}</span> : null}
+                  {stringValue(failure.actionType) ? <span className="tag neutral">{stringValue(failure.actionType)}</span> : null}
+                </div>
+              </div>
+              <p className="mini-note">
+                {`turn ${formatNumber(numberValue(failure.turn))}`}
+                {numberValue(failure.unitId) !== null ? ` · unit #${formatNumber(numberValue(failure.unitId))}` : ""}
+                {(numberValue(failure.cityX) !== null || numberValue(failure.cityY) !== null) ? ` · city ${formatCoordinateText(numberValue(failure.cityX), numberValue(failure.cityY))}` : ""}
+              </p>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <EmptyCardState title="No recent failures" body="No recent-failure memory was carried into this turn." />
+      )}
+    </Card>
   );
 }
 
@@ -2172,6 +2520,38 @@ function toneFromSeverity(severity: string): "success" | "warning" | "muted" {
 function nullableNumberText(value: unknown): string {
   const number = numberValue(value);
   return number === null ? "—" : formatNumber(number);
+}
+
+function formatCoordinateText(x: number | null, y: number | null): string {
+  if (x === null || y === null) return "—";
+  return `(${formatNumber(x)}, ${formatNumber(y)})`;
+}
+
+function formatMemoryNoteMeta(note: Record<string, unknown>): string {
+  const parts: string[] = [];
+  if (stringValue(note.civName)) parts.push(stringValue(note.civName));
+  const coordinateText = formatCoordinateText(numberValue(note.x), numberValue(note.y));
+  if (coordinateText !== "—") parts.push(coordinateText);
+  if (numberValue(note.firstTurn) !== null) parts.push(`from turn ${formatNumber(numberValue(note.firstTurn))}`);
+  if (numberValue(note.lastUpdatedTurn) !== null) parts.push(`updated ${formatNumber(numberValue(note.lastUpdatedTurn))}`);
+  if (numberValue(note.staleAfterTurn) !== null) parts.push(`stale after ${formatNumber(numberValue(note.staleAfterTurn))}`);
+  return parts.join(" · ");
+}
+
+function formatAnchorLocation(anchor: Record<string, unknown>): string {
+  const civName = stringValue(anchor.civName);
+  const coordinateText = formatCoordinateText(numberValue(anchor.x), numberValue(anchor.y));
+  if (civName && coordinateText !== "—") return `${civName} ${coordinateText}`;
+  if (civName) return civName;
+  if (coordinateText !== "—") return coordinateText;
+  return "";
+}
+
+function formatAnchorTurns(anchor: Record<string, unknown>): string {
+  const parts: string[] = [];
+  if (numberValue(anchor.firstSeenTurn) !== null) parts.push(`first seen ${formatNumber(numberValue(anchor.firstSeenTurn))}`);
+  if (numberValue(anchor.lastConfirmedTurn) !== null) parts.push(`confirmed ${formatNumber(numberValue(anchor.lastConfirmedTurn))}`);
+  return parts.join(" · ");
 }
 
 function formatDurationMs(value: number | null): string {
