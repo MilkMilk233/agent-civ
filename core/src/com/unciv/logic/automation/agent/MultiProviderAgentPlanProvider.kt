@@ -7,6 +7,7 @@ import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -29,6 +30,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlin.math.min
 
 class MultiProviderAgentPlanProvider(
     private val apiKey: String,
@@ -41,7 +43,13 @@ class MultiProviderAgentPlanProvider(
     private val socketTimeoutMs: Long,
     private val maxAttempts: Int,
     private val retryDelayMs: Long,
-) : AgentPlanProvider {
+    ) : AgentPlanProvider {
+
+    private data class AttemptTimeouts(
+        val requestTimeoutMs: Long,
+        val connectTimeoutMs: Long,
+        val socketTimeoutMs: Long,
+    )
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -362,8 +370,14 @@ class MultiProviderAgentPlanProvider(
         repeat(maxAttempts) { index ->
             attemptsUsed = index + 1
             throwIfCancelled()
+            val attemptTimeouts = timeoutsForAttempt(attemptsUsed)
             try {
                 val response = client.post(url) {
+                    timeout {
+                        requestTimeoutMillis = attemptTimeouts.requestTimeoutMs
+                        connectTimeoutMillis = attemptTimeouts.connectTimeoutMs
+                        socketTimeoutMillis = attemptTimeouts.socketTimeoutMs
+                    }
                     header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
                     if (useBearerToken) header(HttpHeaders.Authorization, "Bearer $apiKey")
                     for ((name, value) in extraHeaders) header(name, value)
@@ -377,14 +391,17 @@ class MultiProviderAgentPlanProvider(
 
                 val shouldRetry = attemptsUsed < maxAttempts && response.status.value.let { it == 429 || it >= 500 }
                 if (shouldRetry) {
+                    val delayMs = retryDelayForAttempt(attemptsUsed)
                     Log.debug(
-                        "AI (agent): provider returned %s on attempt %s/%s, retrying url=%s",
+                        "AI (agent): provider returned %s on attempt %s/%s, retrying url=%s timeout=%s nextDelay=%s",
                         response.status,
                         attemptsUsed,
                         maxAttempts,
                         url,
+                        attemptTimeouts.requestTimeoutMs,
+                        delayMs,
                     )
-                    delay(retryDelayMs)
+                    delay(delayMs)
                     return@repeat
                 }
 
@@ -400,9 +417,9 @@ class MultiProviderAgentPlanProvider(
                         "provider" to provider.name,
                         "model" to resolveModelForRequest(eventPrefix),
                         "attempts" to attemptsUsed.toString(),
-                        "requestTimeoutMs" to requestTimeoutMs.toString(),
-                        "connectTimeoutMs" to connectTimeoutMs.toString(),
-                        "socketTimeoutMs" to socketTimeoutMs.toString(),
+                        "requestTimeoutMs" to attemptTimeouts.requestTimeoutMs.toString(),
+                        "connectTimeoutMs" to attemptTimeouts.connectTimeoutMs.toString(),
+                        "socketTimeoutMs" to attemptTimeouts.socketTimeoutMs.toString(),
                     ),
                 )
                 return null
@@ -412,14 +429,17 @@ class MultiProviderAgentPlanProvider(
                 }
                 lastException = ex
                 if (attemptsUsed < maxAttempts) {
+                    val delayMs = retryDelayForAttempt(attemptsUsed)
                     Log.debug(
-                        "AI (agent): provider request failed on attempt %s/%s, retrying url=%s",
+                        "AI (agent): provider request failed on attempt %s/%s, retrying url=%s timeout=%s nextDelay=%s",
                         attemptsUsed,
                         maxAttempts,
                         url,
+                        attemptTimeouts.requestTimeoutMs,
+                        delayMs,
                     )
                     Log.debug("AI (agent): provider exception", ex)
-                    delay(retryDelayMs)
+                    delay(delayMs)
                     return@repeat
                 }
             }
@@ -438,13 +458,36 @@ class MultiProviderAgentPlanProvider(
                 "provider" to provider.name,
                 "model" to resolveModelForRequest(eventPrefix),
                 "attempts" to attemptsUsed.toString(),
-                "requestTimeoutMs" to requestTimeoutMs.toString(),
-                "connectTimeoutMs" to connectTimeoutMs.toString(),
-                "socketTimeoutMs" to socketTimeoutMs.toString(),
+                "requestTimeoutMs" to timeoutsForAttempt(attemptsUsed).requestTimeoutMs.toString(),
+                "connectTimeoutMs" to timeoutsForAttempt(attemptsUsed).connectTimeoutMs.toString(),
+                "socketTimeoutMs" to timeoutsForAttempt(attemptsUsed).socketTimeoutMs.toString(),
                 "error" to (ex.message ?: ex::class.simpleName.orEmpty()),
             ),
         )
         return null
+    }
+
+    private fun timeoutsForAttempt(attempt: Int): AttemptTimeouts {
+        if (attempt <= 1) {
+            return AttemptTimeouts(
+                requestTimeoutMs = requestTimeoutMs,
+                connectTimeoutMs = connectTimeoutMs,
+                socketTimeoutMs = socketTimeoutMs,
+            )
+        }
+
+        val relaxedRequestTimeoutMs = maxOf(requestTimeoutMs, relaxedRetryRequestTimeoutMs)
+        return AttemptTimeouts(
+            requestTimeoutMs = relaxedRequestTimeoutMs,
+            connectTimeoutMs = connectTimeoutMs,
+            socketTimeoutMs = maxOf(socketTimeoutMs, relaxedRequestTimeoutMs),
+        )
+    }
+
+    private fun retryDelayForAttempt(attempt: Int): Long {
+        val exponent = (attempt - 1).coerceAtLeast(0)
+        val scaledDelay = retryDelayMs * (1L shl exponent.coerceAtMost(3))
+        return min(scaledDelay, maxRetryDelayMs)
     }
 
     private fun throwIfCancelled() {
@@ -489,8 +532,10 @@ class MultiProviderAgentPlanProvider(
         const val defaultRequestTimeoutMs = 60_000L
         const val defaultConnectTimeoutMs = 10_000L
         const val defaultSocketTimeoutMs = 60_000L
-        const val defaultMaxAttempts = 1
+        const val defaultMaxAttempts = 5
         const val defaultRetryDelayMs = 1_000L
+        const val relaxedRetryRequestTimeoutMs = 120_000L
+        const val maxRetryDelayMs = 8_000L
 
         fun defaultModel(provider: LlmProvider): String = when (provider) {
             LlmProvider.OpenAI -> "gpt-4o-mini"
