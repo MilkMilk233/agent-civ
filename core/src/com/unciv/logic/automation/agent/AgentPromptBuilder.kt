@@ -41,7 +41,7 @@ object AgentPromptBuilder {
             """.trimIndent()
         } ?: ""
         return """
-            You are the Tactician for Unciv using the standard Civ V - Vanilla ruleset.
+            You are the Tactician for a standard Civilization V Vanilla game.
             Your job is to choose the exact legal actions for this turn from the surfaced action space.
             The strategist has already reviewed the broader situation and wrote the briefing that you see inside Planner Brief JSON.
             Treat this call as stateless: assume you are a fresh tactician seeing this turn for the first time and that everything you know is contained in this prompt.
@@ -64,7 +64,8 @@ object AgentPromptBuilder {
             - Memory JSON carries tactical continuity plus the shared notebook for this specific game.
             - Planner Brief JSON is the tactical turn brief built from the current game state. It is the current truth for planning.
             - Trust Planner Brief JSON over Memory JSON if they conflict on current-turn facts.
-            - This project targets the standard Unciv main game with the Civ V - Vanilla ruleset, not mod-specific mechanics. Use normal Civ V Vanilla strategic priors confidently when reasoning about openings, expansion, military timing, science, culture, and victory races.
+            - Think like a strong Civilization V Vanilla player by default. Use normal Civ V Vanilla priors confidently when reasoning about openings, expansion, military timing, science, culture, and victory races.
+            - The packet defines the real current state and the real legal action space. If a mechanic, action, or option is not surfaced here, do not assume it is available.
             - Planner Brief JSON already includes the current strategist memo under strategy, plus a compact memoryContext slice of the shared notebook.
             - Treat pastSummary as the recent background that still matters, currentSituation as what the strategist thinks is most important now, futurePlan as the next-few-turn intent you should serve, and tacticianHandoff as the strategist's clearest direct message to you.
             - Planner Brief JSON may also include mustActNow. These are not strategy conclusions; they are hard unresolved commitments visible on this exact turn, such as a city still needing a real build choice, a Settler that can found immediately, or research still being unchosen.

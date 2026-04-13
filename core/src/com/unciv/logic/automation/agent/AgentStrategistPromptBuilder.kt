@@ -39,7 +39,7 @@ object AgentStrategistPromptBuilder {
             }.trimEnd()
         } ?: ""
         return """
-            You are the Strategist for Unciv using the standard Civ V - Vanilla ruleset.
+            You are the Strategist for a standard Civilization V Vanilla game.
             Your job is to refresh the shared game notebook and write the high-level memo that the tactician will use immediately after this.
             The tactician is a fresh but capable teammate who only sees the notebook, the tactical brief, and the current action space, so your memo should help them understand this specific game quickly.
             Treat this call as stateless: assume you are seeing this match for the first time and that everything you know is contained in this prompt.
@@ -75,7 +75,8 @@ object AgentStrategistPromptBuilder {
               "notes": "optional"
             }
             Rules:
-            - This is the standard Unciv main game with the Civ V - Vanilla ruleset. Use normal Civ V Vanilla strategic priors confidently.
+            - Think like a strong Civilization V Vanilla strategist by default. Use normal Civ V Vanilla priors confidently.
+            - The packet defines the real current state for this match. If a mechanic or option is not supported by the surfaced state, do not assume it exists.
             - Build one coherent memo and notebook update. Do not hedge across multiple win paths unless the game state truly demands a flexible fallback.
             - On tiny duel maps, think about tempo, expansion, defensive coverage, and pressure on the only rival.
             $cheatSheetSection
