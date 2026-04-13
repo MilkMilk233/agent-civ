@@ -7,7 +7,7 @@ object AgentStrategistGovernor {
         empireObservation: AgentEmpireObservation,
         refreshRequest: AgentStrategistRefreshRequest,
     ): AgentStrategistBrief {
-        val currentRoadmap = memory.strategicRoadmap.takeIf { it.doctrine.isNotBlank() }
+        val lastMemo = memory.lastStrategistMemo.takeIf { it.phase.isNotBlank() }
         val rivalCities = buildRivalCitySnapshots(observation)
         val rivalUnits = buildRivalUnitSnapshots(observation)
         val nearestRivalCity = rivalCities.minWithOrNull(
@@ -88,8 +88,7 @@ object AgentStrategistGovernor {
             }
 
         val progressInMotion = AgentStrategicGovernor.buildProgressSummary(memory, observation, empireObservation)
-        val lastStrategistReport = currentRoadmap?.let(::buildLastStrategistReport)
-        val sinceLastReviewFacts = buildSinceLastReviewFacts(currentRoadmap, observation, empireObservation)
+        val lastStrategistMemo = lastMemo?.let(::buildLastStrategistMemo)
         val campaignPicture = buildCampaignPicture(observation, empireObservation, rivalCities, rivalUnits)
 
         return AgentStrategistBrief(
@@ -99,9 +98,19 @@ object AgentStrategistGovernor {
             empireSummary = observation.empireSummary,
             currentResearch = empireObservation.currentResearch,
             currentResearchStatus = empireObservation.currentResearchStatus,
-            currentRoadmap = currentRoadmap,
-            lastStrategistReport = lastStrategistReport,
-            sinceLastReviewFacts = sinceLastReviewFacts,
+            lastStrategistMemo = lastStrategistMemo,
+            worldModel = memory.worldModel.takeIf {
+                !it.summary.isNullOrBlank() || it.notes.isNotEmpty() || it.anchors.isNotEmpty()
+            },
+            rivalNotebooks = memory.rivals.sortedBy { it.rivalCiv },
+            campaign = memory.campaign.takeIf {
+                it.title.isNotBlank() || it.stage.isNotBlank() || !it.summary.isNullOrBlank() || !it.objective.isNullOrBlank()
+            },
+            empirePlan = memory.empirePlan.takeIf {
+                !it.summary.isNullOrBlank() || !it.purchaseIntent.isNullOrBlank() || it.notes.isNotEmpty()
+            },
+            recentChanges = memory.recentChanges.takeLast(6),
+            lessons = memory.lessons.takeLast(6),
             rivalThreats = empireObservation.victoryThreats,
             rivalCities = rivalCities,
             rivalUnits = rivalUnits,
@@ -113,95 +122,18 @@ object AgentStrategistGovernor {
         )
     }
 
-    private fun buildLastStrategistReport(
-        roadmap: AgentStrategicRoadmapMemory,
+    private fun buildLastStrategistMemo(
+        memo: AgentStrategistMemoMemory,
     ): AgentStrategistReportMemo {
         return AgentStrategistReportMemo(
-            doctrine = roadmap.doctrine,
-            phase = roadmap.phase,
-            winPath = roadmap.winPath,
-            thesis = roadmap.thesis,
-            pastSummary = roadmap.pastSummary,
-            currentSituation = roadmap.currentSituation,
-            futurePlan = roadmap.futurePlan,
-            tacticianHandoff = roadmap.tacticianHandoff,
+            phase = memo.phase,
+            winPath = memo.winPath,
+            thesis = memo.thesis,
+            pastSummary = memo.pastSummary,
+            currentSituation = memo.currentSituation,
+            futurePlan = memo.futurePlan,
+            tacticianHandoff = memo.tacticianHandoff,
         )
-    }
-
-    private fun buildSinceLastReviewFacts(
-        roadmap: AgentStrategicRoadmapMemory?,
-        observation: AgentObservation,
-        empireObservation: AgentEmpireObservation,
-    ): List<String> {
-        roadmap ?: return emptyList()
-        if (roadmap.lastReviewedTurn <= 0) return emptyList()
-
-        val facts = buildList {
-            val turnsSinceReview = observation.turn - roadmap.lastReviewedTurn
-            if (turnsSinceReview > 0) {
-                add("Last strategist review was $turnsSinceReview turn${if (turnsSinceReview == 1) "" else "s"} ago.")
-            }
-
-            if (roadmap.reviewCityCount != observation.empireSummary.cityCount) {
-                add("City count changed from ${roadmap.reviewCityCount} to ${observation.empireSummary.cityCount}.")
-            }
-
-            val currentCityNames = observation.cities.map { it.name }.sorted()
-            val foundedCities = currentCityNames - roadmap.reviewCityNames.toSet()
-            val lostCities = roadmap.reviewCityNames.filter { it !in currentCityNames.toSet() }
-            if (foundedCities.isNotEmpty()) {
-                add("Cities founded since review: ${foundedCities.joinToString(", ")}.")
-            }
-            if (lostCities.isNotEmpty()) {
-                add("Cities lost since review: ${lostCities.joinToString(", ")}.")
-            }
-
-            if (roadmap.reviewMilitaryUnitCount != observation.empireSummary.militaryUnitCount) {
-                add("Military unit count changed from ${roadmap.reviewMilitaryUnitCount} to ${observation.empireSummary.militaryUnitCount}.")
-            }
-
-            if (roadmap.reviewIsAtWar != observation.empireSummary.isAtWar) {
-                add(
-                    if (observation.empireSummary.isAtWar)
-                        "The empire entered war since the last strategist review."
-                    else
-                        "The empire returned to peace since the last strategist review."
-                )
-            }
-
-            val contactChanged = roadmap.reviewContactComplete != empireObservation.gameContext.contactComplete
-            if (contactChanged) {
-                add(
-                    if (empireObservation.gameContext.contactComplete)
-                        "Rival contact became complete since the last review."
-                    else
-                        "Rival contact regressed from complete to incomplete since the last review."
-                )
-            }
-
-            val previousResearch = roadmap.reviewResearch
-            val currentResearch = empireObservation.currentResearch
-            if (previousResearch != currentResearch) {
-                add("Research changed from ${previousResearch ?: "none"} to ${currentResearch ?: "none"}.")
-            }
-
-            val currentVisibleRivalCities = observation.visibleThreatsAndTargets.count { it.kind == "city" && it.civName != observation.civName }
-            if (roadmap.reviewVisibleRivalCities != currentVisibleRivalCities) {
-                add("Visible rival cities changed from ${roadmap.reviewVisibleRivalCities} to $currentVisibleRivalCities.")
-            }
-
-            val currentVisibleRivalUnits = observation.visibleThreatsAndTargets.count { it.kind == "unit" && it.civName != observation.civName }
-            if (roadmap.reviewVisibleRivalUnits != currentVisibleRivalUnits) {
-                add("Visible rival units changed from ${roadmap.reviewVisibleRivalUnits} to $currentVisibleRivalUnits.")
-            }
-
-            val currentPrimaryRival = empireObservation.victoryThreats.firstOrNull()?.civName
-                ?: observation.visibleThreatsAndTargets.firstOrNull { it.civName != observation.civName }?.civName
-            if (roadmap.reviewPrimaryRivalCiv != currentPrimaryRival) {
-                add("Primary rival focus changed from ${roadmap.reviewPrimaryRivalCiv ?: "none"} to ${currentPrimaryRival ?: "none"}.")
-            }
-        }
-        return facts.ifEmpty { listOf("No major factual changes were recorded since the last strategist review.") }
     }
 
     private fun buildRivalCitySnapshots(observation: AgentObservation): List<AgentStrategistRivalCitySnapshot> {

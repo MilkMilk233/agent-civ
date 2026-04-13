@@ -5,7 +5,8 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class AgentPlannerBrief(
     val gameContext: AgentPublicGameContextObservation,
-    val doctrine: AgentPlannerDoctrineObservation,
+    val strategy: AgentPlannerStrategyObservation,
+    val memoryContext: AgentPlannerMemoryContextObservation? = null,
     val campaignContext: AgentPlannerCampaignContextObservation? = null,
     val mustActNow: List<AgentPlannerMustActObservation> = emptyList(),
     val attentionFacts: List<ObservationFact>,
@@ -18,18 +19,34 @@ data class AgentPlannerBrief(
 )
 
 @Serializable
-data class AgentPlannerDoctrineObservation(
+data class AgentPlannerStrategyObservation(
     val gameArchetype: String,
-    val doctrine: String,
+    val winPath: String? = null,
     val phase: String,
-    val victoryGoal: String? = null,
-    val rivalCiv: String? = null,
-    val rivalVictoryGoal: String? = null,
     val thesis: String? = null,
     val pastSummary: String? = null,
     val currentSituation: String? = null,
     val futurePlan: String? = null,
     val tacticianHandoff: String? = null,
+)
+
+@Serializable
+data class AgentPlannerMemoryContextObservation(
+    val worldModelSummary: String? = null,
+    val worldModelNotes: List<String> = emptyList(),
+    val mainRivalCiv: String? = null,
+    val mainRivalSummary: String? = null,
+    val mainRivalNotes: List<String> = emptyList(),
+    val campaignTitle: String? = null,
+    val campaignStage: String? = null,
+    val campaignObjective: String? = null,
+    val campaignSummary: String? = null,
+    val reinforcementPlan: String? = null,
+    val campaignDoNotDo: List<String> = emptyList(),
+    val empirePlanSummary: String? = null,
+    val purchaseIntent: String? = null,
+    val recentChanges: List<String> = emptyList(),
+    val lessons: List<String> = emptyList(),
 )
 
 @Serializable

@@ -5,22 +5,52 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 data class AgentMemory(
-    var strategicPosture: StrategicPostureMemory = StrategicPostureMemory(),
-    var strategicRoadmap: AgentStrategicRoadmapMemory = AgentStrategicRoadmapMemory(),
+    var worldModel: WorldModelMemory = WorldModelMemory(),
+    var rivals: ArrayList<RivalNotebookMemory> = arrayListOf(),
+    var campaign: CampaignMemory = CampaignMemory(),
+    var empirePlan: EmpirePlanMemory = EmpirePlanMemory(),
+    var recentChanges: ArrayList<MemoryNote> = arrayListOf(),
+    var lessons: ArrayList<MemoryNote> = arrayListOf(),
+    var lastStrategistMemo: AgentStrategistMemoMemory = AgentStrategistMemoMemory(),
     var cityIntents: ArrayList<CityIntentMemory> = arrayListOf(),
     var unitAssignments: ArrayList<UnitAssignmentMemory> = arrayListOf(),
     var recentFailures: ArrayList<RecentFailureMemory> = arrayListOf(),
 ) : IsPartOfGameInfoSerialization {
-    constructor() : this(StrategicPostureMemory(), AgentStrategicRoadmapMemory(), arrayListOf(), arrayListOf(), arrayListOf())
+    constructor() : this(
+        WorldModelMemory(),
+        arrayListOf(),
+        CampaignMemory(),
+        EmpirePlanMemory(),
+        arrayListOf(),
+        arrayListOf(),
+        AgentStrategistMemoMemory(),
+        arrayListOf(),
+        arrayListOf(),
+        arrayListOf(),
+    )
 
     fun clone(): AgentMemory = AgentMemory(
-        strategicPosture = strategicPosture.copy(
-            focus = ArrayList(strategicPosture.focus),
-            commitments = ArrayList(strategicPosture.commitments),
-            watchOuts = ArrayList(strategicPosture.watchOuts),
+        worldModel = worldModel.copy(
+            notes = ArrayList(worldModel.notes.map { it.copy() }),
+            anchors = ArrayList(worldModel.anchors.map { it.copy() }),
         ),
-        strategicRoadmap = strategicRoadmap.copy(
-            reviewCityNames = ArrayList(strategicRoadmap.reviewCityNames),
+        rivals = ArrayList(rivals.map { rival ->
+            rival.copy(
+                notes = ArrayList(rival.notes.map { it.copy() }),
+                anchors = ArrayList(rival.anchors.map { it.copy() }),
+            )
+        }),
+        campaign = campaign.copy(
+            doNotDo = ArrayList(campaign.doNotDo),
+            notes = ArrayList(campaign.notes.map { it.copy() }),
+        ),
+        empirePlan = empirePlan.copy(
+            notes = ArrayList(empirePlan.notes.map { it.copy() }),
+        ),
+        recentChanges = ArrayList(recentChanges.map { it.copy() }),
+        lessons = ArrayList(lessons.map { it.copy() }),
+        lastStrategistMemo = lastStrategistMemo.copy(
+            reviewCityNames = ArrayList(lastStrategistMemo.reviewCityNames),
         ),
         cityIntents = ArrayList(cityIntents.map { it.copy(reasons = ArrayList(it.reasons)) }),
         unitAssignments = ArrayList(unitAssignments.map { it.copy() }),
@@ -29,28 +59,78 @@ data class AgentMemory(
 }
 
 @Serializable
-data class StrategicPostureMemory(
-    var mode: String = "",
-    var focus: ArrayList<String> = arrayListOf(),
-    var gameArchetype: String? = null,
-    var doctrine: String? = null,
-    var phase: String = "",
-    var victoryGoal: String? = null,
-    var rivalCiv: String? = null,
-    var rivalVictoryGoal: String? = null,
-    var turnThesis: String? = null,
-    var commitments: ArrayList<String> = arrayListOf(),
-    var watchOuts: ArrayList<String> = arrayListOf(),
-    var lastKnownRivalCityName: String? = null,
-    var lastKnownRivalCityX: Int? = null,
-    var lastKnownRivalCityY: Int? = null,
-    var lastKnownRivalCapitalName: String? = null,
-    var lastKnownRivalCapitalX: Int? = null,
-    var lastKnownRivalCapitalY: Int? = null,
-    var sinceTurn: Int = 0,
+data class WorldModelMemory(
+    var summary: String? = null,
+    var notes: ArrayList<MemoryNote> = arrayListOf(),
+    var anchors: ArrayList<MemoryAnchor> = arrayListOf(),
     var lastUpdatedTurn: Int = 0,
 ) : IsPartOfGameInfoSerialization {
-    constructor() : this("", arrayListOf(), null, null, "", null, null, null, null, arrayListOf(), arrayListOf(), null, null, null, null, null, null, 0, 0)
+    constructor() : this(null, arrayListOf(), arrayListOf(), 0)
+}
+
+@Serializable
+data class RivalNotebookMemory(
+    var rivalCiv: String = "",
+    var summary: String? = null,
+    var notes: ArrayList<MemoryNote> = arrayListOf(),
+    var anchors: ArrayList<MemoryAnchor> = arrayListOf(),
+    var lastUpdatedTurn: Int = 0,
+) : IsPartOfGameInfoSerialization {
+    constructor() : this("", null, arrayListOf(), arrayListOf(), 0)
+}
+
+@Serializable
+data class CampaignMemory(
+    var title: String = "",
+    var stage: String = "",
+    var objective: String? = null,
+    var summary: String? = null,
+    var reinforcementPlan: String? = null,
+    var primaryRivalCiv: String? = null,
+    var doNotDo: ArrayList<String> = arrayListOf(),
+    var notes: ArrayList<MemoryNote> = arrayListOf(),
+    var lastUpdatedTurn: Int = 0,
+) : IsPartOfGameInfoSerialization {
+    constructor() : this("", "", null, null, null, null, arrayListOf(), arrayListOf(), 0)
+}
+
+@Serializable
+data class EmpirePlanMemory(
+    var summary: String? = null,
+    var purchaseIntent: String? = null,
+    var notes: ArrayList<MemoryNote> = arrayListOf(),
+    var lastUpdatedTurn: Int = 0,
+) : IsPartOfGameInfoSerialization {
+    constructor() : this(null, null, arrayListOf(), 0)
+}
+
+@Serializable
+data class MemoryNote(
+    var topic: String = "",
+    var kind: String = "",
+    var text: String = "",
+    var confidence: String? = null,
+    var civName: String? = null,
+    var x: Int? = null,
+    var y: Int? = null,
+    var firstTurn: Int = 0,
+    var lastUpdatedTurn: Int = 0,
+    var staleAfterTurn: Int = 0,
+) : IsPartOfGameInfoSerialization {
+    constructor() : this("", "", "", null, null, null, null, 0, 0, 0)
+}
+
+@Serializable
+data class MemoryAnchor(
+    var kind: String = "",
+    var label: String = "",
+    var civName: String? = null,
+    var x: Int? = null,
+    var y: Int? = null,
+    var firstSeenTurn: Int = 0,
+    var lastConfirmedTurn: Int = 0,
+) : IsPartOfGameInfoSerialization {
+    constructor() : this("", "", null, null, null, 0, 0)
 }
 
 @Serializable

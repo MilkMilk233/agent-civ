@@ -100,7 +100,7 @@ export function deriveTurns(events: ObservabilityEvent[], turnSummaries: TurnSum
         memory: parseJsonValue(details.memoryJson),
         plannerBrief: parseJsonValue(details.plannerBriefJson),
         strategistBrief: parseJsonValue(strategistRequest?.details?.strategistBriefJson),
-        strategicRoadmap: parseJsonValue(details.strategicRoadmapJson),
+        strategistMemo: parseJsonValue(details.strategistMemoJson),
         parsedPlan: parseJsonValue(planParsed?.details?.parsedPlan),
         outcomeDomainSummary: parseJsonValue(planApplied?.details?.outcomeDomainSummaryJson),
         validationFailures: parseJsonValue(validationFailed?.details?.validationFailuresJson),

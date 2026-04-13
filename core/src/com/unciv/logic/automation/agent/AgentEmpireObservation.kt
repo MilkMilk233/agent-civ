@@ -7,7 +7,7 @@ import kotlinx.serialization.Serializable
 data class AgentEmpireObservation(
     val turn: Int,
     val civName: String,
-    val strategicPosture: String,
+    val strategicState: String,
     val isAtWar: Boolean,
     val gameContext: AgentPublicGameContextObservation,
     val enabledVictoryTypes: List<String>,

@@ -8,11 +8,12 @@ object AgentStrategicGovernor {
     ): AgentPlannerBrief {
         val gameContext = empireObservation.gameContext
         val primaryThreat = empireObservation.victoryThreats.firstOrNull()
-        val roadmap = memory.strategicRoadmap.takeIf { it.doctrine.isNotBlank() }
+        val memo = memory.lastStrategistMemo.takeIf { it.phase.isNotBlank() }
         val attentionFacts = buildAttentionFacts(observation, empireObservation)
         val mustActNow = buildMustActNow(observation, empireObservation)
         val cityHighlights = selectCityHighlights(observation, gameContext)
         val campaignContext = buildCampaignContext(memory, observation, empireObservation)
+        val memoryContext = buildMemoryContext(memory, observation, empireObservation)
         val unitHighlights = selectUnitHighlights(observation, gameContext, primaryThreat, campaignContext)
         val progressInMotion = buildProgressInMotion(observation, empireObservation, cityHighlights, unitHighlights, campaignContext)
         val threatHighlights = observation.visibleThreatsAndTargets.take(if (observation.empireSummary.isAtWar) 3 else 2)
@@ -30,19 +31,17 @@ object AgentStrategicGovernor {
 
         return AgentPlannerBrief(
             gameContext = gameContext,
-            doctrine = AgentPlannerDoctrineObservation(
-                gameArchetype = roadmap?.gameArchetype ?: memory.strategicPosture.gameArchetype ?: gameContext.archetype,
-                doctrine = roadmap?.doctrine ?: memory.strategicPosture.doctrine ?: memory.strategicPosture.mode,
-                phase = roadmap?.phase ?: memory.strategicPosture.phase.ifBlank { phaseFromTurn(observation.turn) },
-                victoryGoal = roadmap?.winPath ?: memory.strategicPosture.victoryGoal ?: empireObservation.victoryGoal,
-                rivalCiv = memory.strategicPosture.rivalCiv,
-                rivalVictoryGoal = memory.strategicPosture.rivalVictoryGoal,
-                thesis = roadmap?.thesis ?: memory.strategicPosture.turnThesis,
-                pastSummary = roadmap?.pastSummary,
-                currentSituation = roadmap?.currentSituation,
-                futurePlan = roadmap?.futurePlan ?: memory.strategicPosture.turnThesis,
-                tacticianHandoff = roadmap?.tacticianHandoff ?: roadmap?.futurePlan ?: memory.strategicPosture.turnThesis,
+            strategy = AgentPlannerStrategyObservation(
+                gameArchetype = memo?.gameArchetype?.ifBlank { null } ?: gameContext.archetype,
+                winPath = memo?.winPath ?: empireObservation.victoryGoal,
+                phase = memo?.phase ?: phaseFromTurn(observation.turn),
+                thesis = memo?.thesis,
+                pastSummary = memo?.pastSummary,
+                currentSituation = memo?.currentSituation,
+                futurePlan = memo?.futurePlan,
+                tacticianHandoff = memo?.tacticianHandoff ?: memo?.futurePlan,
             ),
+            memoryContext = memoryContext,
             campaignContext = campaignContext,
             mustActNow = mustActNow,
             attentionFacts = attentionFacts,
@@ -57,6 +56,46 @@ object AgentStrategicGovernor {
             unitHighlights = unitHighlights,
             threatHighlights = threatHighlights,
             suppressedContext = suppressedContext,
+        )
+    }
+
+    private fun buildMemoryContext(
+        memory: AgentMemory,
+        observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+    ): AgentPlannerMemoryContextObservation? {
+        val primaryRivalCiv = memory.campaign.primaryRivalCiv
+            ?: empireObservation.victoryThreats.firstOrNull()?.civName
+            ?: observation.visibleThreatsAndTargets.firstOrNull { it.civName != observation.civName }?.civName
+        val rivalNotebook = primaryRivalCiv?.let { civ ->
+            memory.rivals.firstOrNull { it.rivalCiv == civ }
+        }
+        if (
+            memory.worldModel.summary.isNullOrBlank() &&
+            memory.worldModel.notes.isEmpty() &&
+            rivalNotebook == null &&
+            memory.campaign.summary.isNullOrBlank() &&
+            memory.empirePlan.summary.isNullOrBlank() &&
+            memory.recentChanges.isEmpty() &&
+            memory.lessons.isEmpty()
+        ) return null
+
+        return AgentPlannerMemoryContextObservation(
+            worldModelSummary = memory.worldModel.summary,
+            worldModelNotes = memory.worldModel.notes.takeLast(3).map { it.text },
+            mainRivalCiv = rivalNotebook?.rivalCiv ?: primaryRivalCiv,
+            mainRivalSummary = rivalNotebook?.summary,
+            mainRivalNotes = rivalNotebook?.notes?.takeLast(3)?.map { it.text } ?: emptyList(),
+            campaignTitle = memory.campaign.title.takeIf { it.isNotBlank() },
+            campaignStage = memory.campaign.stage.takeIf { it.isNotBlank() },
+            campaignObjective = memory.campaign.objective,
+            campaignSummary = memory.campaign.summary,
+            reinforcementPlan = memory.campaign.reinforcementPlan,
+            campaignDoNotDo = memory.campaign.doNotDo.take(4),
+            empirePlanSummary = memory.empirePlan.summary,
+            purchaseIntent = memory.empirePlan.purchaseIntent,
+            recentChanges = memory.recentChanges.takeLast(4).map { it.text },
+            lessons = memory.lessons.takeLast(4).map { it.text },
         )
     }
 
@@ -381,22 +420,12 @@ object AgentStrategicGovernor {
                     .thenBy { it.distanceToClosestCity ?: Int.MAX_VALUE }
                     .thenBy { it.name }
             )
-        val lastKnownTarget = if (memory.strategicPosture.lastKnownRivalCityX != null && memory.strategicPosture.lastKnownRivalCityY != null) {
-            AgentStrategistTargetReference(
-                civName = memory.strategicPosture.rivalCiv ?: empireObservation.victoryThreats.firstOrNull()?.civName ?: "",
-                name = memory.strategicPosture.lastKnownRivalCityName ?: "Unknown rival city",
-                x = memory.strategicPosture.lastKnownRivalCityX!!,
-                y = memory.strategicPosture.lastKnownRivalCityY!!,
-            )
-        } else null
-        val lastKnownCapital = if (memory.strategicPosture.lastKnownRivalCapitalX != null && memory.strategicPosture.lastKnownRivalCapitalY != null) {
-            AgentStrategistTargetReference(
-                civName = memory.strategicPosture.rivalCiv ?: empireObservation.victoryThreats.firstOrNull()?.civName ?: "",
-                name = memory.strategicPosture.lastKnownRivalCapitalName ?: "Unknown rival capital",
-                x = memory.strategicPosture.lastKnownRivalCapitalX!!,
-                y = memory.strategicPosture.lastKnownRivalCapitalY!!,
-            )
-        } else null
+        val primaryRivalCiv = memory.campaign.primaryRivalCiv
+            ?: empireObservation.victoryThreats.firstOrNull()?.civName
+            ?: visibleTarget?.civName
+            ?: visibleCapital?.civName
+        val lastKnownTarget = lastKnownAnchor(memory, primaryRivalCiv, setOf("city"))
+        val lastKnownCapital = lastKnownAnchor(memory, primaryRivalCiv, setOf("capital"))
         val objective = visibleTarget?.let(::toTargetReference)
             ?: visibleCapital?.let(::toTargetReference)
             ?: lastKnownTarget
@@ -429,7 +458,7 @@ object AgentStrategicGovernor {
             !observation.empireSummary.isAtWar
         ) return null
         return AgentPlannerCampaignContextObservation(
-            primaryRivalCiv = memory.strategicPosture.rivalCiv ?: empireObservation.victoryThreats.firstOrNull()?.civName,
+            primaryRivalCiv = primaryRivalCiv,
             atWar = observation.empireSummary.isAtWar,
             warChoiceAvailable = warChoiceAvailable,
             visibleRivalCities = visibleRivalCities.size,
@@ -441,6 +470,26 @@ object AgentStrategicGovernor {
             frontlineFriendlyCombatUnits = frontlineCombatUnits,
             meleeUnitsNearObjective = meleeUnitsNearObjective,
             rangedUnitsNearObjective = rangedUnitsNearObjective,
+        )
+    }
+
+    private fun lastKnownAnchor(
+        memory: AgentMemory,
+        rivalCiv: String?,
+        kinds: Set<String>,
+    ): AgentStrategistTargetReference? {
+        val notebook = rivalCiv?.let { civ -> memory.rivals.firstOrNull { it.rivalCiv == civ } }
+            ?: memory.rivals.firstOrNull()
+            ?: return null
+        val anchor = notebook.anchors
+            .filter { it.kind in kinds }
+            .maxByOrNull { it.lastConfirmedTurn }
+            ?: return null
+        return AgentStrategistTargetReference(
+            civName = anchor.civName ?: notebook.rivalCiv,
+            name = anchor.label,
+            x = anchor.x ?: return null,
+            y = anchor.y ?: return null,
         )
     }
 

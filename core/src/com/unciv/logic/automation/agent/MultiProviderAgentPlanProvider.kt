@@ -65,7 +65,7 @@ class MultiProviderAgentPlanProvider(
         }
     }
 
-    override fun buildStrategicRoadmap(
+    override fun buildStrategistMemo(
         memory: AgentMemory,
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
@@ -116,14 +116,13 @@ class MultiProviderAgentPlanProvider(
             val parsedPlan = json.decodeFromString<AgentStrategicPlan>(planText)
             AgentObservability.record(
                 type = "strategist_llm_plan_parsed",
-                message = "Structured strategist roadmap decoded successfully",
+                message = "Structured strategist memo decoded successfully",
                 civName = civInfo.civName,
                 turn = civInfo.gameInfo.turns,
                 details = mapOf(
-                    "doctrine" to parsedPlan.roadmap.doctrine,
-                    "winPath" to (parsedPlan.roadmap.winPath ?: ""),
-                    "phase" to parsedPlan.roadmap.phase,
-                    "reviewInTurns" to parsedPlan.roadmap.reviewInTurns.toString(),
+                    "winPath" to (parsedPlan.memo.winPath ?: ""),
+                    "phase" to parsedPlan.memo.phase,
+                    "reviewInTurns" to parsedPlan.memo.reviewInTurns.toString(),
                     "notes" to (parsedPlan.notes ?: ""),
                     "parsedPlan" to json.encodeToString(parsedPlan),
                 ),
@@ -134,7 +133,7 @@ class MultiProviderAgentPlanProvider(
             Log.debug("AI (agent): strategist decode exception", ex)
             AgentObservability.record(
                 type = "strategist_llm_parse_error",
-                message = "Failed to decode strategist roadmap",
+                message = "Failed to decode strategist memo",
                 civName = civInfo.civName,
                 turn = civInfo.gameInfo.turns,
                 details = mapOf(

@@ -9,6 +9,12 @@ object AgentMemoryManager {
     private const val maxRecentFailures = 8
     private const val cityIntentHorizonTurns = 5
     private const val unitAssignmentHorizonTurns = 4
+    private const val recentChangeHorizonTurns = 12
+    private const val sightingHorizonTurns = 12
+    private const val maxRecentChanges = 10
+    private const val maxLessons = 8
+    private const val maxRivalNotes = 10
+    private const val maxRivalAnchors = 12
 
     private val json = Json {
         prettyPrint = false
@@ -16,7 +22,7 @@ object AgentMemoryManager {
     }
 
     fun memoryJson(memory: AgentMemory): String = json.encodeToString(memory)
-    fun roadmapJson(roadmap: AgentStrategicRoadmapMemory): String = json.encodeToString(roadmap)
+    fun strategistMemoJson(memo: AgentStrategistMemoMemory): String = json.encodeToString(memo)
 
     fun prepareForTurn(
         civInfo: Civilization,
@@ -28,10 +34,15 @@ object AgentMemoryManager {
         val validUnits = civInfo.units.getCivUnits().associateBy { it.id }
         val existing = civInfo.agentMemory.clone()
 
-        val prepared = AgentMemory(
-            strategicPosture = normalizeStrategicPosture(existing, observation, empireObservation, turn),
-            strategicRoadmap = existing.strategicRoadmap.copy(
-                reviewCityNames = ArrayList(existing.strategicRoadmap.reviewCityNames),
+        val prepared = existing.copy(
+            worldModel = pruneWorldModel(existing.worldModel, turn),
+            rivals = mergeRivalNotebooks(existing.rivals, observation, empireObservation, turn),
+            campaign = pruneCampaign(existing.campaign, empireObservation, turn),
+            empirePlan = pruneEmpirePlan(existing.empirePlan, turn),
+            recentChanges = pruneNotes(existing.recentChanges, turn, maxRecentChanges),
+            lessons = ArrayList(existing.lessons.takeLast(maxLessons).map { it.copy() }),
+            lastStrategistMemo = existing.lastStrategistMemo.copy(
+                reviewCityNames = ArrayList(existing.lastStrategistMemo.reviewCityNames),
             ),
             cityIntents = ArrayList(
                 existing.cityIntents
@@ -68,7 +79,7 @@ object AgentMemoryManager {
         intentionalNoOp: Boolean = false,
     ): AgentMemory {
         val turn = civInfo.gameInfo.turns
-        val strategicPosture = deriveStrategicPosture(startingMemory, observation, empireObservation, plan, turn)
+        val refreshed = prepareNotebookForTurn(startingMemory, observation, empireObservation, turn)
         val recentFailures = buildRecentFailures(
             existing = startingMemory.recentFailures,
             turn = turn,
@@ -79,31 +90,18 @@ object AgentMemoryManager {
             validationFailures = validationFailures,
         )
 
-        val carriedCityIntents = startingMemory.cityIntents
-            .filter { it.staleAfterTurn >= turn }
-            .map { it.copy(reasons = ArrayList(it.reasons)) }
-        val carriedUnitAssignments = startingMemory.unitAssignments
-            .filter { it.staleAfterTurn >= turn }
-            .map { it.copy() }
+        val afterActionNotes = buildAfterActionNotes(
+            turn = turn,
+            plan = plan,
+            report = report,
+            usedLegacyFallback = usedLegacyFallback,
+            fallbackReason = fallbackReason,
+            intentionalNoOp = intentionalNoOp,
+        )
 
-        if (plan == null || usedLegacyFallback) {
-            val updated = AgentMemory(
-                strategicPosture = strategicPosture,
-                strategicRoadmap = cloneRoadmap(startingMemory.strategicRoadmap),
-                cityIntents = ArrayList(carriedCityIntents),
-                unitAssignments = ArrayList(carriedUnitAssignments),
-                recentFailures = recentFailures,
-            )
-            civInfo.agentMemory = updated.clone()
-            return updated
-        }
-
-        if (intentionalNoOp) {
-            val updated = AgentMemory(
-                strategicPosture = strategicPosture,
-                strategicRoadmap = cloneRoadmap(startingMemory.strategicRoadmap),
-                cityIntents = ArrayList(carriedCityIntents),
-                unitAssignments = ArrayList(carriedUnitAssignments),
+        if (plan == null || usedLegacyFallback || intentionalNoOp) {
+            val updated = refreshed.copy(
+                recentChanges = mergeRecentChanges(refreshed.recentChanges, afterActionNotes, turn),
                 recentFailures = recentFailures,
             )
             civInfo.agentMemory = updated.clone()
@@ -115,18 +113,17 @@ object AgentMemoryManager {
         val plannedCityKeys = newCityIntents.map { cityKey(it.cityX, it.cityY) }.toSet()
         val plannedUnitIds = newUnitAssignments.map { it.unitId }.toSet()
 
-        val preservedCityIntents = startingMemory.cityIntents
+        val preservedCityIntents = refreshed.cityIntents
             .filter { it.staleAfterTurn >= turn && cityKey(it.cityX, it.cityY) !in plannedCityKeys }
             .map { it.copy(reasons = ArrayList(it.reasons)) }
-        val preservedUnitAssignments = startingMemory.unitAssignments
+        val preservedUnitAssignments = refreshed.unitAssignments
             .filter { it.staleAfterTurn >= turn && it.unitId !in plannedUnitIds }
             .map { it.copy() }
 
-        val updated = AgentMemory(
-            strategicPosture = strategicPosture,
-            strategicRoadmap = cloneRoadmap(startingMemory.strategicRoadmap),
+        val updated = refreshed.copy(
             cityIntents = ArrayList(preservedCityIntents + newCityIntents),
             unitAssignments = ArrayList(preservedUnitAssignments + newUnitAssignments),
+            recentChanges = mergeRecentChanges(refreshed.recentChanges, afterActionNotes, turn),
             recentFailures = recentFailures,
         )
         civInfo.agentMemory = updated.clone()
@@ -139,17 +136,17 @@ object AgentMemoryManager {
         empireObservation: AgentEmpireObservation,
     ): AgentStrategistRefreshRequest? {
         val turn = observation.turn
-        val roadmap = memory.strategicRoadmap
-        if (roadmap.doctrine.isBlank()) {
+        val memo = memory.lastStrategistMemo
+        if (memo.phase.isBlank()) {
             return AgentStrategistRefreshRequest(
                 urgency = "initial",
-                reason = "No strategic roadmap exists yet. Choose an opening doctrine for this match setup.",
+                reason = "No strategist memo exists yet. Build the first game notebook and high-level handoff for this match.",
             )
         }
-        if (roadmap.reviewAfterTurn > 0 && turn >= roadmap.reviewAfterTurn) {
+        if (memo.reviewAfterTurn > 0 && turn >= memo.reviewAfterTurn) {
             return AgentStrategistRefreshRequest(
                 urgency = "scheduled",
-                reason = "Scheduled roadmap review: reassess doctrine, phase, and next few-turn plan from the current board state.",
+                reason = "Scheduled strategist review: refresh the game notebook and next few-turn handoff from the current board state.",
             )
         }
         return tacticalRefreshIfEmergency(memory, observation, empireObservation, requested = null)
@@ -164,7 +161,7 @@ object AgentMemoryManager {
         return tacticalRefreshIfEmergency(memory, observation, empireObservation, requested)
     }
 
-    fun applyStrategicRoadmap(
+    fun applyStrategicMemo(
         memory: AgentMemory,
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
@@ -175,19 +172,19 @@ object AgentMemoryManager {
         val gameContext = empireObservation.gameContext
         val reviewInTurns = when {
             gameContext.duelLike && gameContext.gameSpeed.equals("Quick", ignoreCase = true) ->
-                strategicPlan.roadmap.reviewInTurns.coerceIn(3, 6)
-            else -> strategicPlan.roadmap.reviewInTurns.coerceIn(4, 8)
+                strategicPlan.memo.reviewInTurns.coerceIn(3, 6)
+            else -> strategicPlan.memo.reviewInTurns.coerceIn(4, 8)
         }
-        val roadmap = AgentStrategicRoadmapMemory(
+
+        val memo = AgentStrategistMemoMemory(
             gameArchetype = gameContext.archetype,
-            doctrine = strategicPlan.roadmap.doctrine.trim(),
-            winPath = strategicPlan.roadmap.winPath?.trim().takeUnless { it.isNullOrEmpty() },
-            phase = strategicPlan.roadmap.phase.trim(),
-            thesis = strategicPlan.roadmap.thesis?.trim().takeUnless { it.isNullOrEmpty() },
-            pastSummary = strategicPlan.roadmap.pastSummary?.trim().takeUnless { it.isNullOrEmpty() },
-            currentSituation = strategicPlan.roadmap.currentSituation?.trim().takeUnless { it.isNullOrEmpty() },
-            futurePlan = strategicPlan.roadmap.futurePlan?.trim().takeUnless { it.isNullOrEmpty() },
-            tacticianHandoff = strategicPlan.roadmap.tacticianHandoff?.trim().takeUnless { it.isNullOrEmpty() },
+            winPath = strategicPlan.memo.winPath?.trim().takeUnless { it.isNullOrEmpty() },
+            phase = strategicPlan.memo.phase.trim(),
+            thesis = strategicPlan.memo.thesis?.trim().takeUnless { it.isNullOrEmpty() },
+            pastSummary = strategicPlan.memo.pastSummary?.trim().takeUnless { it.isNullOrEmpty() },
+            currentSituation = strategicPlan.memo.currentSituation?.trim().takeUnless { it.isNullOrEmpty() },
+            futurePlan = strategicPlan.memo.futurePlan?.trim().takeUnless { it.isNullOrEmpty() },
+            tacticianHandoff = strategicPlan.memo.tacticianHandoff?.trim().takeUnless { it.isNullOrEmpty() },
             reviewCityCount = observation.empireSummary.cityCount,
             reviewMilitaryUnitCount = observation.empireSummary.militaryUnitCount,
             reviewIsAtWar = observation.empireSummary.isAtWar,
@@ -195,25 +192,27 @@ object AgentMemoryManager {
             reviewResearch = empireObservation.currentResearch,
             reviewVisibleRivalCities = observation.visibleThreatsAndTargets.count { it.kind == "city" && it.civName != observation.civName },
             reviewVisibleRivalUnits = observation.visibleThreatsAndTargets.count { it.kind == "unit" && it.civName != observation.civName },
-            reviewPrimaryRivalCiv = empireObservation.victoryThreats.firstOrNull()?.civName
-                ?: observation.visibleThreatsAndTargets.firstOrNull { it.civName != observation.civName }?.civName,
+            reviewPrimaryRivalCiv = extractPrimaryRivalCiv(memory, observation, empireObservation),
             reviewCityNames = ArrayList(observation.cities.map { it.name }.sorted()),
             reviewAfterTurn = turn + reviewInTurns,
-            createdTurn = memory.strategicRoadmap.createdTurn.takeIf { it > 0 && memory.strategicRoadmap.doctrine == strategicPlan.roadmap.doctrine.trim() }
+            createdTurn = memory.lastStrategistMemo.createdTurn.takeIf { it > 0 && memory.lastStrategistMemo.phase == strategicPlan.memo.phase.trim() }
                 ?: turn,
             lastReviewedTurn = turn,
             lastRefreshReason = refreshRequest.reason,
         )
+
         val updated = memory.copy(
-            strategicPosture = roadmapDrivenStrategicPosture(
-                previous = memory.strategicPosture,
-                roadmap = roadmap,
-                observation = observation,
-                empireObservation = empireObservation,
-                plan = null,
+            worldModel = buildWorldModel(memory.worldModel, strategicPlan.memo, turn),
+            rivals = applyStrategistRivalUpdates(
+                current = mergeRivalNotebooks(memory.rivals, observation, empireObservation, turn),
+                drafts = strategicPlan.memo.rivals,
                 turn = turn,
             ),
-            strategicRoadmap = roadmap,
+            campaign = buildCampaignMemory(memory.campaign, strategicPlan.memo, observation, empireObservation, turn),
+            empirePlan = buildEmpirePlan(memory.empirePlan, strategicPlan.memo, turn),
+            recentChanges = buildNoteList("recent_change", "change", strategicPlan.memo.recentChanges, turn, recentChangeHorizonTurns, maxRecentChanges),
+            lessons = buildNoteList("lesson", "lesson", strategicPlan.memo.lessons, turn, turn + 200, maxLessons),
+            lastStrategistMemo = memo,
             cityIntents = ArrayList(memory.cityIntents.map { it.copy(reasons = ArrayList(it.reasons)) }),
             unitAssignments = ArrayList(memory.unitAssignments.map { it.copy() }),
             recentFailures = ArrayList(memory.recentFailures.map { it.copy() }),
@@ -227,274 +226,238 @@ object AgentMemoryManager {
         empireObservation: AgentEmpireObservation,
         requested: AgentStrategistRefreshRequest?,
     ): AgentStrategistRefreshRequest? {
-        val roadmap = memory.strategicRoadmap
-        if (roadmap.doctrine.isBlank()) return requested
+        val memo = memory.lastStrategistMemo
+        if (memo.phase.isBlank()) return requested
         val primaryThreat = empireObservation.victoryThreats.firstOrNull()
         val requestedReason = requested?.reason?.trim().orEmpty()
-        if (observation.empireSummary.isAtWar && !roadmap.doctrine.contains("war", ignoreCase = true)) {
+        if (observation.empireSummary.isAtWar && !looksWarAware(memory)) {
             return AgentStrategistRefreshRequest(
                 urgency = "emergency",
-                reason = requestedReason.ifBlank { "War or active hostilities invalidate the current peacetime roadmap." },
+                reason = requestedReason.ifBlank { "War or active hostilities broke the current campaign notebook and need a fresh strategist memo." },
             )
         }
         if (primaryThreat?.threatLevel == "critical" &&
-            !roadmap.doctrine.startsWith("deny_rival_", ignoreCase = true) &&
-            !roadmap.doctrine.contains("war", ignoreCase = true)
+            memory.campaign.primaryRivalCiv != null &&
+            memory.campaign.primaryRivalCiv != primaryThreat.civName
         ) {
             return AgentStrategistRefreshRequest(
                 urgency = "emergency",
-                reason = requestedReason.ifBlank { "${primaryThreat.civName} is a critical rival threat and the roadmap should be reconsidered immediately." },
-            )
-        }
-        if (empireObservation.gameContext.contactComplete && roadmap.doctrine.contains("scout", ignoreCase = true)) {
-            return AgentStrategistRefreshRequest(
-                urgency = "emergency",
-                reason = requestedReason.ifBlank { "Full rival contact is already complete, so the scouting-focused roadmap is stale." },
+                reason = requestedReason.ifBlank { "${primaryThreat.civName} is now the critical rival, so the strategist notebook should be refreshed immediately." },
             )
         }
         if (requested != null && requested.urgency.equals("emergency", ignoreCase = true)) {
             return AgentStrategistRefreshRequest(
                 urgency = "emergency",
-                reason = requestedReason.ifBlank { "The tactical planner detected a strategic emergency that the roadmap does not cover well." },
+                reason = requestedReason.ifBlank { "The tactician reported a strategic break in the current notebook." },
             )
         }
         return null
     }
 
-    private fun normalizeStrategicPosture(
+    private fun looksWarAware(memory: AgentMemory): Boolean {
+        val haystack = listOfNotNull(
+            memory.campaign.stage,
+            memory.campaign.summary,
+            memory.campaign.objective,
+            memory.campaign.reinforcementPlan,
+            memory.lastStrategistMemo.futurePlan,
+            memory.lastStrategistMemo.tacticianHandoff,
+        ).joinToString(" ").lowercase()
+        return listOf("war", "assault", "siege", "march", "front", "capture", "rebuild", "pressure").any { it in haystack }
+    }
+
+    private fun prepareNotebookForTurn(
         memory: AgentMemory,
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
         turn: Int,
-    ): StrategicPostureMemory {
-        val posture = memory.strategicPosture
-        val roadmap = memory.strategicRoadmap.takeIf { it.doctrine.isNotBlank() }
-        if (roadmap != null) {
-            return roadmapDrivenStrategicPosture(
-                previous = posture,
-                roadmap = roadmap,
-                observation = observation,
-                empireObservation = empireObservation,
-                plan = null,
-                turn = turn,
-            )
-        }
-        return factualStrategicPosture(
-            previous = posture,
-            observation = observation,
-            empireObservation = empireObservation,
-            plan = null,
-            turn = turn,
-        )
-    }
-
-    private fun deriveStrategicPosture(
-        previousMemory: AgentMemory,
-        observation: AgentObservation,
-        empireObservation: AgentEmpireObservation,
-        plan: AgentActionPlan?,
-        turn: Int,
-    ): StrategicPostureMemory {
-        val previous = previousMemory.strategicPosture
-        val roadmap = previousMemory.strategicRoadmap.takeIf { it.doctrine.isNotBlank() }
-        if (roadmap != null) {
-            return roadmapDrivenStrategicPosture(
-                previous = previous,
-                roadmap = roadmap,
-                observation = observation,
-                empireObservation = empireObservation,
-                plan = plan,
-                turn = turn,
-            )
-        }
-        return factualStrategicPosture(
-            previous = previous,
-            observation = observation,
-            empireObservation = empireObservation,
-            plan = plan,
-            turn = turn,
-        )
-    }
-
-    private fun cloneRoadmap(roadmap: AgentStrategicRoadmapMemory): AgentStrategicRoadmapMemory {
-        return roadmap.copy(
-            reviewCityNames = ArrayList(roadmap.reviewCityNames),
-        )
-    }
-
-    private data class LastKnownRivalPicture(
-        val rivalCityName: String? = null,
-        val rivalCityX: Int? = null,
-        val rivalCityY: Int? = null,
-        val rivalCapitalName: String? = null,
-        val rivalCapitalX: Int? = null,
-        val rivalCapitalY: Int? = null,
-    )
-
-    private fun resolveLastKnownRivalPicture(
-        previous: StrategicPostureMemory,
-        observation: AgentObservation,
-    ): LastKnownRivalPicture {
-        val visibleRivalCities = observation.visibleThreatsAndTargets
-            .filter { it.kind == "city" && it.civName != observation.civName }
-        val nearestVisibleCity = visibleRivalCities.minWithOrNull(
-            compareBy<VisibleTargetObservation> { it.distanceToClosestUnit ?: Int.MAX_VALUE }
-                .thenBy { it.distanceToClosestCity ?: Int.MAX_VALUE }
-                .thenBy { it.name }
-        )
-        val nearestVisibleCapital = visibleRivalCities
-            .filter { it.facts.any { fact -> fact.equals("Capital", ignoreCase = true) } }
-            .minWithOrNull(
-                compareBy<VisibleTargetObservation> { it.distanceToClosestUnit ?: Int.MAX_VALUE }
-                    .thenBy { it.distanceToClosestCity ?: Int.MAX_VALUE }
-                    .thenBy { it.name }
-            )
-        return LastKnownRivalPicture(
-            rivalCityName = nearestVisibleCity?.name ?: previous.lastKnownRivalCityName,
-            rivalCityX = nearestVisibleCity?.x ?: previous.lastKnownRivalCityX,
-            rivalCityY = nearestVisibleCity?.y ?: previous.lastKnownRivalCityY,
-            rivalCapitalName = nearestVisibleCapital?.name ?: previous.lastKnownRivalCapitalName,
-            rivalCapitalX = nearestVisibleCapital?.x ?: previous.lastKnownRivalCapitalX,
-            rivalCapitalY = nearestVisibleCapital?.y ?: previous.lastKnownRivalCapitalY,
-        )
-    }
-
-    private fun roadmapDrivenStrategicPosture(
-        previous: StrategicPostureMemory,
-        roadmap: AgentStrategicRoadmapMemory,
-        observation: AgentObservation,
-        empireObservation: AgentEmpireObservation,
-        plan: AgentActionPlan?,
-        turn: Int,
-    ): StrategicPostureMemory {
-        val primaryThreat = empireObservation.victoryThreats.firstOrNull()
-        val lastKnownRivalPicture = resolveLastKnownRivalPicture(previous, observation)
-        val mode = when {
-            observation.empireSummary.visibleHostileUnits > 0 ||
-                observation.cities.any { it.state.nearbyHostileUnits > 0 || it.state.nearbyHostileCities > 0 } -> "defend_and_stabilize"
-            observation.empireSummary.settlersReady > 0 ||
-                observation.opportunities.any { it.looksLikeSettlementOpportunity() } -> "expand_safely"
-            observation.empireSummary.workersReady > 0 &&
-                observation.opportunities.any { it.looksLikeImprovementOpportunity() } -> "improve_infrastructure"
-            else -> previous.mode.ifBlank { "stabilize_empire" }
-        }
-        val narrativeCommitments = buildList {
-            roadmap.tacticianHandoff?.takeIf { it.isNotBlank() }?.let { add(it) }
-            roadmap.futurePlan?.takeIf { it.isNotBlank() }?.let { add(it) }
-            roadmap.currentSituation?.takeIf { it.isNotBlank() }?.let { add(it) }
-        }.take(3)
-        val focusSource = previous.copy(
-            doctrine = roadmap.doctrine,
-            victoryGoal = roadmap.winPath,
-            turnThesis = roadmap.tacticianHandoff ?: roadmap.futurePlan ?: roadmap.thesis,
-            commitments = ArrayList(narrativeCommitments),
-            watchOuts = ArrayList(emptyList()),
-        )
-        return StrategicPostureMemory(
-            mode = mode,
-            focus = buildStrategicFocus(focusSource, observation, empireObservation, plan),
-            gameArchetype = roadmap.gameArchetype.ifBlank { empireObservation.gameContext.archetype },
-            doctrine = roadmap.doctrine,
-            phase = roadmap.phase.ifBlank { previous.phase.ifBlank { "opener" } },
-            victoryGoal = roadmap.winPath ?: empireObservation.victoryGoal ?: previous.victoryGoal,
-            rivalCiv = primaryThreat?.civName ?: previous.rivalCiv,
-            rivalVictoryGoal = primaryThreat?.likelyVictoryType ?: previous.rivalVictoryGoal,
-            turnThesis = roadmap.tacticianHandoff ?: roadmap.futurePlan ?: roadmap.thesis ?: previous.turnThesis,
-            commitments = ArrayList(narrativeCommitments),
-            watchOuts = ArrayList(
-                (listOfNotNull(primaryThreat?.takeIf { it.threatLevel == "critical" }?.let { "${it.civName} is an urgent rival." }))
-                    .take(3)
+    ): AgentMemory {
+        return memory.copy(
+            worldModel = pruneWorldModel(memory.worldModel, turn),
+            rivals = mergeRivalNotebooks(memory.rivals, observation, empireObservation, turn),
+            campaign = pruneCampaign(memory.campaign, empireObservation, turn),
+            empirePlan = pruneEmpirePlan(memory.empirePlan, turn),
+            recentChanges = pruneNotes(memory.recentChanges, turn, maxRecentChanges),
+            lessons = ArrayList(memory.lessons.takeLast(maxLessons).map { it.copy() }),
+            lastStrategistMemo = memory.lastStrategistMemo.copy(
+                reviewCityNames = ArrayList(memory.lastStrategistMemo.reviewCityNames),
             ),
-            lastKnownRivalCityName = lastKnownRivalPicture.rivalCityName,
-            lastKnownRivalCityX = lastKnownRivalPicture.rivalCityX,
-            lastKnownRivalCityY = lastKnownRivalPicture.rivalCityY,
-            lastKnownRivalCapitalName = lastKnownRivalPicture.rivalCapitalName,
-            lastKnownRivalCapitalX = lastKnownRivalPicture.rivalCapitalX,
-            lastKnownRivalCapitalY = lastKnownRivalPicture.rivalCapitalY,
-            sinceTurn = if (previous.doctrine == roadmap.doctrine && previous.sinceTurn > 0) previous.sinceTurn else turn,
+            cityIntents = ArrayList(memory.cityIntents.map { it.copy(reasons = ArrayList(it.reasons)) }),
+            unitAssignments = ArrayList(memory.unitAssignments.map { it.copy() }),
+            recentFailures = ArrayList(memory.recentFailures.map { it.copy() }),
+        )
+    }
+
+    private fun pruneWorldModel(worldModel: WorldModelMemory, turn: Int): WorldModelMemory {
+        return worldModel.copy(
+            notes = pruneNotes(worldModel.notes, turn, maxRecentChanges),
+            anchors = ArrayList(worldModel.anchors.map { it.copy() }),
+        )
+    }
+
+    private fun pruneCampaign(campaign: CampaignMemory, empireObservation: AgentEmpireObservation, turn: Int): CampaignMemory {
+        return campaign.copy(
+            primaryRivalCiv = campaign.primaryRivalCiv ?: empireObservation.victoryThreats.firstOrNull()?.civName,
+            doNotDo = ArrayList(campaign.doNotDo.take(4)),
+            notes = pruneNotes(campaign.notes, turn, maxRecentChanges),
+        )
+    }
+
+    private fun pruneEmpirePlan(empirePlan: EmpirePlanMemory, turn: Int): EmpirePlanMemory {
+        return empirePlan.copy(
+            notes = pruneNotes(empirePlan.notes, turn, maxRecentChanges),
+        )
+    }
+
+    private fun mergeRivalNotebooks(
+        existing: List<RivalNotebookMemory>,
+        observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+        turn: Int,
+    ): ArrayList<RivalNotebookMemory> {
+        val notebooks = linkedMapOf<String, RivalNotebookMemory>()
+        existing.forEach { rival ->
+            notebooks[rival.rivalCiv] = rival.copy(
+                notes = pruneNotes(rival.notes, turn, maxRivalNotes),
+                anchors = ArrayList(rival.anchors.map { it.copy() }),
+            )
+        }
+
+        val knownRivals = linkedSetOf<String>()
+        empireObservation.victoryThreats.mapTo(knownRivals) { it.civName }
+        observation.visibleThreatsAndTargets
+            .filter { it.civName != observation.civName }
+            .mapTo(knownRivals) { it.civName }
+
+        knownRivals.forEach { rivalCiv ->
+            notebooks.putIfAbsent(rivalCiv, RivalNotebookMemory(rivalCiv = rivalCiv, lastUpdatedTurn = turn))
+        }
+
+        observation.visibleThreatsAndTargets
+            .filter { it.civName != observation.civName }
+            .forEach { target ->
+                val notebook = notebooks.getOrPut(target.civName) { RivalNotebookMemory(rivalCiv = target.civName) }
+                notebook.lastUpdatedTurn = turn
+                if (target.kind == "city") {
+                    upsertAnchor(
+                        notebook.anchors,
+                        MemoryAnchor(
+                            kind = if (target.facts.any { it.equals("Capital", ignoreCase = true) }) "capital" else "city",
+                            label = target.name,
+                            civName = target.civName,
+                            x = target.x,
+                            y = target.y,
+                            firstSeenTurn = turn,
+                            lastConfirmedTurn = turn,
+                        )
+                    )
+                } else if (target.kind == "unit") {
+                    upsertNote(
+                        notebook.notes,
+                        MemoryNote(
+                            topic = "rival",
+                            kind = "fact",
+                            text = "Saw ${target.name} near (${target.x}, ${target.y}).",
+                            civName = target.civName,
+                            x = target.x,
+                            y = target.y,
+                            confidence = "high",
+                            firstTurn = turn,
+                            lastUpdatedTurn = turn,
+                            staleAfterTurn = turn + sightingHorizonTurns,
+                        ),
+                        maxRivalNotes,
+                    )
+                }
+            }
+
+        return ArrayList(
+            notebooks.values
+                .map { rival ->
+                    rival.copy(
+                        notes = ArrayList(rival.notes.takeLast(maxRivalNotes).map { it.copy() }),
+                        anchors = ArrayList(rival.anchors.sortedByDescending { it.lastConfirmedTurn }.take(maxRivalAnchors).map { it.copy() }),
+                    )
+                }
+                .sortedBy { it.rivalCiv }
+        )
+    }
+
+    private fun buildWorldModel(
+        current: WorldModelMemory,
+        memo: AgentStrategistMemoDraft,
+        turn: Int,
+    ): WorldModelMemory {
+        val summary = memo.worldModelSummary?.trim().takeUnless { it.isNullOrEmpty() } ?: current.summary
+        return current.copy(
+            summary = summary,
+            notes = buildNoteList("world_model", "inference", memo.worldModelNotes, turn, turn + 60, maxRecentChanges),
+            anchors = ArrayList(current.anchors.map { it.copy() }),
             lastUpdatedTurn = turn,
         )
     }
 
-    private fun factualStrategicPosture(
-        previous: StrategicPostureMemory,
+    private fun buildCampaignMemory(
+        current: CampaignMemory,
+        memo: AgentStrategistMemoDraft,
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
-        plan: AgentActionPlan?,
         turn: Int,
-    ): StrategicPostureMemory {
-        val primaryThreat = empireObservation.victoryThreats.firstOrNull()
-        val lastKnownRivalPicture = resolveLastKnownRivalPicture(previous, observation)
-        val mode = when {
-            observation.empireSummary.visibleHostileUnits > 0 ||
-                observation.cities.any { it.state.nearbyHostileUnits > 0 || it.state.nearbyHostileCities > 0 } -> "defend_and_stabilize"
-            observation.empireSummary.settlersReady > 0 ||
-                observation.opportunities.any { it.looksLikeSettlementOpportunity() } -> "expand_safely"
-            observation.empireSummary.workersReady > 0 &&
-                observation.opportunities.any { it.looksLikeImprovementOpportunity() } -> "improve_infrastructure"
-            observation.empireSummary.citiesNeedingProductionChoice > 0 -> "develop_cities"
-            previous.mode.isNotBlank() -> previous.mode
-            else -> "observe_and_plan"
+    ): CampaignMemory {
+        val derivedNotes = buildList {
+            memo.currentSituation?.trim()?.takeIf { it.isNotEmpty() }?.let { add(it) }
+            memo.futurePlan?.trim()?.takeIf { it.isNotEmpty() }?.let { add(it) }
         }
-        val focusSource = previous.copy(
-            doctrine = null,
-            victoryGoal = null,
-            turnThesis = null,
-            commitments = arrayListOf(),
-            watchOuts = arrayListOf(),
-        )
-        return StrategicPostureMemory(
-            mode = mode,
-            focus = buildStrategicFocus(focusSource, observation, empireObservation, plan),
-            gameArchetype = empireObservation.gameContext.archetype,
-            doctrine = null,
-            phase = previous.phase.takeIf { it.isNotBlank() } ?: "",
-            victoryGoal = null,
-            rivalCiv = primaryThreat?.civName ?: previous.rivalCiv,
-            rivalVictoryGoal = primaryThreat?.likelyVictoryType ?: previous.rivalVictoryGoal,
-            turnThesis = null,
-            commitments = arrayListOf(),
-            watchOuts = ArrayList(
-                listOfNotNull(
-                    primaryThreat?.takeIf { it.threatLevel == "critical" }?.let { "${it.civName} is an urgent rival." },
-                ).take(3),
-            ),
-            lastKnownRivalCityName = lastKnownRivalPicture.rivalCityName,
-            lastKnownRivalCityX = lastKnownRivalPicture.rivalCityX,
-            lastKnownRivalCityY = lastKnownRivalPicture.rivalCityY,
-            lastKnownRivalCapitalName = lastKnownRivalPicture.rivalCapitalName,
-            lastKnownRivalCapitalX = lastKnownRivalPicture.rivalCapitalX,
-            lastKnownRivalCapitalY = lastKnownRivalPicture.rivalCapitalY,
-            sinceTurn = if (mode == previous.mode && previous.sinceTurn > 0) previous.sinceTurn else turn,
+        return CampaignMemory(
+            title = memo.campaignTitle?.trim().takeUnless { it.isNullOrEmpty() } ?: current.title,
+            stage = memo.campaignStage?.trim().takeUnless { it.isNullOrEmpty() }
+                ?: memo.phase.trim().takeIf { it.isNotEmpty() }
+                ?: current.stage,
+            objective = memo.campaignObjective?.trim().takeUnless { it.isNullOrEmpty() } ?: current.objective,
+            summary = memo.campaignSummary?.trim().takeUnless { it.isNullOrEmpty() } ?: current.summary,
+            reinforcementPlan = memo.reinforcementPlan?.trim().takeUnless { it.isNullOrEmpty() } ?: current.reinforcementPlan,
+            primaryRivalCiv = memo.rivals.firstOrNull()?.rivalCiv
+                ?: current.primaryRivalCiv
+                ?: extractPrimaryRivalCiv(memory = null, observation = observation, empireObservation = empireObservation),
+            doNotDo = ArrayList(memo.campaignDoNotDo.take(4)),
+            notes = buildNoteList("campaign", "implication", derivedNotes, turn, turn + 60, maxRecentChanges),
             lastUpdatedTurn = turn,
         )
     }
 
-    private fun buildStrategicFocus(
-        previous: StrategicPostureMemory,
-        observation: AgentObservation,
-        empireObservation: AgentEmpireObservation,
-        plan: AgentActionPlan?,
-    ): ArrayList<String> {
-        val focus = linkedSetOf<String>()
-        empireObservation.victoryGoal?.let { goal ->
-            focus += "Playing for $goal victory."
+    private fun buildEmpirePlan(
+        current: EmpirePlanMemory,
+        memo: AgentStrategistMemoDraft,
+        turn: Int,
+    ): EmpirePlanMemory {
+        return EmpirePlanMemory(
+            summary = memo.empirePlanSummary?.trim().takeUnless { it.isNullOrEmpty() } ?: current.summary,
+            purchaseIntent = memo.purchaseIntent?.trim().takeUnless { it.isNullOrEmpty() } ?: current.purchaseIntent,
+            notes = buildNoteList("empire_plan", "implication", memo.empirePlanNotes, turn, turn + 60, maxRecentChanges),
+            lastUpdatedTurn = turn,
+        )
+    }
+
+    private fun applyStrategistRivalUpdates(
+        current: List<RivalNotebookMemory>,
+        drafts: List<AgentStrategistRivalNotebookDraft>,
+        turn: Int,
+    ): ArrayList<RivalNotebookMemory> {
+        val byCiv = linkedMapOf<String, RivalNotebookMemory>()
+        current.forEach { byCiv[it.rivalCiv] = it.copy(
+            notes = ArrayList(it.notes.map { note -> note.copy() }),
+            anchors = ArrayList(it.anchors.map { anchor -> anchor.copy() }),
+        ) }
+        drafts.forEach { draft ->
+            val existing = byCiv[draft.rivalCiv] ?: RivalNotebookMemory(rivalCiv = draft.rivalCiv)
+            byCiv[draft.rivalCiv] = existing.copy(
+                summary = draft.summary?.trim().takeUnless { it.isNullOrEmpty() } ?: existing.summary,
+                notes = buildNoteList("rival", "inference", draft.notes, turn, turn + 60, maxRivalNotes),
+                anchors = ArrayList(existing.anchors.map { it.copy() }),
+                lastUpdatedTurn = turn,
+            )
         }
-        empireObservation.victoryThreats.firstOrNull()?.let { threat ->
-            val prefix = if (threat.threatLevel == "critical") "Urgent:" else "Main rival:"
-            focus += "$prefix ${threat.civName} is on a ${threat.likelyVictoryType.lowercase()} path."
-        }
-        observation.priorityFacts.take(1).forEach { focus += it.headline }
-        observation.opportunities.take(1).forEach { focus += it.headline }
-        previous.focus
-            .take(2)
-            .filter { it.isNotBlank() && focus.size < 4 }
-            .forEach { focus += it }
-        plan?.notes
-            ?.trim()
-            ?.takeIf { it.isNotEmpty() && shouldPersistStrategicFocusNote(it) }
-            ?.let { focus += it.take(120) }
-        return ArrayList(focus.take(4))
+        return ArrayList(byCiv.values.sortedBy { it.rivalCiv })
     }
 
     private fun buildRecentFailures(
@@ -557,6 +520,162 @@ object AgentMemoryManager {
             }
 
         return ArrayList(failures.takeLast(maxRecentFailures))
+    }
+
+    private fun buildAfterActionNotes(
+        turn: Int,
+        plan: AgentActionPlan?,
+        report: AgentActionExecutor.ExecutionReport?,
+        usedLegacyFallback: Boolean,
+        fallbackReason: String?,
+        intentionalNoOp: Boolean,
+    ): List<MemoryNote> {
+        val notes = arrayListOf<MemoryNote>()
+        if (usedLegacyFallback) {
+            notes += MemoryNote(
+                topic = "after_action",
+                kind = "after_action",
+                text = fallbackReason ?: "Legacy fallback handled the turn.",
+                firstTurn = turn,
+                lastUpdatedTurn = turn,
+                staleAfterTurn = turn + recentChangeHorizonTurns,
+            )
+        } else if (intentionalNoOp) {
+            notes += MemoryNote(
+                topic = "after_action",
+                kind = "after_action",
+                text = "The tactician intentionally held actions this turn.",
+                firstTurn = turn,
+                lastUpdatedTurn = turn,
+                staleAfterTurn = turn + recentChangeHorizonTurns,
+            )
+        } else if (plan != null) {
+            plan.notes?.trim()?.takeIf { shouldPersistStrategicFocusNote(it) }?.let { summary ->
+                notes += MemoryNote(
+                    topic = "after_action",
+                    kind = "after_action",
+                    text = summary.take(180),
+                    firstTurn = turn,
+                    lastUpdatedTurn = turn,
+                    staleAfterTurn = turn + recentChangeHorizonTurns,
+                )
+            }
+            val declaredWar = plan.actions
+                .filterIsInstance<AgentActionCommand.SelectEmpireOption>()
+                .any { it.candidateId.startsWith("diplo:war:") }
+            if (declaredWar) {
+                notes += MemoryNote(
+                    topic = "after_action",
+                    kind = "after_action",
+                    text = "The empire committed to war on this turn.",
+                    firstTurn = turn,
+                    lastUpdatedTurn = turn,
+                    staleAfterTurn = turn + recentChangeHorizonTurns,
+                )
+            }
+        }
+        return notes
+    }
+
+    private fun mergeRecentChanges(
+        existing: List<MemoryNote>,
+        additions: List<MemoryNote>,
+        turn: Int,
+    ): ArrayList<MemoryNote> {
+        val merged = linkedMapOf<String, MemoryNote>()
+        existing
+            .filter { it.staleAfterTurn >= turn }
+            .forEach { merged["${it.topic}|${it.text}"] = it.copy() }
+        additions.forEach { merged["${it.topic}|${it.text}"] = it.copy() }
+        return ArrayList(merged.values.toList().takeLast(maxRecentChanges))
+    }
+
+    private fun buildNoteList(
+        topic: String,
+        kind: String,
+        texts: List<String>,
+        turn: Int,
+        staleAfterTurn: Int,
+        maxItems: Int,
+    ): ArrayList<MemoryNote> {
+        return ArrayList(
+            texts
+                .mapNotNull { it.trim().takeIf { text -> text.isNotEmpty() } }
+                .distinct()
+                .take(maxItems)
+                .map { text ->
+                    MemoryNote(
+                        topic = topic,
+                        kind = kind,
+                        text = text,
+                        firstTurn = turn,
+                        lastUpdatedTurn = turn,
+                        staleAfterTurn = staleAfterTurn,
+                    )
+                }
+        )
+    }
+
+    private fun pruneNotes(
+        notes: List<MemoryNote>,
+        turn: Int,
+        maxItems: Int,
+    ): ArrayList<MemoryNote> {
+        return ArrayList(
+            notes
+                .filter { it.staleAfterTurn == 0 || it.staleAfterTurn >= turn }
+                .takeLast(maxItems)
+                .map { it.copy() }
+        )
+    }
+
+    private fun upsertAnchor(
+        anchors: MutableList<MemoryAnchor>,
+        anchor: MemoryAnchor,
+    ) {
+        val index = anchors.indexOfFirst { it.kind == anchor.kind && it.label == anchor.label && it.civName == anchor.civName }
+        if (index >= 0) {
+            val existing = anchors[index]
+            anchors[index] = existing.copy(
+                x = anchor.x,
+                y = anchor.y,
+                lastConfirmedTurn = anchor.lastConfirmedTurn,
+                firstSeenTurn = existing.firstSeenTurn.takeIf { it > 0 } ?: anchor.firstSeenTurn,
+            )
+        } else {
+            anchors += anchor
+        }
+    }
+
+    private fun upsertNote(
+        notes: MutableList<MemoryNote>,
+        note: MemoryNote,
+        maxItems: Int,
+    ) {
+        val index = notes.indexOfFirst { it.topic == note.topic && it.text == note.text && it.civName == note.civName }
+        if (index >= 0) {
+            val existing = notes[index]
+            notes[index] = existing.copy(
+                x = note.x ?: existing.x,
+                y = note.y ?: existing.y,
+                lastUpdatedTurn = note.lastUpdatedTurn,
+                staleAfterTurn = note.staleAfterTurn,
+                confidence = note.confidence ?: existing.confidence,
+            )
+        } else {
+            notes += note
+            while (notes.size > maxItems) notes.removeAt(0)
+        }
+    }
+
+    private fun extractPrimaryRivalCiv(
+        memory: AgentMemory? = null,
+        observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+    ): String? {
+        return memory?.campaign?.primaryRivalCiv
+            ?: empireObservation.victoryThreats.firstOrNull()?.civName
+            ?: observation.visibleThreatsAndTargets.firstOrNull { it.civName != observation.civName }?.civName
     }
 
     private fun deriveCityIntents(

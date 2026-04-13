@@ -4,9 +4,8 @@ import com.unciv.logic.IsPartOfGameInfoSerialization
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class AgentStrategicRoadmapMemory(
+data class AgentStrategistMemoMemory(
     var gameArchetype: String = "",
-    var doctrine: String = "",
     var winPath: String? = null,
     var phase: String = "",
     var thesis: String? = null,
@@ -28,18 +27,17 @@ data class AgentStrategicRoadmapMemory(
     var lastReviewedTurn: Int = 0,
     var lastRefreshReason: String? = null,
 ) : IsPartOfGameInfoSerialization {
-    constructor() : this("", "", null, "", null, null, null, null, null, 0, 0, false, false, null, 0, 0, null, arrayListOf(), 0, 0, 0, null)
+    constructor() : this("", null, "", null, null, null, null, null, 0, 0, false, false, null, 0, 0, null, arrayListOf(), 0, 0, 0, null)
 }
 
 @Serializable
 data class AgentStrategicPlan(
-    val roadmap: AgentStrategicRoadmapDraft,
+    val memo: AgentStrategistMemoDraft,
     val notes: String? = null,
 )
 
 @Serializable
-data class AgentStrategicRoadmapDraft(
-    val doctrine: String,
+data class AgentStrategistMemoDraft(
     val winPath: String? = null,
     val phase: String,
     val thesis: String? = null,
@@ -47,7 +45,28 @@ data class AgentStrategicRoadmapDraft(
     val currentSituation: String? = null,
     val futurePlan: String? = null,
     val tacticianHandoff: String? = null,
+    val worldModelSummary: String? = null,
+    val worldModelNotes: List<String> = emptyList(),
+    val rivals: List<AgentStrategistRivalNotebookDraft> = emptyList(),
+    val campaignTitle: String? = null,
+    val campaignStage: String? = null,
+    val campaignObjective: String? = null,
+    val campaignSummary: String? = null,
+    val reinforcementPlan: String? = null,
+    val campaignDoNotDo: List<String> = emptyList(),
+    val empirePlanSummary: String? = null,
+    val purchaseIntent: String? = null,
+    val empirePlanNotes: List<String> = emptyList(),
+    val recentChanges: List<String> = emptyList(),
+    val lessons: List<String> = emptyList(),
     val reviewInTurns: Int = 5,
+)
+
+@Serializable
+data class AgentStrategistRivalNotebookDraft(
+    val rivalCiv: String,
+    val summary: String? = null,
+    val notes: List<String> = emptyList(),
 )
 
 @Serializable

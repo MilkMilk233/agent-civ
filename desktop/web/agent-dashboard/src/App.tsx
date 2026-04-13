@@ -465,10 +465,11 @@ function TurnDetail({
   const empireObservation = asRecord(turn.empireObservation);
   const plannerBrief = asRecord(turn.plannerBrief);
   const strategistBrief = asRecord(turn.strategistBrief);
-  const roadmap = asRecord(turn.strategicRoadmap);
+  const strategistMemo = asRecord(turn.strategistMemo);
   const parsedPlan = asRecord(turn.parsedPlan);
   const empireSummary = asRecord(observation?.empireSummary);
-  const doctrine = asRecord(plannerBrief?.doctrine);
+  const strategy = asRecord(plannerBrief?.strategy);
+  const memoryContext = asRecord(plannerBrief?.memoryContext);
   const campaignContext = asRecord(plannerBrief?.campaignContext);
   const attentionFacts = objectArray(plannerBrief?.attentionFacts);
   const progressInMotion = objectArray(plannerBrief?.progressInMotion);
@@ -485,8 +486,8 @@ function TurnDetail({
   const empireChoices = asRecord(plannerBrief?.empireChoices);
   const suppressedContext = stringList(plannerBrief?.suppressedContext);
   const plannedActions = objectArray(parsedPlan?.actions);
-  const roadmapCreatedTurn = numberValue(roadmap?.createdTurn);
-  const roadmapLastReviewedTurn = numberValue(roadmap?.lastReviewedTurn);
+  const memoCreatedTurn = numberValue(strategistMemo?.createdTurn);
+  const memoLastReviewedTurn = numberValue(strategistMemo?.lastReviewedTurn);
   const turnMetrics = deriveTurnMetrics(turn);
   const candidateLookup = buildCandidateLookup(empireChoices, cityHighlights, unitHighlights);
   const tacticalAttempts = buildTacticalAttempts(turn.events);
@@ -626,47 +627,46 @@ function TurnDetail({
         id="section-strategist-output"
         eyebrow="Strategist"
         title="What the strategist output"
-        body="This section contains only the strategist-generated roadmap report. It is kept separate from strategist inputs so you can compare what the strategist saw against what it concluded."
+        body="This section contains only the strategist-generated memo and notebook handoff. It is kept separate from strategist inputs so you can compare what the strategist saw against what it concluded."
       >
-        <Card title="Strategist roadmap" subtitle="A compact report with fixed Past / Now / Future subtitles.">
-          {roadmap ? (
+        <Card title="Strategist memo" subtitle="A compact report with fixed Past / Now / Future subtitles.">
+          {strategistMemo ? (
             <>
               <div className="summary-grid compact">
-                <SummaryStat label="Doctrine" value={stringValue(roadmap.doctrine)} />
-                <SummaryStat label="Win path" value={stringValue(roadmap.winPath)} />
-                <SummaryStat label="Phase" value={stringValue(roadmap.phase)} />
-                <SummaryStat label="Review turn" value={formatNumber(numberValue(roadmap.reviewAfterTurn))} />
-                <SummaryStat label="Created" value={roadmapCreatedTurn === null ? "Unknown" : `Turn ${formatNumber(roadmapCreatedTurn)}`} />
-                <SummaryStat label="Last reviewed" value={roadmapLastReviewedTurn === null ? "Unknown" : `Turn ${formatNumber(roadmapLastReviewedTurn)}`} />
+                <SummaryStat label="Win path" value={stringValue(strategistMemo.winPath)} />
+                <SummaryStat label="Phase" value={stringValue(strategistMemo.phase)} />
+                <SummaryStat label="Review turn" value={formatNumber(numberValue(strategistMemo.reviewAfterTurn))} />
+                <SummaryStat label="Created" value={memoCreatedTurn === null ? "Unknown" : `Turn ${formatNumber(memoCreatedTurn)}`} />
+                <SummaryStat label="Last reviewed" value={memoLastReviewedTurn === null ? "Unknown" : `Turn ${formatNumber(memoLastReviewedTurn)}`} />
               </div>
-              <p className="card-paragraph">{stringValue(roadmap.thesis) || "No roadmap thesis recorded."}</p>
-              {stringValue(roadmap.pastSummary) ? (
+              <p className="card-paragraph">{stringValue(strategistMemo.thesis) || "No strategist thesis recorded."}</p>
+              {stringValue(strategistMemo.pastSummary) ? (
                 <>
                   <SectionLabel text="Past" />
-                  <p className="card-paragraph">{stringValue(roadmap.pastSummary)}</p>
+                  <p className="card-paragraph">{stringValue(strategistMemo.pastSummary)}</p>
                 </>
               ) : null}
-              {stringValue(roadmap.currentSituation) ? (
+              {stringValue(strategistMemo.currentSituation) ? (
                 <>
                   <SectionLabel text="Now" />
-                  <p className="card-paragraph">{stringValue(roadmap.currentSituation)}</p>
+                  <p className="card-paragraph">{stringValue(strategistMemo.currentSituation)}</p>
                 </>
               ) : null}
-              {stringValue(roadmap.futurePlan) ? (
+              {stringValue(strategistMemo.futurePlan) ? (
                 <>
                   <SectionLabel text="Future" />
-                  <p className="card-paragraph">{stringValue(roadmap.futurePlan)}</p>
+                  <p className="card-paragraph">{stringValue(strategistMemo.futurePlan)}</p>
                 </>
               ) : null}
-              {stringValue(roadmap.tacticianHandoff) ? (
+              {stringValue(strategistMemo.tacticianHandoff) ? (
                 <>
                   <SectionLabel text="Tactician handoff" />
-                  <p className="card-paragraph">{stringValue(roadmap.tacticianHandoff)}</p>
+                  <p className="card-paragraph">{stringValue(strategistMemo.tacticianHandoff)}</p>
                 </>
               ) : null}
             </>
           ) : (
-            <p className="muted-text">No strategist roadmap was recorded for this turn.</p>
+            <p className="muted-text">No strategist memo was recorded for this turn.</p>
           )}
         </Card>
       </SectionShell>
@@ -682,18 +682,25 @@ function TurnDetail({
             {plannerBrief ? (
               <>
                 <div className="summary-grid compact">
-                  <SummaryStat label="Archetype" value={stringValue(doctrine?.gameArchetype)} />
-                  <SummaryStat label="Doctrine" value={stringValue(doctrine?.doctrine)} />
-                  <SummaryStat label="Phase" value={stringValue(doctrine?.phase)} />
-                  <SummaryStat label="Victory goal" value={stringValue(doctrine?.victoryGoal)} />
-                  <SummaryStat label="Rival" value={stringValue(doctrine?.rivalCiv)} />
-                  <SummaryStat label="Rival plan" value={stringValue(doctrine?.rivalVictoryGoal)} />
+                  <SummaryStat label="Archetype" value={stringValue(strategy?.gameArchetype)} />
+                  <SummaryStat label="Phase" value={stringValue(strategy?.phase)} />
+                  <SummaryStat label="Victory goal" value={stringValue(strategy?.winPath)} />
                 </div>
-                {stringValue(doctrine?.thesis) ? <p className="card-paragraph">{stringValue(doctrine?.thesis)}</p> : null}
-                {stringValue(doctrine?.tacticianHandoff) ? (
+                {stringValue(strategy?.thesis) ? <p className="card-paragraph">{stringValue(strategy?.thesis)}</p> : null}
+                {stringValue(strategy?.tacticianHandoff) ? (
                   <>
                     <SectionLabel text="Direct handoff" />
-                    <p className="card-paragraph">{stringValue(doctrine?.tacticianHandoff)}</p>
+                    <p className="card-paragraph">{stringValue(strategy?.tacticianHandoff)}</p>
+                  </>
+                ) : null}
+                {memoryContext ? (
+                  <>
+                    <SectionLabel text="Notebook context" />
+                    <div className="structured-list">
+                      {stringValue(memoryContext.worldModelSummary) ? <p className="card-paragraph">{stringValue(memoryContext.worldModelSummary)}</p> : null}
+                      {stringValue(memoryContext.campaignSummary) ? <p className="card-paragraph">{stringValue(memoryContext.campaignSummary)}</p> : null}
+                      {stringValue(memoryContext.mainRivalSummary) ? <p className="card-paragraph">{stringValue(memoryContext.mainRivalSummary)}</p> : null}
+                    </div>
                   </>
                 ) : null}
               </>
@@ -987,14 +994,18 @@ function StrategistContextSection({
 }) {
   const gameContext = asRecord(brief?.gameContext);
   const empireSummary = asRecord(brief?.empireSummary);
-  const lastStrategistReport = asRecord(brief?.lastStrategistReport);
-  const sinceLastReviewFacts = stringList(brief?.sinceLastReviewFacts);
+  const lastStrategistMemo = asRecord(brief?.lastStrategistMemo);
+  const worldModel = asRecord(brief?.worldModel);
+  const campaign = asRecord(brief?.campaign);
+  const empirePlan = asRecord(brief?.empirePlan);
+  const recentChanges = objectArray(brief?.recentChanges);
+  const lessons = objectArray(brief?.lessons);
   const progressInMotion = objectArray(brief?.progressInMotion);
   const recentFailures = stringList(brief?.recentFailures);
   const enabledVictories = stringList(brief?.enabledVictoryTypes);
 
   return (
-    <Card title={title} subtitle="Broad current state plus the previous strategist memo and factual changes since that memo.">
+    <Card title={title} subtitle="Broad current state plus the notebook context the strategist inherited before writing a fresh memo.">
       {brief ? (
         <>
           <div className="summary-grid compact summary-grid-four">
@@ -1009,39 +1020,66 @@ function StrategistContextSection({
           <SectionLabel text="Enabled victories" />
           <TagList values={enabledVictories} tone="accent" />
 
-          {lastStrategistReport ? (
+          {lastStrategistMemo ? (
             <>
               <SectionLabel text="Last strategist memo" />
               <div className="structured-item">
                 <div className="summary-grid compact">
-                  <SummaryStat label="Doctrine" value={stringValue(lastStrategistReport.doctrine)} />
-                  <SummaryStat label="Phase" value={stringValue(lastStrategistReport.phase)} />
-                  <SummaryStat label="Win path" value={stringValue(lastStrategistReport.winPath)} />
+                  <SummaryStat label="Phase" value={stringValue(lastStrategistMemo.phase)} />
+                  <SummaryStat label="Win path" value={stringValue(lastStrategistMemo.winPath)} />
                 </div>
-                {stringValue(lastStrategistReport.pastSummary) ? (
+                {stringValue(lastStrategistMemo.pastSummary) ? (
                   <>
                     <SectionLabel text="Past" />
-                    <p className="card-paragraph">{stringValue(lastStrategistReport.pastSummary)}</p>
+                    <p className="card-paragraph">{stringValue(lastStrategistMemo.pastSummary)}</p>
                   </>
                 ) : null}
-                {stringValue(lastStrategistReport.currentSituation) ? (
+                {stringValue(lastStrategistMemo.currentSituation) ? (
                   <>
                     <SectionLabel text="Now" />
-                    <p className="card-paragraph">{stringValue(lastStrategistReport.currentSituation)}</p>
+                    <p className="card-paragraph">{stringValue(lastStrategistMemo.currentSituation)}</p>
                   </>
                 ) : null}
-                {stringValue(lastStrategistReport.futurePlan) ? (
+                {stringValue(lastStrategistMemo.futurePlan) ? (
                   <>
                     <SectionLabel text="Future" />
-                    <p className="card-paragraph">{stringValue(lastStrategistReport.futurePlan)}</p>
+                    <p className="card-paragraph">{stringValue(lastStrategistMemo.futurePlan)}</p>
                   </>
                 ) : null}
               </div>
             </>
           ) : null}
 
-          <SectionLabel text="Since last review" />
-          <TagList values={sinceLastReviewFacts} />
+          {stringValue(worldModel?.summary) ? (
+            <>
+              <SectionLabel text="World model" />
+              <p className="card-paragraph">{stringValue(worldModel?.summary)}</p>
+            </>
+          ) : null}
+          {stringValue(campaign?.summary) ? (
+            <>
+              <SectionLabel text="Campaign notebook" />
+              <p className="card-paragraph">{stringValue(campaign?.summary)}</p>
+            </>
+          ) : null}
+          {stringValue(empirePlan?.summary) ? (
+            <>
+              <SectionLabel text="Empire plan notebook" />
+              <p className="card-paragraph">{stringValue(empirePlan?.summary)}</p>
+            </>
+          ) : null}
+          {recentChanges.length ? (
+            <>
+              <SectionLabel text="Recent changes" />
+              <TagList values={recentChanges.map((item) => stringValue(item.text)).filter(Boolean)} />
+            </>
+          ) : null}
+          {lessons.length ? (
+            <>
+              <SectionLabel text="Lessons" />
+              <TagList values={lessons.map((item) => stringValue(item.text)).filter(Boolean)} />
+            </>
+          ) : null}
 
           {campaignPicture ? (
             <>

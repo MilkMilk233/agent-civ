@@ -10,9 +10,13 @@ data class AgentStrategistBrief(
     val empireSummary: EmpireSummaryObservation,
     val currentResearch: String? = null,
     val currentResearchStatus: String? = null,
-    val currentRoadmap: AgentStrategicRoadmapMemory? = null,
-    val lastStrategistReport: AgentStrategistReportMemo? = null,
-    val sinceLastReviewFacts: List<String> = emptyList(),
+    val lastStrategistMemo: AgentStrategistReportMemo? = null,
+    val worldModel: WorldModelMemory? = null,
+    val rivalNotebooks: List<RivalNotebookMemory> = emptyList(),
+    val campaign: CampaignMemory? = null,
+    val empirePlan: EmpirePlanMemory? = null,
+    val recentChanges: List<MemoryNote> = emptyList(),
+    val lessons: List<MemoryNote> = emptyList(),
     val rivalThreats: List<AgentVictoryThreatObservation> = emptyList(),
     val rivalCities: List<AgentStrategistRivalCitySnapshot> = emptyList(),
     val rivalUnits: List<AgentStrategistRivalUnitSnapshot> = emptyList(),
@@ -25,9 +29,8 @@ data class AgentStrategistBrief(
 
 @Serializable
 data class AgentStrategistReportMemo(
-    val doctrine: String,
-    val phase: String,
     val winPath: String? = null,
+    val phase: String,
     val thesis: String? = null,
     val pastSummary: String? = null,
     val currentSituation: String? = null,

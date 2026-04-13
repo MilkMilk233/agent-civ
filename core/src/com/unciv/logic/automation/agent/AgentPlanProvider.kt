@@ -4,7 +4,7 @@ import com.unciv.logic.civilization.Civilization
 import com.unciv.utils.Log
 
 interface AgentPlanProvider {
-    fun buildStrategicRoadmap(
+    fun buildStrategistMemo(
         memory: AgentMemory,
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
@@ -94,7 +94,7 @@ object AgentPlanProviderFactory {
 }
 
 object NoopAgentPlanProvider : AgentPlanProvider {
-    override fun buildStrategicRoadmap(
+    override fun buildStrategistMemo(
         memory: AgentMemory,
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,

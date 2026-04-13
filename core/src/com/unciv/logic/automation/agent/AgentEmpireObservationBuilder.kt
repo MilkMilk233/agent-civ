@@ -54,16 +54,16 @@ object AgentEmpireObservationBuilder {
         }
         val enabledVictories = enabledVictories(civInfo)
         val preferredVictoryTypes = civInfo.getPreferredVictoryTypes().filter { it != Constants.neutralVictoryType }
-        val roadmap = memory.strategicRoadmap.takeIf { it.doctrine.isNotBlank() }
+        val memo = memory.lastStrategistMemo.takeIf { it.phase.isNotBlank() }
         val victoryPlan = chooseVictoryPlan(civInfo, enabledVictories, preferredVictoryTypes)
         val victoryThreats = buildVictoryThreats(civInfo, enabledVictories, victoryPlan)
-        val displayedVictoryGoal = roadmap?.winPath
-        val displayedVictoryFocus = roadmap?.winPath?.let(::defaultFocusForRoadmapWinPath)
+        val displayedVictoryGoal = memo?.winPath
+        val displayedVictoryFocus = memo?.winPath?.let(::defaultFocusForRoadmapWinPath)
 
         val observation = AgentEmpireObservation(
             turn = civInfo.gameInfo.turns,
             civName = civInfo.civName,
-            strategicPosture = memory.strategicPosture.mode,
+            strategicState = memory.campaign.stage.ifBlank { memo?.phase ?: "observe_and_plan" },
             isAtWar = civInfo.isAtWar(),
             gameContext = gameContext,
             enabledVictoryTypes = enabledVictories.map { it.name },

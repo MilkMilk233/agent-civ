@@ -8,9 +8,9 @@ data class AgentStrategicCheatSheet(
 object AgentStrategicCheatSheetBank {
     fun resolve(
         gameContext: AgentPublicGameContextObservation,
-        roadmap: AgentStrategicRoadmapMemory?,
+        memo: AgentStrategistMemoMemory?,
     ): AgentStrategicCheatSheet? {
-        val archetype = roadmap?.gameArchetype?.ifBlank { null } ?: gameContext.archetype
+        val archetype = memo?.gameArchetype?.ifBlank { null } ?: gameContext.archetype
         return when (archetype) {
             "tiny_duel_pangaea_no_city_states_no_barbs" -> tinyDuelDomination()
             else -> null
