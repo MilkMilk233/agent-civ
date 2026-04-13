@@ -392,6 +392,26 @@ class MultiProviderAgentPlanProvider(
                 val shouldRetry = attemptsUsed < maxAttempts && response.status.value.let { it == 429 || it >= 500 }
                 if (shouldRetry) {
                     val delayMs = retryDelayForAttempt(attemptsUsed)
+                    AgentObservability.record(
+                        type = eventType(eventPrefix, "llm_retry_scheduled"),
+                        message = "Provider request will be retried after retryable HTTP status",
+                        civName = civName,
+                        turn = turn,
+                        details = mapOf(
+                            "url" to url,
+                            "provider" to provider.name,
+                            "model" to resolveModelForRequest(eventPrefix),
+                            "reason" to "http_status",
+                            "status" to response.status.toString(),
+                            "attempt" to attemptsUsed.toString(),
+                            "nextAttempt" to (attemptsUsed + 1).toString(),
+                            "maxAttempts" to maxAttempts.toString(),
+                            "requestTimeoutMs" to attemptTimeouts.requestTimeoutMs.toString(),
+                            "connectTimeoutMs" to attemptTimeouts.connectTimeoutMs.toString(),
+                            "socketTimeoutMs" to attemptTimeouts.socketTimeoutMs.toString(),
+                            "delayMs" to delayMs.toString(),
+                        ),
+                    )
                     Log.debug(
                         "AI (agent): provider returned %s on attempt %s/%s, retrying url=%s timeout=%s nextDelay=%s",
                         response.status,
@@ -430,6 +450,26 @@ class MultiProviderAgentPlanProvider(
                 lastException = ex
                 if (attemptsUsed < maxAttempts) {
                     val delayMs = retryDelayForAttempt(attemptsUsed)
+                    AgentObservability.record(
+                        type = eventType(eventPrefix, "llm_retry_scheduled"),
+                        message = "Provider request failed and will be retried",
+                        civName = civName,
+                        turn = turn,
+                        details = mapOf(
+                            "url" to url,
+                            "provider" to provider.name,
+                            "model" to resolveModelForRequest(eventPrefix),
+                            "reason" to "request_error",
+                            "attempt" to attemptsUsed.toString(),
+                            "nextAttempt" to (attemptsUsed + 1).toString(),
+                            "maxAttempts" to maxAttempts.toString(),
+                            "requestTimeoutMs" to attemptTimeouts.requestTimeoutMs.toString(),
+                            "connectTimeoutMs" to attemptTimeouts.connectTimeoutMs.toString(),
+                            "socketTimeoutMs" to attemptTimeouts.socketTimeoutMs.toString(),
+                            "delayMs" to delayMs.toString(),
+                            "error" to (ex.message ?: ex::class.simpleName.orEmpty()),
+                        ),
+                    )
                     Log.debug(
                         "AI (agent): provider request failed on attempt %s/%s, retrying url=%s timeout=%s nextDelay=%s",
                         attemptsUsed,
@@ -468,19 +508,16 @@ class MultiProviderAgentPlanProvider(
     }
 
     private fun timeoutsForAttempt(attempt: Int): AttemptTimeouts {
-        if (attempt <= 1) {
-            return AttemptTimeouts(
-                requestTimeoutMs = requestTimeoutMs,
-                connectTimeoutMs = connectTimeoutMs,
-                socketTimeoutMs = socketTimeoutMs,
-            )
+        val requestTimeoutForAttempt = when {
+            attempt <= 1 -> requestTimeoutMs
+            attempt == 2 -> maxOf(requestTimeoutMs, firstRetryRequestTimeoutMs)
+            else -> maxOf(requestTimeoutMs, laterRetryRequestTimeoutMs)
         }
 
-        val relaxedRequestTimeoutMs = maxOf(requestTimeoutMs, relaxedRetryRequestTimeoutMs)
         return AttemptTimeouts(
-            requestTimeoutMs = relaxedRequestTimeoutMs,
+            requestTimeoutMs = requestTimeoutForAttempt,
             connectTimeoutMs = connectTimeoutMs,
-            socketTimeoutMs = maxOf(socketTimeoutMs, relaxedRequestTimeoutMs),
+            socketTimeoutMs = maxOf(socketTimeoutMs, requestTimeoutForAttempt),
         )
     }
 
@@ -529,12 +566,13 @@ class MultiProviderAgentPlanProvider(
 
     companion object {
         const val defaultGatewayBaseUrl = "https://ai-gateway.andrew.cmu.edu"
-        const val defaultRequestTimeoutMs = 60_000L
+        const val defaultRequestTimeoutMs = 300_000L
         const val defaultConnectTimeoutMs = 10_000L
-        const val defaultSocketTimeoutMs = 60_000L
+        const val defaultSocketTimeoutMs = 300_000L
         const val defaultMaxAttempts = 5
         const val defaultRetryDelayMs = 1_000L
-        const val relaxedRetryRequestTimeoutMs = 120_000L
+        const val firstRetryRequestTimeoutMs = 600_000L
+        const val laterRetryRequestTimeoutMs = 1_200_000L
         const val maxRetryDelayMs = 8_000L
 
         fun defaultModel(provider: LlmProvider): String = when (provider) {

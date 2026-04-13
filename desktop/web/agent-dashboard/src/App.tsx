@@ -513,6 +513,7 @@ function TurnDetail({
             {turnMetrics.fallback ? <span className="tag warning">Fallback used</span> : null}
             {turnMetrics.blocked ? <span className="tag warning">Blocked turn</span> : null}
             {turnMetrics.retryCount > 0 ? <span className="tag neutral">{formatNumber(turnMetrics.retryCount)} retries</span> : null}
+            {turnMetrics.providerRetryCount > 0 ? <span className="tag neutral">{formatNumber(turnMetrics.providerRetryCount)} provider retries</span> : null}
           </div>
           <p className="mini-note">This page is organized around the agent's real flow: what existed in the game, what was surfaced into the prompts, what the models chose, and what survived validation.</p>
         </div>
@@ -561,6 +562,11 @@ function TurnDetail({
             label="Inference passes"
             value={`${formatNumber(turnMetrics.tacticalPasses)} tactical`}
             note={`${formatNumber(turnMetrics.strategistPasses)} strategist`}
+          />
+          <SummaryStat
+            label="Provider retries"
+            value={formatNumber(turnMetrics.providerRetryCount)}
+            note={`Tactical ${formatNumber(turnMetrics.tacticalProviderRetryCount)} · Strategist ${formatNumber(turnMetrics.strategistProviderRetryCount)}`}
           />
           <SummaryStat
             label="Actions applied"
@@ -1844,6 +1850,7 @@ function AttemptLadderSection({
 
               <div className="mini-metric-grid">
                 <MiniMetric label="Retry context" value={attempt.retryContext ? "present" : "none"} />
+                <MiniMetric label="Provider retries" value={attempt.providerRetries.length ? formatNumber(attempt.providerRetries.length) : "0"} />
                 <MiniMetric label="Prompt size" value={attempt.prompt ? `${formatNumber(attempt.prompt.length)} chars` : "—"} />
                 <MiniMetric label="Brief JSON" value={attempt.plannerBriefJson ? "captured" : "—"} />
                 <MiniMetric label="Raw response" value={attempt.rawResponse ? "captured" : "—"} />
@@ -1861,6 +1868,20 @@ function AttemptLadderSection({
                 <details className="code-disclosure">
                   <summary>Why retry {formatNumber(attempt.attemptNumber + 1)} was requested</summary>
                   <pre>{attempt.validationFailure}</pre>
+                </details>
+              ) : null}
+
+              {attempt.providerRetries.length ? (
+                <details className="code-disclosure">
+                  <summary>Provider retry timeline</summary>
+                  <pre>{formatProviderRetryTimeline(attempt.providerRetries)}</pre>
+                </details>
+              ) : null}
+
+              {attempt.requestError ? (
+                <details className="code-disclosure">
+                  <summary>Final provider error</summary>
+                  <pre>{attempt.requestError}</pre>
                 </details>
               ) : null}
             </article>
@@ -1913,6 +1934,10 @@ function LiteralArtifactsSection({
       <Card title="Strategist prompt artifacts" subtitle="Exact strategist brief and prompt text when a strategist pass happened on this turn.">
         {strategistArtifacts ? (
           <>
+            {strategistArtifacts.retryEvents.length ? (
+              <CodeDisclosure title="Strategist provider retry timeline" content={formatProviderRetryTimeline(strategistArtifacts.retryEvents)} />
+            ) : null}
+            {strategistArtifacts.requestError ? <CodeDisclosure title="Strategist final provider error" content={strategistArtifacts.requestError} /> : null}
             <CodeDisclosure title="Strategist Brief JSON" content={strategistArtifacts.briefJson || JSON.stringify(strategistBrief, null, 2)} />
             {strategistArtifacts.refreshRequest ? <CodeDisclosure title="Refresh Request JSON" content={strategistArtifacts.refreshRequest} /> : null}
             <CodeDisclosure title="Exact Strategist Prompt" content={strategistArtifacts.prompt} />
@@ -2062,6 +2087,9 @@ function deriveTurnMetrics(turn: TurnRecord) {
   const validationFailureCount = countValidationFailures(turn.events);
   const tacticalPasses = countEvents(turn.events, "llm_request");
   const strategistPasses = countEvents(turn.events, "strategist_llm_request");
+  const tacticalProviderRetryCount = countEvents(turn.events, "llm_retry_scheduled");
+  const strategistProviderRetryCount = countEvents(turn.events, "strategist_llm_retry_scheduled");
+  const providerRetryCount = tacticalProviderRetryCount + strategistProviderRetryCount;
   const executionRejectDenominator = Math.max(1, executedActions + executionRejectedActions);
   const intentionalNoOp = plannedActions === 0 && !fallback && !blocked;
 
@@ -2076,6 +2104,9 @@ function deriveTurnMetrics(turn: TurnRecord) {
     validationFailureCount,
     tacticalPasses,
     strategistPasses,
+    tacticalProviderRetryCount,
+    strategistProviderRetryCount,
+    providerRetryCount,
     intentionalNoOp,
     cleanFirstPass: retryCount === 0 && !fallback && !blocked,
     illegalActionRate: summary?.illegalActionRate ?? 0,
@@ -2257,12 +2288,27 @@ type TacticalAttemptView = {
   rawResponse: string;
   parsedPlan: Record<string, unknown> | null;
   validationFailure: string;
+  providerRetries: ProviderRetryView[];
+  requestError: string;
 };
 
 type StrategistArtifactsView = {
   prompt: string;
   briefJson: string;
   refreshRequest: string;
+  retryEvents: ProviderRetryView[];
+  requestError: string;
+};
+
+type ProviderRetryView = {
+  attempt: number;
+  nextAttempt: number;
+  maxAttempts: number;
+  requestTimeoutMs: number | null;
+  delayMs: number | null;
+  reason: string;
+  status: string;
+  error: string;
 };
 
 function describeAction(action: Record<string, unknown>, candidateLookup: Record<string, CandidateLookupEntry>): string {
@@ -2390,6 +2436,8 @@ function buildTacticalAttempts(events: ObservabilityEvent[]): TacticalAttemptVie
   const parsedEvents = findEvents(events, "llm_plan_parsed");
   const validationEvents = findEvents(events, "plan_validation_failed");
   const responses = findEvents(events, "llm_response");
+  const retryEvents = findEvents(events, "llm_retry_scheduled");
+  const requestErrors = findEvents(events, "llm_request_error");
 
   return requests.map((request, index) => {
     const nextRequestId = requests[index + 1]?.id ?? Number.MAX_SAFE_INTEGER;
@@ -2397,6 +2445,11 @@ function buildTacticalAttempts(events: ObservabilityEvent[]): TacticalAttemptVie
     const parsed = parsedEvents.find((event) => event.id > request.id && event.id < nextRequestId);
     const validation = validationEvents.find((event) => event.id > request.id && event.id < nextRequestId);
     const response = responses.find((event) => event.id > request.id && event.id < nextRequestId);
+    const providerRetries = retryEvents
+      .filter((event) => event.id > request.id && event.id < nextRequestId)
+      .map(buildProviderRetryView)
+      .filter((value): value is ProviderRetryView => value !== null);
+    const requestError = requestErrors.find((event) => event.id > request.id && event.id < nextRequestId);
 
     return {
       attemptNumber,
@@ -2407,6 +2460,8 @@ function buildTacticalAttempts(events: ObservabilityEvent[]): TacticalAttemptVie
       rawResponse: response?.details?.rawResponse ?? "",
       parsedPlan: parseJsonValue(parsed?.details?.parsedPlan),
       validationFailure: validation?.details?.validationFailuresJson ?? "",
+      providerRetries,
+      requestError: requestError ? JSON.stringify(requestError.details ?? {}, null, 2) : "",
     };
   });
 }
@@ -2414,9 +2469,45 @@ function buildTacticalAttempts(events: ObservabilityEvent[]): TacticalAttemptVie
 function buildStrategistArtifacts(events: ObservabilityEvent[]): StrategistArtifactsView | null {
   const request = findLatestEvent(events, ["strategist_llm_request"]);
   if (!request) return null;
+  const retryEvents = events
+    .filter((event) => event.type === "strategist_llm_retry_scheduled" && event.id > request.id)
+    .map(buildProviderRetryView)
+    .filter((value): value is ProviderRetryView => value !== null);
+  const requestError = events.find((event) => event.type === "strategist_llm_request_error" && event.id > request.id);
   return {
     prompt: request.details?.prompt ?? "",
     briefJson: request.details?.strategistBriefJson ?? "",
     refreshRequest: request.details?.refreshRequestJson ?? "",
+    retryEvents,
+    requestError: requestError ? JSON.stringify(requestError.details ?? {}, null, 2) : "",
   };
+}
+
+function buildProviderRetryView(event: ObservabilityEvent): ProviderRetryView | null {
+  const details = event.details;
+  if (!details) return null;
+  return {
+    attempt: stringNumber(details.attempt) ?? 0,
+    nextAttempt: stringNumber(details.nextAttempt) ?? 0,
+    maxAttempts: stringNumber(details.maxAttempts) ?? 0,
+    requestTimeoutMs: stringNumber(details.requestTimeoutMs),
+    delayMs: stringNumber(details.delayMs),
+    reason: details.reason ?? "",
+    status: details.status ?? "",
+    error: details.error ?? "",
+  };
+}
+
+function formatProviderRetryTimeline(retries: ProviderRetryView[]): string {
+  return retries.map((retry) => {
+    const parts = [
+      `attempt ${formatNumber(retry.attempt)} -> ${formatNumber(retry.nextAttempt)} of ${formatNumber(retry.maxAttempts)}`,
+    ];
+    if (retry.reason) parts.push(`reason=${retry.reason}`);
+    if (retry.status) parts.push(`status=${retry.status}`);
+    if (retry.requestTimeoutMs !== null) parts.push(`timeout=${formatDurationMs(retry.requestTimeoutMs)}`);
+    if (retry.delayMs !== null) parts.push(`delay=${formatDurationMs(retry.delayMs)}`);
+    if (retry.error) parts.push(`error=${retry.error}`);
+    return parts.join(" | ");
+  }).join("\n");
 }
