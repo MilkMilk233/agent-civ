@@ -13,6 +13,7 @@ object AgentMemoryManager {
     private const val sightingHorizonTurns = 12
     private const val maxRecentChanges = 10
     private const val maxLessons = 8
+    private const val maxTacticianTurnLogEntries = 8
     private const val maxRivalNotes = 10
     private const val maxRivalAnchors = 12
 
@@ -44,6 +45,7 @@ object AgentMemoryManager {
             lastStrategistMemo = existing.lastStrategistMemo.copy(
                 reviewCityNames = ArrayList(existing.lastStrategistMemo.reviewCityNames),
             ),
+            tacticianTurnLog = pruneTacticianTurnLog(existing.tacticianTurnLog, turn),
             cityIntents = ArrayList(
                 existing.cityIntents
                     .filter { it.staleAfterTurn >= turn && cityKey(it.cityX, it.cityY) in validCities }
@@ -80,6 +82,12 @@ object AgentMemoryManager {
     ): AgentMemory {
         val turn = civInfo.gameInfo.turns
         val refreshed = prepareNotebookForTurn(startingMemory, observation, empireObservation, turn)
+        val intentReconciliation = reconcileIntentCarryover(
+            civInfo = civInfo,
+            existingCityIntents = refreshed.cityIntents,
+            existingUnitAssignments = refreshed.unitAssignments,
+            turn = turn,
+        )
         val recentFailures = buildRecentFailures(
             existing = startingMemory.recentFailures,
             turn = turn,
@@ -100,8 +108,28 @@ object AgentMemoryManager {
         )
 
         if (plan == null || usedLegacyFallback || intentionalNoOp) {
+            val tacticianEntry = buildTacticianTurnLogEntry(
+                civInfo = civInfo,
+                observation = observation,
+                empireObservation = empireObservation,
+                startingMemory = startingMemory,
+                plan = plan,
+                report = report,
+                usedLegacyFallback = usedLegacyFallback,
+                fallbackReason = fallbackReason,
+                intentionalNoOp = intentionalNoOp,
+                completed = intentReconciliation.completed,
+                obsolete = intentReconciliation.obsolete,
+                carryForward = intentReconciliation.carryForward,
+            )
             val updated = refreshed.copy(
                 recentChanges = mergeRecentChanges(refreshed.recentChanges, afterActionNotes, turn),
+                tacticianTurnLog = mergeTacticianTurnLog(
+                    refreshed.tacticianTurnLog,
+                    tacticianEntry,
+                ),
+                cityIntents = intentReconciliation.cityIntents,
+                unitAssignments = intentReconciliation.unitAssignments,
                 recentFailures = recentFailures,
             )
             civInfo.agentMemory = updated.clone()
@@ -113,17 +141,40 @@ object AgentMemoryManager {
         val plannedCityKeys = newCityIntents.map { cityKey(it.cityX, it.cityY) }.toSet()
         val plannedUnitIds = newUnitAssignments.map { it.unitId }.toSet()
 
-        val preservedCityIntents = refreshed.cityIntents
+        val preservedCityIntents = intentReconciliation.cityIntents
             .filter { it.staleAfterTurn >= turn && cityKey(it.cityX, it.cityY) !in plannedCityKeys }
             .map { it.copy(reasons = ArrayList(it.reasons)) }
-        val preservedUnitAssignments = refreshed.unitAssignments
+        val preservedUnitAssignments = intentReconciliation.unitAssignments
             .filter { it.staleAfterTurn >= turn && it.unitId !in plannedUnitIds }
             .map { it.copy() }
+
+        val carryForward = buildCarryForwardNotes(
+            cityIntents = newCityIntents.ifEmpty { preservedCityIntents },
+            unitAssignments = newUnitAssignments.ifEmpty { preservedUnitAssignments },
+        )
+        val tacticianEntry = buildTacticianTurnLogEntry(
+            civInfo = civInfo,
+            observation = observation,
+            empireObservation = empireObservation,
+            startingMemory = startingMemory,
+            plan = plan,
+            report = report,
+            usedLegacyFallback = usedLegacyFallback,
+            fallbackReason = fallbackReason,
+            intentionalNoOp = intentionalNoOp,
+            completed = intentReconciliation.completed,
+            obsolete = intentReconciliation.obsolete,
+            carryForward = carryForward,
+        )
 
         val updated = refreshed.copy(
             cityIntents = ArrayList(preservedCityIntents + newCityIntents),
             unitAssignments = ArrayList(preservedUnitAssignments + newUnitAssignments),
             recentChanges = mergeRecentChanges(refreshed.recentChanges, afterActionNotes, turn),
+            tacticianTurnLog = mergeTacticianTurnLog(
+                refreshed.tacticianTurnLog,
+                tacticianEntry,
+            ),
             recentFailures = recentFailures,
         )
         civInfo.agentMemory = updated.clone()
@@ -137,7 +188,7 @@ object AgentMemoryManager {
     ): AgentStrategistRefreshRequest? {
         val turn = observation.turn
         val memo = memory.lastStrategistMemo
-        if (memo.phase.isBlank()) {
+        if (!hasStrategistMemo(memo)) {
             return AgentStrategistRefreshRequest(
                 urgency = "initial",
                 reason = "No strategist memo exists yet. Build the first game notebook and high-level handoff for this match.",
@@ -179,7 +230,9 @@ object AgentMemoryManager {
         val memo = AgentStrategistMemoMemory(
             gameArchetype = gameContext.archetype,
             winPath = strategicPlan.memo.winPath?.trim().takeUnless { it.isNullOrEmpty() },
-            phase = strategicPlan.memo.phase.trim(),
+            campaignStage = strategicPlan.memo.campaignStage.trim(),
+            decisiveObjective = strategicPlan.memo.decisiveObjective.trim().takeUnless { it.isEmpty() },
+            conversionBlocker = strategicPlan.memo.conversionBlocker?.trim().takeUnless { it.isNullOrEmpty() },
             thesis = strategicPlan.memo.thesis?.trim().takeUnless { it.isNullOrEmpty() },
             pastSummary = strategicPlan.memo.pastSummary?.trim().takeUnless { it.isNullOrEmpty() },
             currentSituation = strategicPlan.memo.currentSituation?.trim().takeUnless { it.isNullOrEmpty() },
@@ -195,7 +248,9 @@ object AgentMemoryManager {
             reviewPrimaryRivalCiv = extractPrimaryRivalCiv(memory, observation, empireObservation),
             reviewCityNames = ArrayList(observation.cities.map { it.name }.sorted()),
             reviewAfterTurn = turn + reviewInTurns,
-            createdTurn = memory.lastStrategistMemo.createdTurn.takeIf { it > 0 && memory.lastStrategistMemo.phase == strategicPlan.memo.phase.trim() }
+            createdTurn = memory.lastStrategistMemo.createdTurn.takeIf {
+                it > 0 && isSameCampaignThread(memory.lastStrategistMemo, strategicPlan.memo)
+            }
                 ?: turn,
             lastReviewedTurn = turn,
             lastRefreshReason = refreshRequest.reason,
@@ -213,6 +268,7 @@ object AgentMemoryManager {
             recentChanges = buildNoteList("recent_change", "change", strategicPlan.memo.recentChanges, turn, recentChangeHorizonTurns, maxRecentChanges),
             lessons = buildNoteList("lesson", "lesson", strategicPlan.memo.lessons, turn, turn + 200, maxLessons),
             lastStrategistMemo = memo,
+            tacticianTurnLog = pruneTacticianTurnLog(memory.tacticianTurnLog, turn),
             cityIntents = ArrayList(memory.cityIntents.map { it.copy(reasons = ArrayList(it.reasons)) }),
             unitAssignments = ArrayList(memory.unitAssignments.map { it.copy() }),
             recentFailures = ArrayList(memory.recentFailures.map { it.copy() }),
@@ -227,7 +283,7 @@ object AgentMemoryManager {
         requested: AgentStrategistRefreshRequest?,
     ): AgentStrategistRefreshRequest? {
         val memo = memory.lastStrategistMemo
-        if (memo.phase.isBlank()) return requested
+        if (!hasStrategistMemo(memo)) return requested
         val primaryThreat = empireObservation.victoryThreats.firstOrNull()
         val requestedReason = requested?.reason?.trim().orEmpty()
         if (observation.empireSummary.isAtWar && !looksWarAware(memory)) {
@@ -258,7 +314,8 @@ object AgentMemoryManager {
         val haystack = listOfNotNull(
             memory.campaign.stage,
             memory.campaign.summary,
-            memory.campaign.objective,
+            memory.campaign.decisiveObjective,
+            memory.campaign.conversionBlocker,
             memory.campaign.reinforcementPlan,
             memory.lastStrategistMemo.futurePlan,
             memory.lastStrategistMemo.tacticianHandoff,
@@ -282,11 +339,272 @@ object AgentMemoryManager {
             lastStrategistMemo = memory.lastStrategistMemo.copy(
                 reviewCityNames = ArrayList(memory.lastStrategistMemo.reviewCityNames),
             ),
+            tacticianTurnLog = pruneTacticianTurnLog(memory.tacticianTurnLog, turn),
             cityIntents = ArrayList(memory.cityIntents.map { it.copy(reasons = ArrayList(it.reasons)) }),
             unitAssignments = ArrayList(memory.unitAssignments.map { it.copy() }),
             recentFailures = ArrayList(memory.recentFailures.map { it.copy() }),
         )
     }
+
+    private fun pruneTacticianTurnLog(
+        entries: List<TacticianTurnLogEntry>,
+        turn: Int,
+    ): ArrayList<TacticianTurnLogEntry> {
+        return ArrayList(
+            entries
+                .filter { it.turn <= turn }
+                .takeLast(maxTacticianTurnLogEntries)
+                .map { entry ->
+                    entry.copy(
+                        whatChanged = ArrayList(entry.whatChanged),
+                        completed = ArrayList(entry.completed),
+                        stillBlocked = ArrayList(entry.stillBlocked),
+                        obsolete = ArrayList(entry.obsolete),
+                        carryForward = ArrayList(entry.carryForward),
+                    )
+                }
+        )
+    }
+
+    private fun mergeTacticianTurnLog(
+        existing: List<TacticianTurnLogEntry>,
+        entry: TacticianTurnLogEntry?,
+    ): ArrayList<TacticianTurnLogEntry> {
+        val merged = ArrayList(
+            existing.takeLast(maxTacticianTurnLogEntries).map { existingEntry ->
+                existingEntry.copy(
+                    whatChanged = ArrayList(existingEntry.whatChanged),
+                    completed = ArrayList(existingEntry.completed),
+                    stillBlocked = ArrayList(existingEntry.stillBlocked),
+                    obsolete = ArrayList(existingEntry.obsolete),
+                    carryForward = ArrayList(existingEntry.carryForward),
+                )
+            }
+        )
+        if (entry != null) merged += entry
+        return ArrayList(merged.takeLast(maxTacticianTurnLogEntries))
+    }
+
+    private fun reconcileIntentCarryover(
+        civInfo: Civilization,
+        existingCityIntents: List<CityIntentMemory>,
+        existingUnitAssignments: List<UnitAssignmentMemory>,
+        turn: Int,
+    ): IntentCarryoverReconciliation {
+        val citiesByKey = civInfo.cities.associateBy { cityKey(it.location.x, it.location.y) }
+        val unitsById = civInfo.units.getCivUnits().associateBy { it.id }
+        val activeCityIntents = arrayListOf<CityIntentMemory>()
+        val activeUnitAssignments = arrayListOf<UnitAssignmentMemory>()
+        val completed = arrayListOf<String>()
+        val obsolete = arrayListOf<String>()
+
+        for (intent in existingCityIntents) {
+            val liveCity = citiesByKey[cityKey(intent.cityX, intent.cityY)]
+            if (liveCity == null) {
+                obsolete += "${intent.cityName} no longer exists, so the old ${describeCityIntent(intent)} carry-over is obsolete."
+                continue
+            }
+
+            when (intent.intent) {
+                "develop_city", "invest_with_gold" -> {
+                    val target = intent.target
+                    val liveProject = liveCity.cityConstructions.currentConstructionName().takeIf { it.isNotBlank() }
+                    if (target.isNullOrBlank()) {
+                        activeCityIntents += intent.copy(staleAfterTurn = turn + cityIntentHorizonTurns)
+                    } else if (liveProject == target) {
+                        activeCityIntents += intent.copy(lastProgressTurn = turn, staleAfterTurn = turn + cityIntentHorizonTurns)
+                    } else {
+                        completed += "${intent.cityName} is no longer on $target, so that city instruction is resolved."
+                    }
+                }
+                "city_focus" -> {
+                    val targetFocus = intent.target
+                    if (!targetFocus.isNullOrBlank() && liveCity.getCityFocus().name == targetFocus) {
+                        activeCityIntents += intent.copy(lastProgressTurn = turn, staleAfterTurn = turn + cityIntentHorizonTurns)
+                    } else {
+                        obsolete += "${intent.cityName} no longer has the ${targetFocus ?: "recorded"} focus, so the old focus reminder is stale."
+                    }
+                }
+                else -> activeCityIntents += intent.copy(staleAfterTurn = turn + cityIntentHorizonTurns)
+            }
+        }
+
+        for (assignment in existingUnitAssignments) {
+            val liveUnit = unitsById[assignment.unitId]
+            if (liveUnit == null) {
+                completed += "${assignment.unitName.ifBlank { "Unit #${assignment.unitId}" }} is gone, so its old ${describeUnitAssignment(assignment)} carry-over is resolved."
+                continue
+            }
+            val targetReached = assignment.targetX != null &&
+                assignment.targetY != null &&
+                liveUnit.getTile().position.x == assignment.targetX &&
+                liveUnit.getTile().position.y == assignment.targetY
+            if (targetReached) {
+                completed += "${assignment.unitName.ifBlank { "Unit #${assignment.unitId}" }} reached (${assignment.targetX}, ${assignment.targetY}), so that carry-over is complete."
+                continue
+            }
+            activeUnitAssignments += assignment.copy(staleAfterTurn = turn + unitAssignmentHorizonTurns)
+        }
+
+        return IntentCarryoverReconciliation(
+            cityIntents = activeCityIntents,
+            unitAssignments = activeUnitAssignments,
+            completed = completed,
+            obsolete = obsolete,
+            carryForward = buildCarryForwardNotes(activeCityIntents, activeUnitAssignments),
+        )
+    }
+
+    private fun buildTacticianTurnLogEntry(
+        civInfo: Civilization,
+        observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+        startingMemory: AgentMemory,
+        plan: AgentActionPlan?,
+        report: AgentActionExecutor.ExecutionReport?,
+        usedLegacyFallback: Boolean,
+        fallbackReason: String?,
+        intentionalNoOp: Boolean,
+        completed: List<String>,
+        obsolete: List<String>,
+        carryForward: List<String>,
+    ): TacticianTurnLogEntry? {
+        val turn = civInfo.gameInfo.turns
+        val whatChanged = buildWhatChangedNotes(civInfo, observation, empireObservation, plan, report)
+        val stillBlocked = summarizeCurrentBlockers(civInfo, observation, empireObservation, startingMemory)
+        val planNotes = plan?.notes?.trim().takeUnless { it.isNullOrEmpty() }
+        val summary = when {
+            usedLegacyFallback -> fallbackReason ?: "Legacy fallback handled the turn after the tactical plan broke."
+            intentionalNoOp -> "The tactician intentionally held actions this turn."
+            planNotes != null -> planNotes.take(220)
+            report != null -> "Executed ${report.executedActions} tactical actions with ${report.rejectedActions} rejected."
+            else -> "Turn completed without a recorded tactical delta."
+        }
+        if (
+            summary.isBlank() &&
+            whatChanged.isEmpty() &&
+            completed.isEmpty() &&
+            obsolete.isEmpty() &&
+            stillBlocked.isEmpty() &&
+            carryForward.isEmpty()
+        ) {
+            return null
+        }
+        return TacticianTurnLogEntry(
+            turn = turn,
+            basedOnStrategistTurn = startingMemory.lastStrategistMemo.lastReviewedTurn.takeIf { it > 0 },
+            campaignStage = startingMemory.campaign.stage.takeIf { it.isNotBlank() },
+            decisiveObjective = startingMemory.campaign.decisiveObjective,
+            summary = summary,
+            whatChanged = ArrayList(whatChanged.take(4)),
+            completed = ArrayList(completed.take(4)),
+            stillBlocked = ArrayList(stillBlocked.take(3)),
+            obsolete = ArrayList(obsolete.take(3)),
+            carryForward = ArrayList(carryForward.take(4)),
+        )
+    }
+
+    private fun buildWhatChangedNotes(
+        civInfo: Civilization,
+        observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+        plan: AgentActionPlan?,
+        report: AgentActionExecutor.ExecutionReport?,
+    ): List<String> {
+        val changes = arrayListOf<String>()
+        if (!observation.empireSummary.isAtWar && civInfo.isAtWar()) {
+            changes += "War began this turn."
+        }
+        if (observation.empireSummary.isAtWar && !civInfo.isAtWar()) {
+            changes += "The empire is no longer at war after this turn."
+        }
+        val cityDelta = civInfo.cities.size - observation.empireSummary.cityCount
+        if (cityDelta > 0) {
+            changes += "City count increased to ${civInfo.cities.size}."
+        }
+        if (cityDelta < 0) {
+            changes += "City count fell to ${civInfo.cities.size}."
+        }
+        val currentResearch = civInfo.tech.currentTechnologyName()
+        if (empireObservation.currentResearch == null && currentResearch != null) {
+            changes += "Research is now set to $currentResearch."
+        }
+        val declaredWar = plan?.actions
+            ?.filterIsInstance<AgentActionCommand.SelectEmpireOption>()
+            ?.any { it.candidateId.startsWith("diplo:war:") } == true
+        if (declaredWar) {
+            changes += "A declare-war action was committed in the tactical plan."
+        }
+        if (report != null && report.rejectedActions > 0) {
+            changes += "${report.rejectedActions} tactical actions were rejected during execution."
+        }
+        return changes
+    }
+
+    private fun summarizeCurrentBlockers(
+        civInfo: Civilization,
+        observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+        startingMemory: AgentMemory,
+    ): List<String> {
+        val blockers = linkedSetOf<String>()
+        val objective = startingMemory.campaign.decisiveObjective?.lowercase().orEmpty()
+        val liveContactComplete = civInfo.getKnownCivs().any { !it.isBarbarian && !it.isCityState }
+        if (!empireObservation.gameContext.contactComplete &&
+            objective.any { it.isLetter() } &&
+            (objective.contains("contact") || objective.contains("second city") || objective.contains("settler"))
+        ) {
+            if (!liveContactComplete) blockers += "Contact with the rival is still unresolved."
+        }
+        if (objective.contains("second city") && civInfo.cities.size < 2) {
+            blockers += "The second city is still not secured."
+        }
+        val carriedBlocker = startingMemory.campaign.conversionBlocker?.trim()
+        if (!carriedBlocker.isNullOrEmpty()) {
+            when {
+                carriedBlocker.contains("one city", ignoreCase = true) && civInfo.cities.size < 2 ->
+                    blockers += "We are still on one city."
+                carriedBlocker.contains("contact", ignoreCase = true) && !liveContactComplete ->
+                    blockers += "The contact bottleneck is still real."
+                carriedBlocker.contains("melee", ignoreCase = true) && observation.units.none { it.role == "melee" && it.health >= 70 } ->
+                    blockers += "Healthy melee remain thin."
+            }
+        }
+        return blockers.toList()
+    }
+
+    private fun buildCarryForwardNotes(
+        cityIntents: List<CityIntentMemory>,
+        unitAssignments: List<UnitAssignmentMemory>,
+    ): List<String> {
+        val notes = linkedSetOf<String>()
+        cityIntents.take(2).forEach { intent ->
+            val target = intent.target?.takeIf { it.isNotBlank() } ?: intent.intent
+            notes += "${intent.cityName} still carries $target."
+        }
+        unitAssignments.take(2).forEach { assignment ->
+            val unitName = assignment.unitName.ifBlank { "Unit #${assignment.unitId}" }
+            notes += "$unitName still carries ${describeUnitAssignment(assignment)}."
+        }
+        return notes.toList()
+    }
+
+    private fun describeCityIntent(intent: CityIntentMemory): String {
+        val target = intent.target?.takeIf { it.isNotBlank() } ?: intent.intent
+        return "city intent for $target"
+    }
+
+    private fun describeUnitAssignment(assignment: UnitAssignmentMemory): String {
+        return assignment.detail?.takeIf { it.isNotBlank() } ?: assignment.role.replace('_', ' ')
+    }
+
+    private data class IntentCarryoverReconciliation(
+        val cityIntents: ArrayList<CityIntentMemory>,
+        val unitAssignments: ArrayList<UnitAssignmentMemory>,
+        val completed: List<String>,
+        val obsolete: List<String>,
+        val carryForward: List<String>,
+    )
 
     private fun pruneWorldModel(worldModel: WorldModelMemory, turn: Int): WorldModelMemory {
         return worldModel.copy(
@@ -410,10 +728,9 @@ object AgentMemoryManager {
         }
         return CampaignMemory(
             title = memo.campaignTitle?.trim().takeUnless { it.isNullOrEmpty() } ?: current.title,
-            stage = memo.campaignStage?.trim().takeUnless { it.isNullOrEmpty() }
-                ?: memo.phase.trim().takeIf { it.isNotEmpty() }
-                ?: current.stage,
-            objective = memo.campaignObjective?.trim().takeUnless { it.isNullOrEmpty() } ?: current.objective,
+            stage = memo.campaignStage.trim(),
+            decisiveObjective = memo.decisiveObjective.trim().takeUnless { it.isEmpty() } ?: current.decisiveObjective,
+            conversionBlocker = memo.conversionBlocker?.trim().takeUnless { it.isNullOrEmpty() } ?: current.conversionBlocker,
             summary = memo.campaignSummary?.trim().takeUnless { it.isNullOrEmpty() } ?: current.summary,
             reinforcementPlan = memo.reinforcementPlan?.trim().takeUnless { it.isNullOrEmpty() } ?: current.reinforcementPlan,
             primaryRivalCiv = memo.rivals.firstOrNull()?.rivalCiv
@@ -1044,5 +1361,24 @@ object AgentMemoryManager {
         if (turn != null && turn > 45) return false
         if (unit.nearbyHostileUnits > 0 || unit.nearbyHostileCities > 0) return false
         return true
+    }
+
+    private fun hasStrategistMemo(memo: AgentStrategistMemoMemory): Boolean {
+        return memo.campaignStage.isNotBlank() ||
+            !memo.thesis.isNullOrBlank() ||
+            !memo.currentSituation.isNullOrBlank()
+    }
+
+    private fun isSameCampaignThread(
+        previous: AgentStrategistMemoMemory,
+        current: AgentStrategistMemoDraft,
+    ): Boolean {
+        val previousStage = previous.campaignStage.trim()
+        val currentStage = current.campaignStage.trim()
+        val previousObjective = previous.decisiveObjective?.trim().orEmpty()
+        val currentObjective = current.decisiveObjective.trim()
+        return previousStage.isNotBlank() &&
+            previousStage == currentStage &&
+            previousObjective == currentObjective
     }
 }

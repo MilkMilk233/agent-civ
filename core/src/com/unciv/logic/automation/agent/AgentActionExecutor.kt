@@ -122,6 +122,8 @@ class AgentActionExecutor {
         val usedUnitCandidateIds = hashSetOf<String>()
         val unitCommandModes = hashMapOf<Int, UnitCommandMode>()
         val initialCityCount = civInfo.cities.size
+        val frozenEmpireContext = AgentEmpireObservationBuilder.build(civInfo, civInfo.agentMemory.clone())
+        val frozenCityOptionContext = AgentCityOptionBuilder.build(civInfo, civInfo.agentMemory)
         // Freeze unit-option candidates for the duration of this pass so later
         // actions don't invalidate earlier prompt-visible candidate IDs merely
         // because the shortlist was regenerated from a mutated board state.
@@ -141,8 +143,7 @@ class AgentActionExecutor {
                         continue
                     }
 
-                    val context = AgentEmpireObservationBuilder.build(civInfo, civInfo.agentMemory.clone())
-                    val candidate = context.candidates[action.candidateId]
+                    val candidate = frozenEmpireContext.candidates[action.candidateId]
                     if (candidate == null) {
                         rejected++
                         outcomes += ActionOutcome(
@@ -213,8 +214,7 @@ class AgentActionExecutor {
                         continue
                     }
 
-                    val context = AgentCityOptionBuilder.build(civInfo)
-                    val candidate = context.candidates[action.candidateId]
+                    val candidate = frozenCityOptionContext.candidates[action.candidateId]
                     if (candidate == null) {
                         rejected++
                         outcomes += ActionOutcome(

@@ -22,16 +22,17 @@ object AgentCityOptionBuilder {
     private const val maxGrowthCandidatesPerCity = 1
     private const val maxFocusCandidatesPerCity = 4
 
-    internal fun build(civInfo: Civilization): AgentCityOptionContext {
+    internal fun build(civInfo: Civilization, memory: AgentMemory = civInfo.agentMemory): AgentCityOptionContext {
         val candidates = LinkedHashMap<String, AgentCityRuntimeCandidate>()
         val observationsByCity = LinkedHashMap<String, AgentCityActionBuckets>()
+        val conversionContext = buildConversionContext(memory)
 
         for (city in civInfo.cities.sortedWith(compareBy<City> { it.name }.thenBy { it.location.toString() })) {
             val cityKey = cityKey(city.location.x, city.location.y)
             val observations = observationsByCity.getOrPut(cityKey) { AgentCityActionBuckets() }
 
             appendCandidates(candidates, observations.chooseProject, buildConstructionCandidates(city))
-            appendCandidates(candidates, observations.purchase, buildPurchaseCandidates(city))
+            appendCandidates(candidates, observations.purchase, buildPurchaseCandidates(city, conversionContext))
             appendCandidates(candidates, observations.buyTile, buildTilePurchaseCandidates(city))
             appendCandidates(candidates, observations.growthMode, buildGrowthCandidates(city))
             appendCandidates(candidates, observations.focus, buildFocusCandidates(city))
@@ -46,9 +47,11 @@ object AgentCityOptionBuilder {
     internal fun rankConstructionChoices(
         city: City,
         limit: Int = maxConstructionCandidatesPerCity,
+        memory: AgentMemory = city.civ.agentMemory,
     ): List<RankedConstructionChoice> {
+        val conversionContext = buildConversionContext(memory)
         val needsExplicitChoice = AgentCityProjectPolicy.needsExplicitProjectChoice(city)
-        val orderedNames: List<String> = if (needsExplicitChoice) {
+        val orderedNames: List<String> = if (needsExplicitChoice || conversionContext.objectivePressure) {
             val names = mutableListOf<String>()
             names += city.cityConstructions.getBuildableBuildings().map { it.name }
             names += city.cityConstructions.getConstructableUnits().map { it.name }
@@ -67,12 +70,12 @@ object AgentCityOptionBuilder {
                 val construction = runCatching { city.cityConstructions.getConstruction(name) }.getOrNull()
                     ?: return@mapIndexedNotNull null
                 if (!construction.isBuildable(city.cityConstructions)) return@mapIndexedNotNull null
-                val score = scoreConstructionChoice(city, construction, index)
+                val score = scoreConstructionChoice(city, construction, index, conversionContext)
                 if (!needsExplicitChoice && score <= 0) return@mapIndexedNotNull null
                 RankedConstructionChoice(
                     name = name,
                     score = score,
-                    detail = describeConstructionChoice(city, construction),
+                    detail = describeConstructionChoice(city, construction, conversionContext),
                 )
             }
 
@@ -97,8 +100,14 @@ object AgentCityOptionBuilder {
     private fun buildConstructionCandidates(city: City): List<AgentCityRuntimeCandidate> {
         val needsExplicitChoice = AgentCityProjectPolicy.needsExplicitProjectChoice(city)
         val currentName = city.cityConstructions.currentConstructionName()
-        return rankConstructionChoices(city, maxConstructionCandidatesPerCity)
+        val choiceLimit = if (needsExplicitChoice) {
+            maxConstructionCandidatesPerCity
+        } else {
+            maxConstructionCandidatesPerCity + 1
+        }
+        return rankConstructionChoices(city, choiceLimit, city.civ.agentMemory)
             .filter { needsExplicitChoice || it.name != currentName }
+            .take(maxConstructionCandidatesPerCity)
             .map { choice ->
                 val candidateId = "citybuild:${city.location.x},${city.location.y}:${choice.name}"
                 val construction = city.cityConstructions.getConstruction(choice.name)
@@ -139,13 +148,31 @@ object AgentCityOptionBuilder {
             }
     }
 
-    private fun buildPurchaseCandidates(city: City): List<AgentCityRuntimeCandidate> {
-        val automation = ConstructionAutomation(city.cityConstructions)
-        return automation.getRankedConstructionChoices(limit = maxPurchaseCandidatesPerCity * 2)
+    private fun buildPurchaseCandidates(
+        city: City,
+        conversionContext: ConversionContext,
+    ): List<AgentCityRuntimeCandidate> {
+        val candidateNames = if (conversionContext.objectivePressure) {
+            buildList {
+                addAll(city.cityConstructions.getBuildableBuildings().map { it.name })
+                addAll(city.cityConstructions.getConstructableUnits().map { it.name })
+            }
+        } else {
+            val automation = ConstructionAutomation(city.cityConstructions)
+            buildList {
+                addAll(automation.getRankedConstructionChoices(limit = maxPurchaseCandidatesPerCity * 2).map { it.name })
+                addAll(city.cityConstructions.getConstructableUnits().map { it.name })
+            }
+        }
+        return candidateNames
+            .distinct()
+            .mapNotNull { name -> runCatching { city.cityConstructions.getConstruction(name) }.getOrNull() }
             .filterIsInstance<INonPerpetualConstruction>()
             .mapNotNull { construction ->
                 val cost = construction.getStatBuyCost(city, Stat.Gold) ?: return@mapNotNull null
                 if (!city.cityConstructions.isConstructionPurchaseAllowed(construction, Stat.Gold, cost)) return@mapNotNull null
+                val purchaseScore = scorePurchaseCandidate(city, construction, cost, conversionContext)
+                if (purchaseScore <= 0) return@mapNotNull null
                 val detailParts = arrayListOf<String>()
                 detailParts += "Cost $cost gold"
                 detailParts += when (construction) {
@@ -153,8 +180,12 @@ object AgentCityOptionBuilder {
                     is com.unciv.models.ruleset.unit.BaseUnit -> "Unit purchase"
                     else -> "Purchase"
                 }
+                if (conversionContext.objectivePressure) {
+                    detailParts += describePurchasePriority(construction, conversionContext)
+                }
                 val candidateId = "citypurchase:${city.location.x},${city.location.y}:${construction.name}"
-                AgentCityRuntimeCandidate(
+                PurchaseRuntimeCandidate(
+                    runtime = AgentCityRuntimeCandidate(
                     observation = AgentCityActionCandidateObservation(
                         candidateId = candidateId,
                         title = "Buy ${construction.name}",
@@ -182,8 +213,12 @@ object AgentCityOptionBuilder {
                         AgentCityProjectPolicy.purchaseWithGold(liveCity, construction.name)
                     },
                     successMessage = "Purchased ${construction.name} in ${city.name}",
+                    ),
+                    score = purchaseScore,
                 )
             }
+            .sortedWith(compareByDescending<PurchaseRuntimeCandidate> { it.score }.thenBy { it.runtime.observation.title })
+            .map { it.runtime }
             .distinctBy { it.observation.candidateId }
             .take(maxPurchaseCandidatesPerCity)
     }
@@ -394,6 +429,7 @@ object AgentCityOptionBuilder {
         city: City,
         construction: IConstruction,
         baseIndex: Int,
+        conversionContext: ConversionContext,
     ): Int {
         val civInfo = city.civ
         val peacefulGrowthWindow = isPeacefulGrowthWindow(city)
@@ -443,10 +479,27 @@ object AgentCityOptionBuilder {
             }
         }
 
+        if (conversionContext.objectivePressure) {
+            score += conversionPressureAdjustment(city, construction, conversionContext)
+            if (currentName.isNotBlank() && construction.name != currentName) {
+                val currentConstruction = runCatching { city.cityConstructions.getConstruction(currentName) }.getOrNull()
+                if (currentConstruction != null &&
+                    isPassivePeacetimeConstruction(currentConstruction) &&
+                    isFrontlineMilitaryConstruction(construction)
+                ) {
+                    score += if ((currentTurnsLeft ?: Int.MAX_VALUE) <= 2) 35 else 75
+                }
+            }
+        }
+
         return score
     }
 
-    private fun describeConstructionChoice(city: City, construction: IConstruction): String {
+    private fun describeConstructionChoice(
+        city: City,
+        construction: IConstruction,
+        conversionContext: ConversionContext,
+    ): String {
         val civInfo = city.civ
         val peacefulGrowthWindow = isPeacefulGrowthWindow(city)
         val noWorkerExists = civInfo.units.getCivUnits().none { it.cache.hasUniqueToBuildImprovements }
@@ -490,9 +543,91 @@ object AgentCityOptionBuilder {
             }
         }
 
+        if (conversionContext.objectivePressure) {
+            when {
+                isFrontlineMilitaryConstruction(construction) && conversionContext.frontlineShortage ->
+                    reasons += "Current campaign needs more healthy capture-capable frontline units to convert pressure into a city take"
+                isFrontlineMilitaryConstruction(construction) ->
+                    reasons += "Frontline military production feeds the decisive objective more directly than passive city development"
+                construction is BaseUnit && construction.isRanged() && conversionContext.rangedShortage ->
+                    reasons += "The current campaign still needs more ranged support to soften the objective safely"
+                construction is BaseUnit && construction.isRanged() ->
+                    reasons += "Extra ranged support helps sustain pressure, but frontline units matter more if capture capability is thin"
+                construction is BaseUnit && construction.name == "Scout" ->
+                    reasons += "Additional recon is lower value than objective conversion during this campaign"
+                construction is BaseUnit && construction.isCityFounder() ->
+                    reasons += "Expansion is not the current bottleneck; the decisive objective needs conversion first"
+                construction is Building && isPassivePeacetimeConstruction(construction) ->
+                    reasons += "Passive infrastructure slows the current conversion window unless the city is under real threat"
+            }
+        }
+
         if (reasons.isEmpty()) reasons += "Ranked city development option from current game state"
         currentProgress?.let { reasons += it }
         return reasons.joinToString(". ")
+    }
+
+    private fun scorePurchaseCandidate(
+        city: City,
+        construction: INonPerpetualConstruction,
+        goldCost: Int,
+        conversionContext: ConversionContext,
+    ): Int {
+        var score = 120 - goldCost / 12
+        if (!conversionContext.objectivePressure) {
+            if (construction is BaseUnit && construction.isMilitary) score += 20
+            if (construction is Building && construction.name == "Library") score += 15
+            return score
+        }
+
+        score += when {
+            isFrontlineMilitaryConstruction(construction) && conversionContext.frontlineShortage -> 220
+            isFrontlineMilitaryConstruction(construction) -> 170
+            construction is BaseUnit && construction.isRanged() && conversionContext.rangedShortage -> 150
+            construction is BaseUnit && construction.isRanged() -> 105
+            construction is Building && isMilitaryDefenseBuilding(construction) && city.getThreatScore() > 0 -> 55
+            construction is Building && isMilitaryInfrastructureBuilding(construction) -> 20
+            construction is BaseUnit && construction.name == "Scout" -> -180
+            construction is BaseUnit && construction.isCityFounder() -> -220
+            construction is BaseUnit && construction.hasUnique(UniqueType.BuildImprovements, GameContext.IgnoreConditionals) -> -150
+            construction is Building && isPassivePeacetimeConstruction(construction) -> -165
+            else -> -90
+        }
+        return score
+    }
+
+    private fun describePurchasePriority(
+        construction: INonPerpetualConstruction,
+        conversionContext: ConversionContext,
+    ): String {
+        return when {
+            isFrontlineMilitaryConstruction(construction) && conversionContext.frontlineShortage -> "High-value frontline conversion buy"
+            isFrontlineMilitaryConstruction(construction) -> "Frontline reinforcement buy"
+            construction is BaseUnit && construction.isRanged() && conversionContext.rangedShortage -> "Needed ranged support buy"
+            construction is BaseUnit && construction.isRanged() -> "Supportive pressure buy"
+            construction is Building && isMilitaryDefenseBuilding(construction) -> "Defensive emergency buy"
+            else -> "Lower-priority purchase during the current campaign"
+        }
+    }
+
+    private fun conversionPressureAdjustment(
+        city: City,
+        construction: IConstruction,
+        conversionContext: ConversionContext,
+    ): Int {
+        return when {
+            isFrontlineMilitaryConstruction(construction) && conversionContext.frontlineShortage -> 210
+            isFrontlineMilitaryConstruction(construction) -> 150
+            construction is BaseUnit && construction.isRanged() && conversionContext.rangedShortage -> 155
+            construction is BaseUnit && construction.isRanged() -> 110
+            construction is BaseUnit && construction.name == "Scout" -> -170
+            construction is BaseUnit && construction.isCityFounder() -> -210
+            construction is BaseUnit && construction.hasUnique(UniqueType.BuildImprovements, GameContext.IgnoreConditionals) -> -130
+            construction is Building && isMilitaryDefenseBuilding(construction) && city.getThreatScore() > 0 -> 45
+            construction is Building && isMilitaryInfrastructureBuilding(construction) -> 25
+            construction is Building && isPassivePeacetimeConstruction(construction) -> -145
+            else -> -70
+        }
     }
 
     private fun currentConstructionProgressText(city: City, candidateName: String): String? {
@@ -559,6 +694,56 @@ object AgentCityOptionBuilder {
         else -> listOf("balanced")
     }
 
+    private fun buildConversionContext(memory: AgentMemory): ConversionContext {
+        val stage = memory.campaign.stage.lowercase()
+        val decisiveObjective = memory.campaign.decisiveObjective?.lowercase().orEmpty()
+        val conversionBlocker = memory.campaign.conversionBlocker?.lowercase().orEmpty()
+        val objectivePressure = stage in setOf("pressure", "staging", "assault", "rebuild", "declaration") ||
+            decisiveObjective.contains("capture") ||
+            decisiveObjective.contains("take") ||
+            decisiveObjective.contains("assault") ||
+            decisiveObjective.contains("war") ||
+            decisiveObjective.contains("frontier")
+        return ConversionContext(
+            objectivePressure = objectivePressure,
+            frontlineShortage = conversionBlocker.contains("melee") ||
+                conversionBlocker.contains("frontline") ||
+                conversionBlocker.contains("capture"),
+            rangedShortage = conversionBlocker.contains("ranged") ||
+                conversionBlocker.contains("bombard") ||
+                conversionBlocker.contains("siege") ||
+                conversionBlocker.contains("support"),
+        )
+    }
+
+    private fun isFrontlineMilitaryConstruction(construction: IConstruction): Boolean {
+        return construction is BaseUnit &&
+            construction.isMilitary &&
+            !construction.isRanged() &&
+            construction.name != "Scout"
+    }
+
+    private fun isMilitaryInfrastructureBuilding(construction: IConstruction): Boolean {
+        if (construction !is Building) return false
+        val lower = construction.name.lowercase()
+        return lower.contains("barracks") || lower.contains("armory") || lower.contains("arsenal")
+    }
+
+    private fun isMilitaryDefenseBuilding(construction: IConstruction): Boolean {
+        if (construction !is Building) return false
+        val lower = construction.name.lowercase()
+        return lower.contains("wall") || lower.contains("castle")
+    }
+
+    private fun isPassivePeacetimeConstruction(construction: IConstruction): Boolean {
+        return when (construction) {
+            is BaseUnit -> construction.name in setOf("Scout", "Settler") ||
+                construction.hasUnique(UniqueType.BuildImprovements, GameContext.IgnoreConditionals)
+            is Building -> !isMilitaryInfrastructureBuilding(construction) && !isMilitaryDefenseBuilding(construction)
+            else -> false
+        }
+    }
+
     private fun City.getThreatScore(): Int {
         val cityTile = getCenterTile()
         return civ.viewableTiles.count { tile ->
@@ -590,6 +775,17 @@ object AgentCityOptionBuilder {
         val tile: Tile,
         val score: Int,
         val detail: String,
+    )
+
+    private data class PurchaseRuntimeCandidate(
+        val runtime: AgentCityRuntimeCandidate,
+        val score: Int,
+    )
+
+    private data class ConversionContext(
+        val objectivePressure: Boolean,
+        val frontlineShortage: Boolean,
+        val rangedShortage: Boolean,
     )
 
     private data class AgentCityActionBuckets(

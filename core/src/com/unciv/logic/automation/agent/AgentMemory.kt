@@ -12,6 +12,7 @@ data class AgentMemory(
     var recentChanges: ArrayList<MemoryNote> = arrayListOf(),
     var lessons: ArrayList<MemoryNote> = arrayListOf(),
     var lastStrategistMemo: AgentStrategistMemoMemory = AgentStrategistMemoMemory(),
+    var tacticianTurnLog: ArrayList<TacticianTurnLogEntry> = arrayListOf(),
     var cityIntents: ArrayList<CityIntentMemory> = arrayListOf(),
     var unitAssignments: ArrayList<UnitAssignmentMemory> = arrayListOf(),
     var recentFailures: ArrayList<RecentFailureMemory> = arrayListOf(),
@@ -24,6 +25,7 @@ data class AgentMemory(
         arrayListOf(),
         arrayListOf(),
         AgentStrategistMemoMemory(),
+        arrayListOf(),
         arrayListOf(),
         arrayListOf(),
         arrayListOf(),
@@ -51,6 +53,17 @@ data class AgentMemory(
         lessons = ArrayList(lessons.map { it.copy() }),
         lastStrategistMemo = lastStrategistMemo.copy(
             reviewCityNames = ArrayList(lastStrategistMemo.reviewCityNames),
+        ),
+        tacticianTurnLog = ArrayList(
+            tacticianTurnLog.map { entry ->
+                entry.copy(
+                    whatChanged = ArrayList(entry.whatChanged),
+                    completed = ArrayList(entry.completed),
+                    stillBlocked = ArrayList(entry.stillBlocked),
+                    obsolete = ArrayList(entry.obsolete),
+                    carryForward = ArrayList(entry.carryForward),
+                )
+            }
         ),
         cityIntents = ArrayList(cityIntents.map { it.copy(reasons = ArrayList(it.reasons)) }),
         unitAssignments = ArrayList(unitAssignments.map { it.copy() }),
@@ -83,7 +96,8 @@ data class RivalNotebookMemory(
 data class CampaignMemory(
     var title: String = "",
     var stage: String = "",
-    var objective: String? = null,
+    var decisiveObjective: String? = null,
+    var conversionBlocker: String? = null,
     var summary: String? = null,
     var reinforcementPlan: String? = null,
     var primaryRivalCiv: String? = null,
@@ -91,7 +105,7 @@ data class CampaignMemory(
     var notes: ArrayList<MemoryNote> = arrayListOf(),
     var lastUpdatedTurn: Int = 0,
 ) : IsPartOfGameInfoSerialization {
-    constructor() : this("", "", null, null, null, null, arrayListOf(), arrayListOf(), 0)
+    constructor() : this("", "", null, null, null, null, null, arrayListOf(), arrayListOf(), 0)
 }
 
 @Serializable
@@ -145,6 +159,22 @@ data class CityIntentMemory(
     var staleAfterTurn: Int = 0,
 ) : IsPartOfGameInfoSerialization {
     constructor() : this(0, 0, "", "", null, arrayListOf(), 0, 0)
+}
+
+@Serializable
+data class TacticianTurnLogEntry(
+    var turn: Int = 0,
+    var basedOnStrategistTurn: Int? = null,
+    var campaignStage: String? = null,
+    var decisiveObjective: String? = null,
+    var summary: String = "",
+    var whatChanged: ArrayList<String> = arrayListOf(),
+    var completed: ArrayList<String> = arrayListOf(),
+    var stillBlocked: ArrayList<String> = arrayListOf(),
+    var obsolete: ArrayList<String> = arrayListOf(),
+    var carryForward: ArrayList<String> = arrayListOf(),
+) : IsPartOfGameInfoSerialization {
+    constructor() : this(0, null, null, null, "", arrayListOf(), arrayListOf(), arrayListOf(), arrayListOf(), arrayListOf())
 }
 
 @Serializable

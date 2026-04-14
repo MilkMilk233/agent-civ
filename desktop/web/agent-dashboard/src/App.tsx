@@ -854,6 +854,8 @@ function TurnDetail({
   const strategy = asRecord(plannerBrief?.strategy);
   const memoryContext = asRecord(plannerBrief?.memoryContext);
   const campaignContext = asRecord(plannerBrief?.campaignContext);
+  const objectiveTheater = asRecord(plannerBrief?.objectiveTheater);
+  const captureReadiness = asRecord(plannerBrief?.captureReadiness);
   const attentionFacts = objectArray(plannerBrief?.attentionFacts);
   const progressInMotion = objectArray(plannerBrief?.progressInMotion);
   const strategistRivalThreats = objectArray(strategistBrief?.rivalThreats);
@@ -886,6 +888,7 @@ function TurnDetail({
   const empirePlanMemory = asRecord(memoryRecord?.empirePlan);
   const recentChangesMemory = objectArray(memoryRecord?.recentChanges);
   const lessonsMemory = objectArray(memoryRecord?.lessons);
+  const tacticianTurnLogMemory = objectArray(memoryRecord?.tacticianTurnLog);
   const lastStrategistMemoMemory = asRecord(memoryRecord?.lastStrategistMemo);
   const worldModelNotes = objectArray(worldModelMemory?.notes);
   const worldModelAnchors = objectArray(worldModelMemory?.anchors);
@@ -1085,6 +1088,7 @@ function TurnDetail({
               <SummaryStat label="Empire notes" value={formatNumber(empirePlanNotes.length)} />
               <SummaryStat label="Recent changes" value={formatNumber(recentChangesMemory.length)} />
               <SummaryStat label="Lessons" value={formatNumber(lessonsMemory.length)} />
+              <SummaryStat label="Tactician log" value={formatNumber(tacticianTurnLogMemory.length)} />
               <SummaryStat label="City intents" value={formatNumber(cityIntentsMemory.length)} />
               <SummaryStat label="Unit assignments" value={formatNumber(unitAssignmentsMemory.length)} />
               <SummaryStat label="Recent failures" value={formatNumber(recentFailuresMemory.length)} />
@@ -1115,10 +1119,16 @@ function TurnDetail({
                 <div className="summary-grid compact">
                   <SummaryStat label="Title" value={stringValue(campaignMemory.title) || "—"} />
                   <SummaryStat label="Stage" value={stringValue(campaignMemory.stage) || "—"} />
-                  <SummaryStat label="Objective" value={stringValue(campaignMemory.objective) || "—"} />
+                  <SummaryStat label="Objective" value={stringValue(campaignMemory.decisiveObjective) || "—"} />
                   <SummaryStat label="Primary rival" value={stringValue(campaignMemory.primaryRivalCiv) || "—"} />
                 </div>
                 {stringValue(campaignMemory.summary) ? <p className="card-paragraph">{stringValue(campaignMemory.summary)}</p> : null}
+                {stringValue(campaignMemory.conversionBlocker) ? (
+                  <>
+                    <SectionLabel text="Conversion blocker" />
+                    <p className="card-paragraph">{stringValue(campaignMemory.conversionBlocker)}</p>
+                  </>
+                ) : null}
                 {stringValue(campaignMemory.reinforcementPlan) ? (
                   <>
                     <SectionLabel text="Reinforcement plan" />
@@ -1171,6 +1181,7 @@ function TurnDetail({
             emptyTitle="No lessons"
             emptyBody="No lessons or cautions were carried into this turn."
           />
+          <TacticianTurnLogSection entries={tacticianTurnLogMemory} />
 
           <CityIntentMemorySection intents={cityIntentsMemory} />
           <UnitAssignmentMemorySection assignments={unitAssignmentsMemory} />
@@ -1211,12 +1222,19 @@ function TurnDetail({
             <>
               <div className="summary-grid compact">
                 <SummaryStat label="Win path" value={stringValue(strategistMemo.winPath)} />
-                <SummaryStat label="Phase" value={stringValue(strategistMemo.phase)} />
+                <SummaryStat label="Stage" value={stringValue(strategistMemo.campaignStage)} />
+                <SummaryStat label="Objective" value={stringValue(strategistMemo.decisiveObjective)} />
                 <SummaryStat label="Review turn" value={formatNumber(numberValue(strategistMemo.reviewAfterTurn))} />
                 <SummaryStat label="Created" value={memoCreatedTurn === null ? "Unknown" : `Turn ${formatNumber(memoCreatedTurn)}`} />
                 <SummaryStat label="Last reviewed" value={memoLastReviewedTurn === null ? "Unknown" : `Turn ${formatNumber(memoLastReviewedTurn)}`} />
               </div>
               <p className="card-paragraph">{stringValue(strategistMemo.thesis) || "No strategist thesis recorded."}</p>
+              {stringValue(strategistMemo.conversionBlocker) ? (
+                <>
+                  <SectionLabel text="Conversion blocker" />
+                  <p className="card-paragraph">{stringValue(strategistMemo.conversionBlocker)}</p>
+                </>
+              ) : null}
               {stringValue(strategistMemo.pastSummary) ? (
                 <>
                   <SectionLabel text="Past" />
@@ -1260,9 +1278,21 @@ function TurnDetail({
               <>
                 <div className="summary-grid compact">
                   <SummaryStat label="Archetype" value={stringValue(strategy?.gameArchetype)} />
-                  <SummaryStat label="Phase" value={stringValue(strategy?.phase)} />
+                  <SummaryStat label="Stage" value={stringValue(strategy?.campaignStage)} />
                   <SummaryStat label="Victory goal" value={stringValue(strategy?.winPath)} />
                 </div>
+                {stringValue(strategy?.decisiveObjective) ? (
+                  <>
+                    <SectionLabel text="Decisive objective" />
+                    <p className="card-paragraph">{stringValue(strategy?.decisiveObjective)}</p>
+                  </>
+                ) : null}
+                {stringValue(strategy?.conversionBlocker) ? (
+                  <>
+                    <SectionLabel text="Conversion blocker" />
+                    <p className="card-paragraph">{stringValue(strategy?.conversionBlocker)}</p>
+                  </>
+                ) : null}
                 {stringValue(strategy?.thesis) ? <p className="card-paragraph">{stringValue(strategy?.thesis)}</p> : null}
                 {stringValue(strategy?.tacticianHandoff) ? (
                   <>
@@ -1276,6 +1306,8 @@ function TurnDetail({
                     <div className="structured-list">
                       {stringValue(memoryContext.worldModelSummary) ? <p className="card-paragraph">{stringValue(memoryContext.worldModelSummary)}</p> : null}
                       {stringValue(memoryContext.campaignSummary) ? <p className="card-paragraph">{stringValue(memoryContext.campaignSummary)}</p> : null}
+                      {stringValue(memoryContext.decisiveObjective) ? <p className="card-paragraph"><strong>Objective:</strong> {stringValue(memoryContext.decisiveObjective)}</p> : null}
+                      {stringValue(memoryContext.conversionBlocker) ? <p className="card-paragraph"><strong>Blocker:</strong> {stringValue(memoryContext.conversionBlocker)}</p> : null}
                       {stringValue(memoryContext.mainRivalSummary) ? <p className="card-paragraph">{stringValue(memoryContext.mainRivalSummary)}</p> : null}
                     </div>
                   </>
@@ -1283,6 +1315,66 @@ function TurnDetail({
               </>
             ) : (
               <p className="muted-text">Planner brief missing from this turn.</p>
+            )}
+          </Card>
+
+          <Card title="Objective theater" subtitle="The full surfaced battlefield slice around the current decisive objective, plus a compact reserve summary.">
+            {objectiveTheater ? (
+              <>
+                <div className="summary-grid compact">
+                  <SummaryStat label="Target" value={stringValue(asRecord(objectiveTheater.target)?.name)} />
+                  <SummaryStat label="Stage" value={stringValue(objectiveTheater.campaignStage)} />
+                  <SummaryStat label="Surfaced units" value={formatNumber(numberValue(objectiveTheater.surfacedUnits))} />
+                  <SummaryStat label="Hidden rear units" value={formatNumber(numberValue(objectiveTheater.hiddenRearUnits))} />
+                </div>
+                <div className="summary-grid compact">
+                  <SummaryStat label="Combat" value={formatNumber(numberValue(objectiveTheater.surfacedCombatUnits))} />
+                  <SummaryStat label="Melee" value={formatNumber(numberValue(objectiveTheater.surfacedMeleeUnits))} />
+                  <SummaryStat label="Ranged" value={formatNumber(numberValue(objectiveTheater.surfacedRangedUnits))} />
+                </div>
+                <div className="summary-grid compact">
+                  <SummaryStat label="Reserve combat" value={formatNumber(numberValue(objectiveTheater.reserveCombatUnits))} />
+                  <SummaryStat label="Reserve melee" value={formatNumber(numberValue(objectiveTheater.reserveMeleeUnits))} />
+                  <SummaryStat label="Reserve ranged" value={formatNumber(numberValue(objectiveTheater.reserveRangedUnits))} />
+                </div>
+                {stringList(objectiveTheater.supportCities).length ? (
+                  <>
+                    <SectionLabel text="Support cities" />
+                    <TagList values={stringList(objectiveTheater.supportCities)} tone="accent" />
+                  </>
+                ) : null}
+              </>
+            ) : (
+              <p className="muted-text">No objective theater was surfaced on this turn.</p>
+            )}
+          </Card>
+
+          <Card title="Capture readiness" subtitle="Whether the current objective package can actually convert into a city take or worker capture soon.">
+            {captureReadiness ? (
+              <>
+                <div className="summary-grid compact">
+                  <SummaryStat label="Target" value={stringValue(asRecord(captureReadiness.target)?.name)} />
+                  <SummaryStat label="Kind" value={stringValue(captureReadiness.targetKind)} />
+                  <SummaryStat label="Visible now" value={booleanText(captureReadiness.targetVisible)} />
+                  <SummaryStat label="Status" value={stringValue(captureReadiness.status)} />
+                </div>
+                <div className="summary-grid compact">
+                  <SummaryStat label="Target health" value={formatNumber(numberValue(captureReadiness.targetHealth))} />
+                  <SummaryStat label="Target strength" value={formatNumber(numberValue(captureReadiness.targetStrength))} />
+                  <SummaryStat label="Healthy capture units" value={formatNumber(numberValue(captureReadiness.healthyCaptureUnits))} />
+                  <SummaryStat label="Damaged capture units" value={formatNumber(numberValue(captureReadiness.damagedCaptureUnits))} />
+                  <SummaryStat label="Ranged support" value={formatNumber(numberValue(captureReadiness.rangedSupportUnits))} />
+                  <SummaryStat label="Worker capture chances" value={formatNumber(numberValue(captureReadiness.workerCaptureOpportunities))} />
+                </div>
+                {stringValue(captureReadiness.summary) ? (
+                  <>
+                    <SectionLabel text="Summary" />
+                    <p className="card-paragraph">{stringValue(captureReadiness.summary)}</p>
+                  </>
+                ) : null}
+              </>
+            ) : (
+              <p className="muted-text">No capture-readiness read was surfaced on this turn.</p>
             )}
           </Card>
 
@@ -1590,6 +1682,64 @@ function MemoryNotesCard({
   );
 }
 
+function TacticianTurnLogSection({ entries }: { entries: Record<string, unknown>[] }) {
+  return (
+    <Card title="Tactician turn log" subtitle="Per-turn delta written after execution so later stateless calls can see what changed, what completed, and what is now stale.">
+      {entries.length ? (
+        <details className="inline-disclosure" open={entries.length <= 2}>
+          <summary>Open {formatNumber(entries.length)} tactician log entries</summary>
+          <div className="inline-disclosure-body">
+            <div className="structured-list">
+              {entries
+                .slice()
+                .reverse()
+                .map((entry, index) => (
+                  <article key={`${formatNumber(numberValue(entry.turn))}-${index}`} className="structured-item">
+                    <div className="structured-item-header">
+                      <strong>{`Turn ${formatNumber(numberValue(entry.turn))}`}</strong>
+                      <div className="tag-list compact">
+                        {stringValue(entry.campaignStage) ? <span className="tag neutral">{stringValue(entry.campaignStage)}</span> : null}
+                        {numberValue(entry.basedOnStrategistTurn) !== null ? (
+                          <span className="tag neutral">{`memo ${formatNumber(numberValue(entry.basedOnStrategistTurn))}`}</span>
+                        ) : null}
+                      </div>
+                    </div>
+                    {stringValue(entry.summary) ? <p className="card-paragraph">{stringValue(entry.summary)}</p> : null}
+                    <TacticianTurnLogGroup label="What changed" values={stringList(entry.whatChanged)} />
+                    <TacticianTurnLogGroup label="Completed" values={stringList(entry.completed)} tone="accent" />
+                    <TacticianTurnLogGroup label="Still blocked" values={stringList(entry.stillBlocked)} tone="warning" />
+                    <TacticianTurnLogGroup label="Obsolete" values={stringList(entry.obsolete)} />
+                    <TacticianTurnLogGroup label="Carry forward" values={stringList(entry.carryForward)} />
+                  </article>
+                ))}
+            </div>
+          </div>
+        </details>
+      ) : (
+        <EmptyCardState title="No tactician log yet" body="No per-turn tactical delta had been carried into this turn." />
+      )}
+    </Card>
+  );
+}
+
+function TacticianTurnLogGroup({
+  label,
+  values,
+  tone = "neutral",
+}: {
+  label: string;
+  values: string[];
+  tone?: "neutral" | "warning" | "accent";
+}) {
+  if (!values.length) return null;
+  return (
+    <>
+      <SectionLabel text={label} />
+      <TagList values={values} tone={tone} />
+    </>
+  );
+}
+
 function RivalNotebookSection({ rivals }: { rivals: Record<string, unknown>[] }) {
   return (
     <Card title="Rival notebooks" subtitle="Per-rival notes and anchors carried across turns.">
@@ -1839,9 +1989,16 @@ function StrategistContextSection({
               <SectionLabel text="Last strategist memo" />
               <div className="structured-item">
                 <div className="summary-grid compact">
-                  <SummaryStat label="Phase" value={stringValue(lastStrategistMemo.phase)} />
+                  <SummaryStat label="Stage" value={stringValue(lastStrategistMemo.campaignStage)} />
                   <SummaryStat label="Win path" value={stringValue(lastStrategistMemo.winPath)} />
+                  <SummaryStat label="Objective" value={stringValue(lastStrategistMemo.decisiveObjective)} />
                 </div>
+                {stringValue(lastStrategistMemo.conversionBlocker) ? (
+                  <>
+                    <SectionLabel text="Conversion blocker" />
+                    <p className="card-paragraph">{stringValue(lastStrategistMemo.conversionBlocker)}</p>
+                  </>
+                ) : null}
                 {stringValue(lastStrategistMemo.pastSummary) ? (
                   <>
                     <SectionLabel text="Past" />

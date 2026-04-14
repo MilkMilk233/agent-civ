@@ -8,6 +8,8 @@ data class AgentPlannerBrief(
     val strategy: AgentPlannerStrategyObservation,
     val memoryContext: AgentPlannerMemoryContextObservation? = null,
     val campaignContext: AgentPlannerCampaignContextObservation? = null,
+    val objectiveTheater: AgentPlannerObjectiveTheaterObservation? = null,
+    val captureReadiness: AgentPlannerCaptureReadinessObservation? = null,
     val mustActNow: List<AgentPlannerMustActObservation> = emptyList(),
     val attentionFacts: List<ObservationFact>,
     val progressInMotion: List<AgentPlannerProgressObservation>,
@@ -22,7 +24,9 @@ data class AgentPlannerBrief(
 data class AgentPlannerStrategyObservation(
     val gameArchetype: String,
     val winPath: String? = null,
-    val phase: String,
+    val campaignStage: String,
+    val decisiveObjective: String? = null,
+    val conversionBlocker: String? = null,
     val thesis: String? = null,
     val pastSummary: String? = null,
     val currentSituation: String? = null,
@@ -32,6 +36,8 @@ data class AgentPlannerStrategyObservation(
 
 @Serializable
 data class AgentPlannerMemoryContextObservation(
+    val strategistMemoLastReviewedTurn: Int? = null,
+    val strategistMemoAgeTurns: Int? = null,
     val worldModelSummary: String? = null,
     val worldModelNotes: List<String> = emptyList(),
     val mainRivalCiv: String? = null,
@@ -39,7 +45,8 @@ data class AgentPlannerMemoryContextObservation(
     val mainRivalNotes: List<String> = emptyList(),
     val campaignTitle: String? = null,
     val campaignStage: String? = null,
-    val campaignObjective: String? = null,
+    val decisiveObjective: String? = null,
+    val conversionBlocker: String? = null,
     val campaignSummary: String? = null,
     val reinforcementPlan: String? = null,
     val campaignDoNotDo: List<String> = emptyList(),
@@ -47,6 +54,18 @@ data class AgentPlannerMemoryContextObservation(
     val purchaseIntent: String? = null,
     val recentChanges: List<String> = emptyList(),
     val lessons: List<String> = emptyList(),
+    val tacticianTurnLog: List<AgentPlannerTacticianTurnLogObservation> = emptyList(),
+)
+
+@Serializable
+data class AgentPlannerTacticianTurnLogObservation(
+    val turn: Int,
+    val basedOnStrategistTurn: Int? = null,
+    val summary: String,
+    val completed: List<String> = emptyList(),
+    val stillBlocked: List<String> = emptyList(),
+    val obsolete: List<String> = emptyList(),
+    val carryForward: List<String> = emptyList(),
 )
 
 @Serializable
@@ -56,6 +75,8 @@ data class AgentPlannerCampaignContextObservation(
     val warChoiceAvailable: Boolean,
     val visibleRivalCities: Int,
     val visibleRivalUnits: Int,
+    val objectiveTarget: AgentStrategistTargetReference? = null,
+    val objectiveSource: String? = null,
     val visibleTarget: AgentStrategistTargetReference? = null,
     val visibleCapital: AgentStrategistTargetReference? = null,
     val lastKnownTarget: AgentStrategistTargetReference? = null,
@@ -63,6 +84,36 @@ data class AgentPlannerCampaignContextObservation(
     val frontlineFriendlyCombatUnits: Int = 0,
     val meleeUnitsNearObjective: Int = 0,
     val rangedUnitsNearObjective: Int = 0,
+)
+
+@Serializable
+data class AgentPlannerObjectiveTheaterObservation(
+    val target: AgentStrategistTargetReference,
+    val campaignStage: String? = null,
+    val surfacedUnits: Int,
+    val surfacedCombatUnits: Int,
+    val surfacedMeleeUnits: Int,
+    val surfacedRangedUnits: Int,
+    val reserveCombatUnits: Int,
+    val reserveMeleeUnits: Int,
+    val reserveRangedUnits: Int,
+    val hiddenRearUnits: Int,
+    val supportCities: List<String> = emptyList(),
+)
+
+@Serializable
+data class AgentPlannerCaptureReadinessObservation(
+    val target: AgentStrategistTargetReference,
+    val targetKind: String,
+    val targetVisible: Boolean,
+    val targetHealth: Int? = null,
+    val targetStrength: Int? = null,
+    val healthyCaptureUnits: Int,
+    val damagedCaptureUnits: Int,
+    val rangedSupportUnits: Int,
+    val workerCaptureOpportunities: Int,
+    val status: String,
+    val summary: String,
 )
 
 @Serializable

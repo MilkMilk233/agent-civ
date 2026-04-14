@@ -29,8 +29,9 @@ object AgentObservationBuilder {
             .sortedBy { it.id }
             .toList()
         val visibleTargetCandidates = buildVisibleTargetCandidates(civInfo, allUnits)
+        val objectiveTheaterHint = buildObjectiveTheaterHint(memory, civInfo, visibleTargetCandidates)
         val peacefulGrowthWindow = isPeacefulGrowthWindow(civInfo, visibleTargetCandidates)
-        val cityOptionContext = AgentCityOptionBuilder.build(civInfo)
+        val cityOptionContext = AgentCityOptionBuilder.build(civInfo, memory)
         val cityCandidates = civInfo.cities
             .sortedWith(compareBy<City> { it.name }.thenBy { it.location.toString() })
             .map { buildCityCandidate(it, civInfo, visibleTargetCandidates, peacefulGrowthWindow, memory) }
@@ -71,6 +72,7 @@ object AgentObservationBuilder {
                 unit = unit,
                 civInfo = civInfo,
                 visibleTargetCandidates = visibleTargetCandidates,
+                objectiveTheaterHint = objectiveTheaterHint,
                 peacefulGrowthWindow = peacefulGrowthWindow,
                 memory = memory,
                 unitOptionCandidates = unitOptionContext.observationsByUnitId[unit.id] ?: emptyList(),
@@ -398,6 +400,7 @@ object AgentObservationBuilder {
         unit: MapUnit,
         civInfo: Civilization,
         visibleTargetCandidates: List<VisibleTargetCandidate>,
+        objectiveTheaterHint: ObjectiveTheaterHint?,
         peacefulGrowthWindow: Boolean,
         memory: AgentMemory,
         unitOptionCandidates: List<UnitOptionCandidateObservation>,
@@ -504,6 +507,27 @@ object AgentObservationBuilder {
             localFacts += "Idle with movement left."
         }
 
+        if (objectiveTheaterHint != null && isTheaterRelevantUnit(unit, role)) {
+            val distanceToObjective = axialDistance(
+                unit.getTile().position.x,
+                unit.getTile().position.y,
+                objectiveTheaterHint.x,
+                objectiveTheaterHint.y,
+            )
+            val assignment = findUnitAssignment(memory, unit.id)
+            val assignmentTargetX = assignment?.targetX
+            val assignmentTargetY = assignment?.targetY
+            val assignmentNearObjective = assignmentTargetX != null &&
+                assignmentTargetY != null &&
+                axialDistance(assignmentTargetX, assignmentTargetY, objectiveTheaterHint.x, objectiveTheaterHint.y) <= 4
+            val theaterRadius = if (civInfo.isAtWar()) 8 else 6
+            if (distanceToObjective <= theaterRadius || nearbyHostileUnits > 0 || nearbyHostileCities > 0 || assignmentNearObjective) {
+                score += if (unit.isMilitary()) 32 else 16
+                reasons += "Objective theater"
+                localFacts += "This unit can materially affect the current objective theater around ${objectiveTheaterHint.label}."
+            }
+        }
+
         if (unit.isEmbarked()) {
             localFacts += "Embarked on water."
         }
@@ -517,6 +541,7 @@ object AgentObservationBuilder {
             range = unit.getRange().takeIf { it > 1 },
             nearbyHostileUnits = nearbyHostileUnits,
             nearbyHostileCities = nearbyHostileCities,
+            objectiveTheater = reasons.any { it == "Objective theater" },
             reasons = reasons.distinct().take(maxLocalFactsPerEntity),
             localFacts = localFacts.distinct().take(maxLocalFactsPerEntity),
             facts = facts,
@@ -549,6 +574,54 @@ object AgentObservationBuilder {
         }
 
         return candidates
+    }
+
+    private fun buildObjectiveTheaterHint(
+        memory: AgentMemory,
+        civInfo: Civilization,
+        visibleTargetCandidates: List<VisibleTargetCandidate>,
+    ): ObjectiveTheaterHint? {
+        val currentStage = memory.campaign.stage.lowercase()
+        val loweredObjective = memory.campaign.decisiveObjective?.lowercase().orEmpty()
+        val shouldTrackTheater = civInfo.isAtWar() ||
+            loweredObjective.isNotBlank() ||
+            currentStage in setOf("staging", "pressure", "assault", "rebuild")
+        if (!shouldTrackTheater) return null
+        val visibleCities = visibleTargetCandidates
+            .filter { it.observation.kind == "city" && it.observation.civName != civInfo.civName }
+        val visibleCapital = visibleCities.firstOrNull { candidate ->
+            candidate.observation.facts.any { it.equals("Capital", ignoreCase = true) }
+        }
+        if ("capital" in loweredObjective) {
+            visibleCapital?.observation?.let { city ->
+                return ObjectiveTheaterHint(city.civName, city.name, city.x, city.y)
+            }
+        }
+        visibleCities.firstOrNull()?.observation?.let { city ->
+            return ObjectiveTheaterHint(city.civName, city.name, city.x, city.y)
+        }
+        val primaryRival = memory.campaign.primaryRivalCiv ?: memory.rivals.firstOrNull()?.rivalCiv ?: return null
+        val notebook = memory.rivals.firstOrNull { it.rivalCiv == primaryRival } ?: return null
+        val preferredKinds = if ("capital" in loweredObjective) listOf("capital", "city") else listOf("city", "capital")
+        val anchor = preferredKinds
+            .asSequence()
+            .mapNotNull { kind -> notebook.anchors.filter { it.kind == kind }.maxByOrNull { it.lastConfirmedTurn } }
+            .firstOrNull()
+            ?: return null
+        val x = anchor.x ?: return null
+        val y = anchor.y ?: return null
+        return ObjectiveTheaterHint(anchor.civName ?: primaryRival, anchor.label, x, y)
+    }
+
+    private fun isTheaterRelevantUnit(unit: MapUnit, role: String): Boolean {
+        if (unit.isMilitary()) return true
+        return role in setOf("worker", "settler", "scout")
+    }
+
+    private fun axialDistance(x1: Int, y1: Int, x2: Int, y2: Int): Int {
+        val dx = x1 - x2
+        val dy = y1 - y2
+        return (kotlin.math.abs(dx) + kotlin.math.abs(dy) + kotlin.math.abs(dx + dy)) / 2
     }
 
     private fun buildVisibleCityCandidate(
@@ -792,6 +865,7 @@ object AgentObservationBuilder {
         if (candidate.role == "settler") reasons += "strategic_civilian"
         if (candidate.role == "worker" && unit.hasMovement()) reasons += "worker_decision"
         if (unit.health < 70 && unit.isMilitary()) reasons += "damaged_frontline"
+        if (candidate.objectiveTheater) reasons += "objective_theater"
         if (unit.isCivilian() && (candidate.nearbyHostileUnits > 0 || candidate.nearbyHostileCities > 0)) {
             reasons += "exposed_civilian"
         }
@@ -1188,10 +1262,18 @@ object AgentObservationBuilder {
         val range: Int?,
         val nearbyHostileUnits: Int,
         val nearbyHostileCities: Int,
+        val objectiveTheater: Boolean,
         val reasons: List<String>,
         val localFacts: List<String>,
         val facts: List<ScoredFact>,
         val opportunities: List<ScoredFact>,
+    )
+
+    private data class ObjectiveTheaterHint(
+        val civName: String,
+        val label: String,
+        val x: Int,
+        val y: Int,
     )
 
     private data class VisibleTargetCandidate(

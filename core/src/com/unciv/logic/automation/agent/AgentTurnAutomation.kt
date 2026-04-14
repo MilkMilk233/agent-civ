@@ -2,6 +2,7 @@ package com.unciv.logic.automation.agent
 
 import com.unciv.logic.automation.civilization.NextTurnAutomation
 import com.unciv.logic.civilization.Civilization
+import com.unciv.models.UnitActionType
 import com.unciv.utils.Log
 import kotlin.math.max
 
@@ -498,7 +499,7 @@ object AgentTurnAutomation {
             selectedPlan,
             ExecutionOptions(stopAfterCityCreation = maxPlanningPassesPerTurn > 1),
         )
-        if (firstPassReport.rejectedActions > 0 && !canIgnoreSoftRejections(firstPassReport.outcomes)) {
+        if (firstPassReport.rejectedActions > 0 && !canIgnoreSoftRejections(civInfo, selectedPlan, firstPassReport.outcomes)) {
             val updatedMemory = AgentMemoryManager.updateAfterTurn(
                 civInfo = civInfo,
                 observation = observation,
@@ -711,7 +712,7 @@ object AgentTurnAutomation {
                 finalReport = firstPassReport
             } else {
                 val secondPassReport = executor.execute(civInfo, selectedPlan)
-                if (secondPassReport.rejectedActions > 0 && !canIgnoreSoftRejections(secondPassReport.outcomes)) {
+                if (secondPassReport.rejectedActions > 0 && !canIgnoreSoftRejections(civInfo, selectedPlan, secondPassReport.outcomes)) {
                     val combinedFailureReport = combineReports(firstPassReport, secondPassReport)
                     val updatedMemory = AgentMemoryManager.updateAfterTurn(
                         civInfo = civInfo,
@@ -794,9 +795,18 @@ object AgentTurnAutomation {
         planningAttempt: Int,
     ): Pair<AgentActionPlan, AgentActionExecutor.ValidationReport>? {
         val rejectedOutcomes = validation.rejectedOutcomes
-        if (rejectedOutcomes.isEmpty() || !rejectedOutcomes.all(::isSoftRejectedOutcome)) return null
+        if (rejectedOutcomes.isEmpty()) return null
 
-        val prunedActions = plan.actions.filterNot { action -> rejectedOutcomes.any { matchesOutcome(action, it) } }
+        val prunableOutcomes = rejectedOutcomes.filter { outcome ->
+            isPrunableRejectedOutcome(
+                plan = plan,
+                outcome = outcome,
+                memory = civInfo.agentMemory,
+            )
+        }
+        if (prunableOutcomes.isEmpty()) return null
+
+        val prunedActions = plan.actions.filterNot { action -> prunableOutcomes.any { matchesOutcome(action, it) } }
         if (prunedActions.size == plan.actions.size) return null
         if (prunedActions.none { it !is AgentActionCommand.EndTurn }) return null
 
@@ -821,6 +831,7 @@ object AgentTurnAutomation {
                 "attempt" to planningAttempt.toString(),
                 "originalPlanJson" to AgentPromptBuilder.planJson(plan),
                 "salvagedPlanJson" to AgentPromptBuilder.planJson(salvagedPlan),
+                "prunedActions" to prunableOutcomes.size.toString(),
                 "validationFailuresJson" to AgentPromptBuilder.retryContextJson(
                     AgentRetryContextFactory.fromValidation(
                         plan = plan,
@@ -835,21 +846,108 @@ object AgentTurnAutomation {
         return salvagedPlan to salvagedValidation
     }
 
-    private fun canIgnoreSoftRejections(outcomes: List<AgentActionExecutor.ActionOutcome>): Boolean {
+    private fun canIgnoreSoftRejections(
+        civInfo: Civilization,
+        plan: AgentActionPlan,
+        outcomes: List<AgentActionExecutor.ActionOutcome>,
+    ): Boolean {
         val rejected = outcomes.filter { it.status == AgentActionExecutor.ActionStatus.Rejected }
         if (rejected.isEmpty()) return false
         val executedMeaningful = outcomes.any {
             it.status == AgentActionExecutor.ActionStatus.Executed && it.commandType != "end_turn"
         }
-        return executedMeaningful && rejected.all(::isSoftRejectedOutcome)
+        return executedMeaningful && rejected.all { outcome ->
+            isPrunableRejectedOutcome(
+                plan = plan,
+                outcome = outcome,
+                memory = civInfo.agentMemory,
+            )
+        }
     }
 
-    private fun isSoftRejectedOutcome(outcome: AgentActionExecutor.ActionOutcome): Boolean = when {
-        outcome.commandType == "select_unit_option" &&
-            outcome.reason == "Unit option rejected: frontier move is no longer attractive or reachable" -> true
-        outcome.commandType == "unit_move" &&
-            outcome.reason == "Unit move rejected: movement produced no position change" -> true
-        else -> false
+    private fun isPrunableRejectedOutcome(
+        plan: AgentActionPlan,
+        outcome: AgentActionExecutor.ActionOutcome,
+        memory: AgentMemory,
+    ): Boolean {
+        val action = plan.actions.firstOrNull { matchesOutcome(it, outcome) } ?: return false
+        if (isCriticalAction(action)) return false
+
+        val hasCriticalAction = plan.actions.any(::isCriticalAction)
+        return when {
+            outcome.commandType == "select_unit_option" &&
+                outcome.reason == "Unit option rejected: frontier move is no longer attractive or reachable" -> true
+            outcome.commandType == "unit_move" &&
+                outcome.reason == "Unit move rejected: movement produced no position change" -> true
+            action is AgentActionCommand.SelectUnitOption &&
+                hasCriticalAction &&
+                outcome.reason in setOf(
+                    "Unit option rejected: malformed candidate id",
+                    "Unit option rejected: candidate missing",
+                    "Unit option rejected: attack is no longer available",
+                    "Unit option rejected: target is gone",
+                    "Unit option rejected: recovery action is no longer available",
+                ) -> true
+            action is AgentActionCommand.SelectUnitOption &&
+                action.candidateId.startsWith("unitattack:") &&
+                hasCriticalAction &&
+                !isObjectiveCriticalUnitAttack(action.candidateId, memory) &&
+                outcome.reason in setOf(
+                    "Unit option rejected: attack is no longer available",
+                    "Unit option rejected: target is gone",
+                    "Unit option rejected: candidate missing",
+                ) -> true
+            else -> false
+        }
+    }
+
+    private fun isCriticalAction(action: AgentActionCommand): Boolean = when (action) {
+        is AgentActionCommand.SelectEmpireOption ->
+            action.candidateId.startsWith("diplo:war:") ||
+                action.candidateId.startsWith("research:") ||
+                action.candidateId.startsWith("policy:")
+        is AgentActionCommand.SelectCityOption ->
+            action.candidateId.startsWith("citybuild:") || action.candidateId.startsWith("citypurchase:")
+        is AgentActionCommand.SelectUnitOption ->
+            action.candidateId.startsWith("unitsettle:")
+        is AgentActionCommand.UnitAction ->
+            action.actionType == UnitActionType.FoundCity.name
+        is AgentActionCommand.UnitMove,
+        is AgentActionCommand.EndTurn -> false
+    }
+
+    private fun isObjectiveCriticalUnitAttack(candidateId: String, memory: AgentMemory): Boolean {
+        if (!candidateId.startsWith("unitattack:")) return false
+        val parts = candidateId.split(':')
+        if (parts.size < 4) return false
+        val target = parts[3].split(',')
+        if (target.size != 2) return false
+        val targetX = target[0].toIntOrNull() ?: return false
+        val targetY = target[1].toIntOrNull() ?: return false
+        val objective = resolveObjectiveReference(memory) ?: return false
+        return axialDistance(targetX, targetY, objective.first, objective.second) <= 1
+    }
+
+    private fun resolveObjectiveReference(memory: AgentMemory): Pair<Int, Int>? {
+        val primaryRival = memory.campaign.primaryRivalCiv
+        val objectiveText = memory.campaign.decisiveObjective?.lowercase().orEmpty()
+        val notebook = primaryRival?.let { rival -> memory.rivals.firstOrNull { it.rivalCiv == rival } }
+            ?: memory.rivals.firstOrNull()
+            ?: return null
+        val anchor = if (objectiveText.contains("capital")) {
+            notebook.anchors.maxByOrNull { (if (it.kind == "capital") 1000 else 0) + it.lastConfirmedTurn }
+        } else {
+            notebook.anchors.maxByOrNull { it.lastConfirmedTurn }
+        } ?: return null
+        val x = anchor.x ?: return null
+        val y = anchor.y ?: return null
+        return x to y
+    }
+
+    private fun axialDistance(x1: Int, y1: Int, x2: Int, y2: Int): Int {
+        val dx = x1 - x2
+        val dy = y1 - y2
+        return (kotlin.math.abs(dx) + kotlin.math.abs(dy) + kotlin.math.abs(dx + dy)) / 2
     }
 
     private fun matchesOutcome(action: AgentActionCommand, outcome: AgentActionExecutor.ActionOutcome): Boolean = when (action) {
@@ -879,7 +977,9 @@ object AgentTurnAutomation {
         "memoryUnitAssignments" to memory.unitAssignments.size.toString(),
         "memoryRecentFailures" to memory.recentFailures.size.toString(),
         "memoryWinPath" to (memory.lastStrategistMemo.winPath ?: ""),
-        "memoryPhase" to memory.lastStrategistMemo.phase,
+        "memoryDecisiveObjective" to (memory.lastStrategistMemo.decisiveObjective ?: ""),
+        "memoryConversionBlocker" to (memory.lastStrategistMemo.conversionBlocker ?: ""),
+        "memoryMemoStage" to memory.lastStrategistMemo.campaignStage,
         "strategistMemoJson" to AgentMemoryManager.strategistMemoJson(memory.lastStrategistMemo),
     )
 

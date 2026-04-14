@@ -17,6 +17,7 @@ data class AgentStrategistBrief(
     val empirePlan: EmpirePlanMemory? = null,
     val recentChanges: List<MemoryNote> = emptyList(),
     val lessons: List<MemoryNote> = emptyList(),
+    val tacticianTurnLog: List<TacticianTurnLogEntry> = emptyList(),
     val rivalThreats: List<AgentVictoryThreatObservation> = emptyList(),
     val rivalCities: List<AgentStrategistRivalCitySnapshot> = emptyList(),
     val rivalUnits: List<AgentStrategistRivalUnitSnapshot> = emptyList(),
@@ -30,7 +31,9 @@ data class AgentStrategistBrief(
 @Serializable
 data class AgentStrategistReportMemo(
     val winPath: String? = null,
-    val phase: String,
+    val campaignStage: String,
+    val decisiveObjective: String? = null,
+    val conversionBlocker: String? = null,
     val thesis: String? = null,
     val pastSummary: String? = null,
     val currentSituation: String? = null,

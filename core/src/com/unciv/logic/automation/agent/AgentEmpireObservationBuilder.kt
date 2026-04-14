@@ -54,16 +54,16 @@ object AgentEmpireObservationBuilder {
         }
         val enabledVictories = enabledVictories(civInfo)
         val preferredVictoryTypes = civInfo.getPreferredVictoryTypes().filter { it != Constants.neutralVictoryType }
-        val memo = memory.lastStrategistMemo.takeIf { it.phase.isNotBlank() }
+        val memo = memory.lastStrategistMemo.takeIf { it.campaignStage.isNotBlank() }
         val victoryPlan = chooseVictoryPlan(civInfo, enabledVictories, preferredVictoryTypes)
         val victoryThreats = buildVictoryThreats(civInfo, enabledVictories, victoryPlan)
         val displayedVictoryGoal = memo?.winPath
-        val displayedVictoryFocus = memo?.winPath?.let(::defaultFocusForRoadmapWinPath)
+        val displayedVictoryFocus = memo?.winPath?.let(::defaultFocusForStrategistWinPath)
 
         val observation = AgentEmpireObservation(
             turn = civInfo.gameInfo.turns,
             civName = civInfo.civName,
-            strategicState = memory.campaign.stage.ifBlank { memo?.phase ?: "observe_and_plan" },
+            campaignStage = memory.campaign.stage.ifBlank { memo?.campaignStage ?: "positioning" },
             isAtWar = civInfo.isAtWar(),
             gameContext = gameContext,
             enabledVictoryTypes = enabledVictories.map { it.name },
@@ -610,7 +610,7 @@ object AgentEmpireObservationBuilder {
     }
 
 }
-    private fun defaultFocusForRoadmapWinPath(winPath: String): String = when (winPath.lowercase()) {
+    private fun defaultFocusForStrategistWinPath(winPath: String): String = when (winPath.lowercase()) {
         "scientific" -> Victory.Focus.Science.name
         "cultural" -> Victory.Focus.Culture.name
         "domination" -> Victory.Focus.Military.name

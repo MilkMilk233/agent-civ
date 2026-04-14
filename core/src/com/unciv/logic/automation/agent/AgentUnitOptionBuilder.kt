@@ -29,11 +29,12 @@ object AgentUnitOptionBuilder {
     internal fun build(civInfo: Civilization, memory: AgentMemory): AgentUnitOptionContext {
         val candidates = LinkedHashMap<String, AgentUnitRuntimeCandidate>()
         val observationsByUnitId = LinkedHashMap<Int, MutableList<UnitOptionCandidateObservation>>()
+        val attackContext = buildAttackConversionContext(civInfo, memory)
 
         for (unit in civInfo.units.getCivUnits().sortedBy { it.id }) {
             val observations = observationsByUnitId.getOrPut(unit.id) { arrayListOf() }
             val availableActions = UnitActions.getUnitActions(unit).filter { it.action != null }.toList()
-            buildAttackCandidates(unit).forEach { candidate ->
+            buildAttackCandidates(unit, attackContext).forEach { candidate ->
                 candidates[candidate.observation.candidateId] = candidate
                 observations += candidate.observation
             }
@@ -131,11 +132,14 @@ object AgentUnitOptionBuilder {
             }
     }
 
-    private fun buildAttackCandidates(unit: MapUnit): List<AgentUnitRuntimeCandidate> {
+    private fun buildAttackCandidates(
+        unit: MapUnit,
+        attackContext: AttackConversionContext,
+    ): List<AgentUnitRuntimeCandidate> {
         if (!unit.canAttack()) return emptyList()
         val combatant = MapUnitCombatant(unit)
         return TargetHelper.getAttackableEnemies(unit, unit.movement.getDistanceToTiles())
-            .sortedByDescending { scoreAttackCandidate(combatant, it) }
+            .sortedByDescending { scoreAttackCandidate(combatant, it, attackContext) }
             .take(maxAttackCandidatesPerUnit)
             .mapNotNull { attackableTile ->
                 val defender = attackableTile.combatant ?: return@mapNotNull null
@@ -554,17 +558,55 @@ object AgentUnitOptionBuilder {
         )
     }
 
-    private fun scoreAttackCandidate(attacker: MapUnitCombatant, attackableTile: AttackableTile): Int {
+    private fun scoreAttackCandidate(
+        attacker: MapUnitCombatant,
+        attackableTile: AttackableTile,
+        attackContext: AttackConversionContext,
+    ): Int {
         val defender = attackableTile.combatant ?: return 0
         var score = 0
         val damageToDefender = BattleDamage.calculateDamageToDefender(attacker, defender, attackableTile.tileToAttackFrom)
         val damageToAttacker = BattleDamage.calculateDamageToAttacker(attacker, defender, attackableTile.tileToAttackFrom)
         score += damageToDefender * 2
         score -= damageToAttacker
-        if (defender.isCivilian()) score += 90
-        if (defender is com.unciv.logic.battle.CityCombatant) score += 45
+        if (defender.isCivilian()) {
+            score += if (attacker.isMelee()) 135 else 25
+            if (attacker.isMelee() && damageToAttacker <= 25) score += 35
+            if (!attacker.isMelee() && attackContext.objectivePressure) score -= 55
+        }
+        if (defender is com.unciv.logic.battle.CityCombatant) {
+            score += 45
+            if (attacker.isMelee()) score += 20
+        }
         if (defender.getHealth() <= damageToDefender) score += 50
         if (attackableTile.tileToAttack == attackableTile.tileToAttackFrom) score -= 15
+        val objective = attackContext.objective
+        if (objective != null) {
+            val distanceToObjective = axialDistance(
+                attackableTile.tileToAttack.position.x,
+                attackableTile.tileToAttack.position.y,
+                objective.x,
+                objective.y,
+            )
+            if (defender is com.unciv.logic.battle.CityCombatant) {
+                score += when {
+                    objective.matches(defender.city.name, defender.city.isCapital()) -> 150
+                    distanceToObjective <= 1 -> 45
+                    attackContext.objectivePressure -> -35
+                    else -> 0
+                }
+            } else {
+                score += when {
+                    defender.isCivilian() && attackContext.objectivePressure && distanceToObjective <= 2 -> 40
+                    distanceToObjective <= 1 -> 30
+                    attackContext.objectivePressure -> -20
+                    else -> 0
+                }
+            }
+        }
+        if (attackContext.frontlineShortage && attacker.isMelee() && defender is com.unciv.logic.battle.CityCombatant) {
+            score += 35
+        }
         return score
     }
 
@@ -620,6 +662,79 @@ object AgentUnitOptionBuilder {
         val context = GameContext(civInfo = unit.civ, unit = unit, tile = tile)
         return unit.canBuildImprovement(improvement, tile) &&
             tile.improvementFunctions.canBuildImprovement(improvement, context)
+    }
+
+    private fun buildAttackConversionContext(
+        civInfo: Civilization,
+        memory: AgentMemory,
+    ): AttackConversionContext {
+        val objectiveText = memory.campaign.decisiveObjective?.lowercase().orEmpty()
+        val blockerText = memory.campaign.conversionBlocker?.lowercase().orEmpty()
+        val primaryRival = memory.campaign.primaryRivalCiv
+        val objectivePressure = memory.campaign.stage.lowercase() in setOf("pressure", "staging", "assault", "rebuild", "declaration") ||
+            objectiveText.contains("capture") ||
+            objectiveText.contains("take") ||
+            objectiveText.contains("assault") ||
+            objectiveText.contains("war")
+
+        val visibleObjective = civInfo.viewableTiles
+            .filter { it.isCityCenter() }
+            .mapNotNull { it.getCity() }
+            .filter { city -> city.civ != civInfo && (primaryRival == null || city.civ.civName == primaryRival) }
+            .let { visibleCities ->
+                when {
+                    objectiveText.contains("capital") ->
+                        visibleCities.firstOrNull { it.isCapital() } ?: visibleCities.firstOrNull()
+                    else -> visibleCities.firstOrNull()
+                }
+            }
+        val notebook = primaryRival?.let { rival ->
+            memory.rivals.firstOrNull { it.rivalCiv == rival }
+        } ?: memory.rivals.firstOrNull()
+        val anchor = if (visibleObjective == null) {
+            notebook?.anchors
+                ?.filter { it.x != null && it.y != null }
+                ?.let { anchors ->
+                    if (objectiveText.contains("capital")) {
+                        anchors.maxByOrNull { anchorCandidate ->
+                            (if (anchorCandidate.kind == "capital") 1000 else 0) + anchorCandidate.lastConfirmedTurn
+                        }
+                    } else {
+                        anchors.maxByOrNull { anchorCandidate -> anchorCandidate.lastConfirmedTurn }
+                    }
+                }
+        } else {
+            null
+        }
+
+        val objective = when {
+            visibleObjective != null -> ResolvedObjective(
+                x = visibleObjective.location.x,
+                y = visibleObjective.location.y,
+                cityName = visibleObjective.name,
+                preferCapital = objectiveText.contains("capital") || visibleObjective.isCapital(),
+            )
+            anchor?.x != null && anchor.y != null -> ResolvedObjective(
+                x = anchor.x!!,
+                y = anchor.y!!,
+                cityName = anchor.label,
+                preferCapital = objectiveText.contains("capital") || anchor.kind == "capital",
+            )
+            else -> null
+        }
+        return AttackConversionContext(
+            objectivePressure = objectivePressure,
+            frontlineShortage = blockerText.contains("melee") ||
+                blockerText.contains("frontline") ||
+                blockerText.contains("capture"),
+            objective = objective,
+        )
+    }
+
+    private fun axialDistance(x1: Int, y1: Int, x2: Int, y2: Int): Int {
+        val dx = x1 - x2
+        val dy = y1 - y2
+        return (kotlin.math.abs(dx) + kotlin.math.abs(dy) + kotlin.math.abs(dx + dy)) / 2
     }
 
     private fun isSurfacedDirectActionType(actionType: UnitActionType): Boolean {
@@ -723,4 +838,22 @@ object AgentUnitOptionBuilder {
         val execute: (Civilization) -> Boolean,
         val successMessage: String,
     )
+
+    private data class AttackConversionContext(
+        val objectivePressure: Boolean,
+        val frontlineShortage: Boolean,
+        val objective: ResolvedObjective? = null,
+    )
+
+    private data class ResolvedObjective(
+        val x: Int,
+        val y: Int,
+        val cityName: String? = null,
+        val preferCapital: Boolean = false,
+    ) {
+        fun matches(name: String, isCapital: Boolean): Boolean {
+            if (preferCapital && isCapital) return true
+            return cityName != null && cityName.equals(name, ignoreCase = true)
+        }
+    }
 }

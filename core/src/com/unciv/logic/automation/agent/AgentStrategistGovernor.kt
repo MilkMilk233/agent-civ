@@ -7,7 +7,7 @@ object AgentStrategistGovernor {
         empireObservation: AgentEmpireObservation,
         refreshRequest: AgentStrategistRefreshRequest,
     ): AgentStrategistBrief {
-        val lastMemo = memory.lastStrategistMemo.takeIf { it.phase.isNotBlank() }
+        val lastMemo = memory.lastStrategistMemo.takeIf { it.campaignStage.isNotBlank() }
         val rivalCities = buildRivalCitySnapshots(observation)
         val rivalUnits = buildRivalUnitSnapshots(observation)
         val nearestRivalCity = rivalCities.minWithOrNull(
@@ -104,13 +104,18 @@ object AgentStrategistGovernor {
             },
             rivalNotebooks = memory.rivals.sortedBy { it.rivalCiv },
             campaign = memory.campaign.takeIf {
-                it.title.isNotBlank() || it.stage.isNotBlank() || !it.summary.isNullOrBlank() || !it.objective.isNullOrBlank()
+                it.title.isNotBlank() ||
+                    it.stage.isNotBlank() ||
+                    !it.decisiveObjective.isNullOrBlank() ||
+                    !it.conversionBlocker.isNullOrBlank() ||
+                    !it.summary.isNullOrBlank()
             },
             empirePlan = memory.empirePlan.takeIf {
                 !it.summary.isNullOrBlank() || !it.purchaseIntent.isNullOrBlank() || it.notes.isNotEmpty()
             },
             recentChanges = memory.recentChanges.takeLast(6),
             lessons = memory.lessons.takeLast(6),
+            tacticianTurnLog = memory.tacticianTurnLog.takeLast(6),
             rivalThreats = empireObservation.victoryThreats,
             rivalCities = rivalCities,
             rivalUnits = rivalUnits,
@@ -126,8 +131,10 @@ object AgentStrategistGovernor {
         memo: AgentStrategistMemoMemory,
     ): AgentStrategistReportMemo {
         return AgentStrategistReportMemo(
-            phase = memo.phase,
             winPath = memo.winPath,
+            campaignStage = memo.campaignStage,
+            decisiveObjective = memo.decisiveObjective,
+            conversionBlocker = memo.conversionBlocker,
             thesis = memo.thesis,
             pastSummary = memo.pastSummary,
             currentSituation = memo.currentSituation,

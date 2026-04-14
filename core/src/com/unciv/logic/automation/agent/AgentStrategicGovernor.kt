@@ -8,13 +8,15 @@ object AgentStrategicGovernor {
     ): AgentPlannerBrief {
         val gameContext = empireObservation.gameContext
         val primaryThreat = empireObservation.victoryThreats.firstOrNull()
-        val memo = memory.lastStrategistMemo.takeIf { it.phase.isNotBlank() }
+        val memo = memory.lastStrategistMemo.takeIf { it.campaignStage.isNotBlank() }
         val attentionFacts = buildAttentionFacts(observation, empireObservation)
         val mustActNow = buildMustActNow(observation, empireObservation)
-        val cityHighlights = selectCityHighlights(observation, gameContext)
         val campaignContext = buildCampaignContext(memory, observation, empireObservation)
+        val cityHighlights = selectCityHighlights(observation, gameContext, campaignContext)
         val memoryContext = buildMemoryContext(memory, observation, empireObservation)
-        val unitHighlights = selectUnitHighlights(observation, gameContext, primaryThreat, campaignContext)
+        val unitSurfacing = selectUnitHighlights(observation, gameContext, primaryThreat, campaignContext)
+        val unitHighlights = unitSurfacing.units
+        val captureReadiness = buildCaptureReadiness(observation, campaignContext)
         val progressInMotion = buildProgressInMotion(observation, empireObservation, cityHighlights, unitHighlights, campaignContext)
         val threatHighlights = observation.visibleThreatsAndTargets.take(if (observation.empireSummary.isAtWar) 3 else 2)
 
@@ -23,7 +25,10 @@ object AgentStrategicGovernor {
             val hiddenCities = observation.cities.size - cityHighlights.size
             val hiddenUnits = observation.units.size - unitHighlights.size
             if (hiddenCities > 0) add("$hiddenCities lower-priority city cards were hidden after strategic ranking.")
-            if (hiddenUnits > 0) add("$hiddenUnits lower-priority unit cards were hidden after strategic ranking.")
+            unitSurfacing.suppressedNotes.forEach(::add)
+            if (hiddenUnits > 0 && unitSurfacing.suppressedNotes.none { it.contains("unit", ignoreCase = true) }) {
+                add("$hiddenUnits lower-priority unit cards were hidden after strategic ranking.")
+            }
             if (workerFacts > 2 && workerFacts > unitHighlights.count { it.role == "worker" }) {
                 add("${workerFacts - unitHighlights.count { it.role == "worker" }} worker facts were collapsed so broader strategy can dominate.")
             }
@@ -34,7 +39,9 @@ object AgentStrategicGovernor {
             strategy = AgentPlannerStrategyObservation(
                 gameArchetype = memo?.gameArchetype?.ifBlank { null } ?: gameContext.archetype,
                 winPath = memo?.winPath ?: empireObservation.victoryGoal,
-                phase = memo?.phase ?: phaseFromTurn(observation.turn),
+                campaignStage = memo?.campaignStage ?: defaultCampaignStage(memory, observation, empireObservation, campaignContext),
+                decisiveObjective = memo?.decisiveObjective ?: memory.campaign.decisiveObjective,
+                conversionBlocker = memo?.conversionBlocker ?: memory.campaign.conversionBlocker,
                 thesis = memo?.thesis,
                 pastSummary = memo?.pastSummary,
                 currentSituation = memo?.currentSituation,
@@ -43,6 +50,8 @@ object AgentStrategicGovernor {
             ),
             memoryContext = memoryContext,
             campaignContext = campaignContext,
+            objectiveTheater = unitSurfacing.objectiveTheater,
+            captureReadiness = captureReadiness,
             mustActNow = mustActNow,
             attentionFacts = attentionFacts,
             progressInMotion = progressInMotion,
@@ -74,13 +83,23 @@ object AgentStrategicGovernor {
             memory.worldModel.summary.isNullOrBlank() &&
             memory.worldModel.notes.isEmpty() &&
             rivalNotebook == null &&
+            memory.campaign.title.isBlank() &&
+            memory.campaign.stage.isBlank() &&
+            memory.campaign.decisiveObjective.isNullOrBlank() &&
+            memory.campaign.conversionBlocker.isNullOrBlank() &&
             memory.campaign.summary.isNullOrBlank() &&
             memory.empirePlan.summary.isNullOrBlank() &&
+            memory.empirePlan.purchaseIntent.isNullOrBlank() &&
             memory.recentChanges.isEmpty() &&
-            memory.lessons.isEmpty()
+            memory.lessons.isEmpty() &&
+            memory.tacticianTurnLog.isEmpty()
         ) return null
 
         return AgentPlannerMemoryContextObservation(
+            strategistMemoLastReviewedTurn = memory.lastStrategistMemo.lastReviewedTurn.takeIf { it > 0 },
+            strategistMemoAgeTurns = memory.lastStrategistMemo.lastReviewedTurn
+                .takeIf { it > 0 }
+                ?.let { observation.turn - it },
             worldModelSummary = memory.worldModel.summary,
             worldModelNotes = memory.worldModel.notes.takeLast(3).map { it.text },
             mainRivalCiv = rivalNotebook?.rivalCiv ?: primaryRivalCiv,
@@ -88,7 +107,8 @@ object AgentStrategicGovernor {
             mainRivalNotes = rivalNotebook?.notes?.takeLast(3)?.map { it.text } ?: emptyList(),
             campaignTitle = memory.campaign.title.takeIf { it.isNotBlank() },
             campaignStage = memory.campaign.stage.takeIf { it.isNotBlank() },
-            campaignObjective = memory.campaign.objective,
+            decisiveObjective = memory.campaign.decisiveObjective,
+            conversionBlocker = memory.campaign.conversionBlocker,
             campaignSummary = memory.campaign.summary,
             reinforcementPlan = memory.campaign.reinforcementPlan,
             campaignDoNotDo = memory.campaign.doNotDo.take(4),
@@ -96,6 +116,17 @@ object AgentStrategicGovernor {
             purchaseIntent = memory.empirePlan.purchaseIntent,
             recentChanges = memory.recentChanges.takeLast(4).map { it.text },
             lessons = memory.lessons.takeLast(4).map { it.text },
+            tacticianTurnLog = memory.tacticianTurnLog.takeLast(4).map { entry ->
+                AgentPlannerTacticianTurnLogObservation(
+                    turn = entry.turn,
+                    basedOnStrategistTurn = entry.basedOnStrategistTurn,
+                    summary = entry.summary,
+                    completed = entry.completed,
+                    stillBlocked = entry.stillBlocked,
+                    obsolete = entry.obsolete,
+                    carryForward = entry.carryForward,
+                )
+            },
         )
     }
 
@@ -152,14 +183,14 @@ object AgentStrategicGovernor {
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
     ): List<AgentPlannerProgressObservation> {
-        val cityHighlights = selectCityHighlights(observation, empireObservation.gameContext)
         val campaignContext = buildCampaignContext(memory, observation, empireObservation)
+        val cityHighlights = selectCityHighlights(observation, empireObservation.gameContext, campaignContext)
         val unitHighlights = selectUnitHighlights(
             observation,
             empireObservation.gameContext,
             empireObservation.victoryThreats.firstOrNull(),
             campaignContext,
-        )
+        ).units
         return buildProgressInMotion(observation, empireObservation, cityHighlights, unitHighlights, campaignContext)
     }
 
@@ -238,10 +269,25 @@ object AgentStrategicGovernor {
     private fun selectCityHighlights(
         observation: AgentObservation,
         gameContext: AgentPublicGameContextObservation,
+        campaignContext: AgentPlannerCampaignContextObservation?,
     ): List<AgentCityObservation> {
-        val maxCities = if (gameContext.duelLike) 3 else 4
-        return observation.cities
-            .sortedByDescending { cityScore(it) }
+        val warLikeContext = isPressureContext(observation, campaignContext)
+        val maxCities = when {
+            warLikeContext && gameContext.duelLike -> 4
+            warLikeContext -> 5
+            gameContext.duelLike -> 3
+            else -> 4
+        }
+        val ranked = observation.cities.sortedByDescending { cityScore(it, campaignContext) }
+        if (!warLikeContext || campaignContext?.objectiveTarget == null) {
+            return ranked.take(maxCities)
+        }
+
+        val supportCities = observation.cities
+            .sortedBy { axialDistance(it.x, it.y, campaignContext.objectiveTarget.x, campaignContext.objectiveTarget.y) }
+            .take(2)
+        return (ranked + supportCities)
+            .distinctBy { "${it.x},${it.y}" }
             .take(maxCities)
     }
 
@@ -250,7 +296,7 @@ object AgentStrategicGovernor {
         gameContext: AgentPublicGameContextObservation,
         primaryThreat: AgentVictoryThreatObservation?,
         campaignContext: AgentPlannerCampaignContextObservation?,
-    ): List<AgentUnitObservation> {
+    ): UnitSurfacingResult {
         val warLikeContext = isPressureContext(observation, campaignContext)
         val maxUnits = when {
             observation.empireSummary.isAtWar -> 10
@@ -269,6 +315,19 @@ object AgentStrategicGovernor {
         val candidateUnits = observation.units
             .filter { it.detailLevel == "expanded" }
             .ifEmpty { observation.units }
+        val objective = campaignContext?.objectiveTarget
+        if (warLikeContext && objective != null) {
+            return selectObjectiveTheaterUnits(
+                observation = observation,
+                candidateUnits = candidateUnits,
+                gameContext = gameContext,
+                primaryThreat = primaryThreat,
+                campaignContext = campaignContext,
+                objective = objective,
+                workerCap = workerCap,
+            )
+        }
+
         val ranked = candidateUnits.sortedByDescending { unitScore(it, observation, gameContext, primaryThreat, campaignContext) }
         val selected = arrayListOf<AgentUnitObservation>()
         var workerCount = 0
@@ -278,8 +337,82 @@ object AgentStrategicGovernor {
             selected += unit
             if (unit.role == "worker") workerCount += 1
         }
-        if (selected.isEmpty()) return ranked.take(maxUnits)
-        return selected
+        val fallback = if (selected.isEmpty()) ranked.take(maxUnits) else selected
+        return UnitSurfacingResult(units = fallback)
+    }
+
+    private fun selectObjectiveTheaterUnits(
+        observation: AgentObservation,
+        candidateUnits: List<AgentUnitObservation>,
+        gameContext: AgentPublicGameContextObservation,
+        primaryThreat: AgentVictoryThreatObservation?,
+        campaignContext: AgentPlannerCampaignContextObservation,
+        objective: AgentStrategistTargetReference,
+        workerCap: Int,
+    ): UnitSurfacingResult {
+        val ranked = candidateUnits.sortedByDescending { unitScore(it, observation, gameContext, primaryThreat, campaignContext) }
+        val theaterUnits = ranked.filter { isObjectiveTheaterUnit(it, objective, observation.empireSummary.isAtWar) }
+        val selected = arrayListOf<AgentUnitObservation>()
+        var workerCount = 0
+
+        theaterUnits.forEach { unit ->
+            if (unit.role == "worker" && workerCount >= workerCap) return@forEach
+            selected += unit
+            if (unit.role == "worker") workerCount += 1
+        }
+
+        val remaining = ranked.filter { rankedUnit -> selected.none { it.id == rankedUnit.id } }
+        val reserveUnits = arrayListOf<AgentUnitObservation>()
+        var reserveWorkerCount = workerCount
+        for (unit in remaining) {
+            if (!shouldSurfaceAsReserve(unit)) continue
+            if (reserveUnits.size >= 4) break
+            if (unit.role == "worker" && reserveWorkerCount >= workerCap) continue
+            reserveUnits += unit
+            if (unit.role == "worker") reserveWorkerCount += 1
+        }
+        selected += reserveUnits
+
+        val theaterCombatUnits = theaterUnits.filter { isCombatRole(it.role) }
+        val reserveCombatUnits = remaining.filter { shouldSurfaceAsReserve(it) && isCombatRole(it.role) }
+        val supportCities = observation.cities
+            .sortedBy { axialDistance(it.x, it.y, objective.x, objective.y) }
+            .take(3)
+            .map { it.name }
+
+        val objectiveTheater = AgentPlannerObjectiveTheaterObservation(
+            target = objective,
+            campaignStage = when {
+                observation.empireSummary.isAtWar -> "assault"
+                campaignContext.warChoiceAvailable -> "staging"
+                else -> "pressure"
+            },
+            surfacedUnits = selected.size,
+            surfacedCombatUnits = selected.count { isCombatRole(it.role) },
+            surfacedMeleeUnits = selected.count { isMeleeRole(it.role) },
+            surfacedRangedUnits = selected.count { isRangedRole(it.role) },
+            reserveCombatUnits = reserveCombatUnits.size,
+            reserveMeleeUnits = reserveCombatUnits.count { isMeleeRole(it.role) },
+            reserveRangedUnits = reserveCombatUnits.count { isRangedRole(it.role) },
+            hiddenRearUnits = (observation.units.size - selected.size).coerceAtLeast(0),
+            supportCities = supportCities,
+        )
+
+        val suppressedNotes = buildList {
+            val hiddenRearUnits = (observation.units.size - selected.size).coerceAtLeast(0)
+            if (hiddenRearUnits > 0) {
+                add("$hiddenRearUnits rear or off-axis units were summarized so the decisive objective theater could stay fully visible.")
+            }
+            if (reserveCombatUnits.isNotEmpty()) {
+                add("${reserveCombatUnits.size} off-axis combat units remain in reserve behind the current objective.")
+            }
+        }
+
+        return UnitSurfacingResult(
+            units = selected.distinctBy { it.id },
+            objectiveTheater = objectiveTheater,
+            suppressedNotes = suppressedNotes,
+        )
     }
 
     private fun buildProgressInMotion(
@@ -337,7 +470,10 @@ object AgentStrategicGovernor {
         return progress.take(6)
     }
 
-    private fun cityScore(city: AgentCityObservation): Int {
+    private fun cityScore(
+        city: AgentCityObservation,
+        campaignContext: AgentPlannerCampaignContextObservation?,
+    ): Int {
         var score = 100
         score += city.state.nearbyHostileUnits * 20
         score += city.state.nearbyHostileCities * 30
@@ -354,7 +490,93 @@ object AgentStrategicGovernor {
             if (project.status in setOf("in_progress", "following_intent", "committed", "nearly_complete")) score += 8
             if ((project.turnsLeft ?: Int.MAX_VALUE) <= 2) score += 10
         }
+        val objective = campaignContext?.objectiveTarget
+        if (objective != null) {
+            val distance = axialDistance(city.x, city.y, objective.x, objective.y)
+            score += (32 - distance * 5).coerceAtLeast(0)
+            if (campaignContext.atWar || campaignContext.warChoiceAvailable) {
+                val hasMilitaryChoice = city.actions.chooseProject.any { action ->
+                    action.yieldHints.any { hint -> hint in setOf("military", "frontline", "ranged") }
+                } || city.actions.purchase.any { action ->
+                    action.yieldHints.any { hint -> hint in setOf("military", "frontline", "ranged") }
+                }
+                if (hasMilitaryChoice) score += 18
+            }
+        }
         return score
+    }
+
+    private fun buildCaptureReadiness(
+        observation: AgentObservation,
+        campaignContext: AgentPlannerCampaignContextObservation?,
+    ): AgentPlannerCaptureReadinessObservation? {
+        campaignContext ?: return null
+        val target = campaignContext.objectiveTarget ?: return null
+        val visibleTarget = listOfNotNull(campaignContext.visibleCapital, campaignContext.visibleTarget)
+            .firstOrNull { it.x == target.x && it.y == target.y }
+        val targetKind = when {
+            campaignContext.visibleCapital?.x == target.x && campaignContext.visibleCapital.y == target.y -> "capital"
+            campaignContext.lastKnownCapital?.x == target.x && campaignContext.lastKnownCapital.y == target.y -> "capital"
+            else -> "city"
+        }
+        val objectiveDistance = if (campaignContext.atWar) 4 else 5
+        val healthyCaptureUnits = observation.units.count { unit ->
+            isCaptureUnitRole(unit.role) &&
+                unit.health >= 70 &&
+                axialDistance(unit.x, unit.y, target.x, target.y) <= objectiveDistance
+        }
+        val damagedCaptureUnits = observation.units.count { unit ->
+            isCaptureUnitRole(unit.role) &&
+                unit.health < 70 &&
+                axialDistance(unit.x, unit.y, target.x, target.y) <= objectiveDistance
+        }
+        val rangedSupportUnits = observation.units.count { unit ->
+            isRangedRole(unit.role) &&
+                unit.health >= 60 &&
+                axialDistance(unit.x, unit.y, target.x, target.y) <= objectiveDistance + 1
+        }
+        val workerCaptureOpportunities = observation.units.count { unit ->
+            isCaptureUnitRole(unit.role) &&
+                unit.hasMovement &&
+                axialDistance(unit.x, unit.y, target.x, target.y) <= objectiveDistance + 1 &&
+                unit.unitOptionCandidates.any { candidate ->
+                    candidate.category == "attack" && (
+                        candidate.title.contains("worker", ignoreCase = true) ||
+                            candidate.title.contains("settler", ignoreCase = true) ||
+                            candidate.title.contains("great", ignoreCase = true)
+                        )
+                }
+        }
+        val status = when {
+            healthyCaptureUnits == 0 && !campaignContext.atWar -> "assembling_capture_units"
+            healthyCaptureUnits == 0 -> "missing_capture_units"
+            healthyCaptureUnits == 1 -> "thin_capture_line"
+            rangedSupportUnits == 0 -> "missing_ranged_support"
+            damagedCaptureUnits > healthyCaptureUnits -> "frontline_worn_down"
+            workerCaptureOpportunities > 0 -> "capture_window_open"
+            campaignContext.atWar -> "ready_to_convert"
+            else -> "developing_pressure"
+        }
+        val summary = buildString {
+            append("$healthyCaptureUnits healthy capture units")
+            if (damagedCaptureUnits > 0) append(", $damagedCaptureUnits damaged melee")
+            append(", $rangedSupportUnits ranged support")
+            if (workerCaptureOpportunities > 0) append(", $workerCaptureOpportunities safe worker capture chances")
+            append(" near ${target.name}.")
+        }
+        return AgentPlannerCaptureReadinessObservation(
+            target = target,
+            targetKind = targetKind,
+            targetVisible = visibleTarget != null,
+            targetHealth = visibleTarget?.health ?: target.health,
+            targetStrength = visibleTarget?.combatStrength ?: target.combatStrength,
+            healthyCaptureUnits = healthyCaptureUnits,
+            damagedCaptureUnits = damagedCaptureUnits,
+            rangedSupportUnits = rangedSupportUnits,
+            workerCaptureOpportunities = workerCaptureOpportunities,
+            status = status,
+            summary = summary,
+        )
     }
 
     private fun unitScore(
@@ -389,7 +611,7 @@ object AgentStrategicGovernor {
                 if (assignment.switchCost.lowercase() == "high") score += 15
             }
         }
-        val objective = campaignContext?.visibleTarget ?: campaignContext?.visibleCapital ?: campaignContext?.lastKnownTarget ?: campaignContext?.lastKnownCapital
+        val objective = campaignContext?.objectiveTarget
         if (warLikeContext && objective != null && unit.role in setOf("melee", "ranged", "siege", "naval_melee", "naval_ranged")) {
             val distance = axialDistance(unit.x, unit.y, objective.x, objective.y)
             score += (40 - distance * 4).coerceAtLeast(0)
@@ -426,10 +648,21 @@ object AgentStrategicGovernor {
             ?: visibleCapital?.civName
         val lastKnownTarget = lastKnownAnchor(memory, primaryRivalCiv, setOf("city"))
         val lastKnownCapital = lastKnownAnchor(memory, primaryRivalCiv, setOf("capital"))
-        val objective = visibleTarget?.let(::toTargetReference)
-            ?: visibleCapital?.let(::toTargetReference)
-            ?: lastKnownTarget
-            ?: lastKnownCapital
+        val preferredObjective = preferredObjectiveTarget(
+            objectiveText = memory.campaign.decisiveObjective,
+            visibleTarget = visibleTarget,
+            visibleCapital = visibleCapital,
+            lastKnownTarget = lastKnownTarget,
+            lastKnownCapital = lastKnownCapital,
+        )
+        val objectiveSource = when (preferredObjective) {
+            visibleCapital?.let(::toTargetReference) -> "visible_capital"
+            visibleTarget?.let(::toTargetReference) -> "visible_city"
+            lastKnownCapital -> "last_known_capital"
+            lastKnownTarget -> "last_known_city"
+            else -> null
+        }
+        val objective = preferredObjective
         val frontlineCombatUnits = objective?.let { target ->
             observation.units.count { unit ->
                 unit.role in setOf("melee", "ranged", "siege", "naval_melee", "naval_ranged") &&
@@ -463,6 +696,8 @@ object AgentStrategicGovernor {
             warChoiceAvailable = warChoiceAvailable,
             visibleRivalCities = visibleRivalCities.size,
             visibleRivalUnits = visibleRivalUnits.size,
+            objectiveTarget = objective,
+            objectiveSource = objectiveSource,
             visibleTarget = visibleTarget?.let(::toTargetReference),
             visibleCapital = visibleCapital?.let(::toTargetReference),
             lastKnownTarget = lastKnownTarget,
@@ -514,9 +749,66 @@ object AgentStrategicGovernor {
         campaignContext ?: return false
         return campaignContext.warChoiceAvailable ||
             (observation.empireSummary.militaryUnitCount >= 8 && campaignContext.primaryRivalCiv != null) ||
-            campaignContext.visibleTarget != null ||
-            campaignContext.lastKnownTarget != null ||
-            campaignContext.lastKnownCapital != null
+            campaignContext.objectiveTarget != null
+    }
+
+    private fun preferredObjectiveTarget(
+        objectiveText: String?,
+        visibleTarget: VisibleTargetObservation?,
+        visibleCapital: VisibleTargetObservation?,
+        lastKnownTarget: AgentStrategistTargetReference?,
+        lastKnownCapital: AgentStrategistTargetReference?,
+    ): AgentStrategistTargetReference? {
+        val loweredObjective = objectiveText?.lowercase().orEmpty()
+        if ("capital" in loweredObjective) {
+            return visibleCapital?.let(::toTargetReference) ?: lastKnownCapital ?: visibleTarget?.let(::toTargetReference) ?: lastKnownTarget
+        }
+        return visibleTarget?.let(::toTargetReference)
+            ?: visibleCapital?.let(::toTargetReference)
+            ?: lastKnownTarget
+            ?: lastKnownCapital
+    }
+
+    private fun isObjectiveTheaterUnit(
+        unit: AgentUnitObservation,
+        objective: AgentStrategistTargetReference,
+        atWar: Boolean,
+    ): Boolean {
+        val distance = axialDistance(unit.x, unit.y, objective.x, objective.y)
+        val theaterRadius = if (atWar) 8 else 6
+        if (distance <= theaterRadius && isTheaterRelevantRole(unit.role)) return true
+        if (unit.nearbyHostileUnits > 0 || unit.nearbyHostileCities > 0) return true
+        val assignment = unit.assignmentProgress
+        if (assignment?.targetX != null && assignment.targetY != null) {
+            val assignmentDistance = axialDistance(assignment.targetX, assignment.targetY, objective.x, objective.y)
+            if (assignmentDistance <= 4 && isTheaterRelevantRole(unit.role)) return true
+        }
+        return false
+    }
+
+    private fun shouldSurfaceAsReserve(unit: AgentUnitObservation): Boolean {
+        if (isCombatRole(unit.role)) return true
+        return unit.role == "worker" && unit.assignmentProgress != null
+    }
+
+    private fun isTheaterRelevantRole(role: String): Boolean {
+        return isCombatRole(role) || role == "worker" || role == "settler" || role == "scout"
+    }
+
+    private fun isCombatRole(role: String): Boolean {
+        return role in setOf("melee", "ranged", "siege", "mounted", "armored", "naval_melee", "naval_ranged")
+    }
+
+    private fun isMeleeRole(role: String): Boolean {
+        return role in setOf("melee", "mounted", "armored", "naval_melee")
+    }
+
+    private fun isRangedRole(role: String): Boolean {
+        return role in setOf("ranged", "siege", "naval_ranged")
+    }
+
+    private fun isCaptureUnitRole(role: String): Boolean {
+        return role in setOf("melee", "mounted", "armored", "naval_melee")
     }
 
     private fun axialDistance(x1: Int, y1: Int, x2: Int, y2: Int): Int {
@@ -533,11 +825,29 @@ object AgentStrategicGovernor {
             )
     }
 
-    private fun phaseFromTurn(turn: Int): String = when {
-        turn < 60 -> "opener"
-        turn < 140 -> "expansion"
-        turn < 220 -> "conversion"
-        else -> "endgame"
+    private fun defaultCampaignStage(
+        memory: AgentMemory,
+        observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+        campaignContext: AgentPlannerCampaignContextObservation?,
+    ): String {
+        if (memory.campaign.stage.isNotBlank()) return memory.campaign.stage
+        if (observation.empireSummary.isAtWar) return "assault"
+        if (!empireObservation.gameContext.contactComplete) return "scouting"
+        if (observation.empireSummary.cityCount < 2) return "expansion"
+        if (campaignContext?.warChoiceAvailable == true && hasMeaningfulRivalObjective(campaignContext)) return "staging"
+        if (campaignContext != null && hasMeaningfulRivalObjective(campaignContext)) return "pressure"
+        return "positioning"
     }
+
+    private fun hasMeaningfulRivalObjective(campaignContext: AgentPlannerCampaignContextObservation): Boolean {
+        return campaignContext.objectiveTarget != null
+    }
+
+    private data class UnitSurfacingResult(
+        val units: List<AgentUnitObservation>,
+        val objectiveTheater: AgentPlannerObjectiveTheaterObservation? = null,
+        val suppressedNotes: List<String> = emptyList(),
+    )
 
 }

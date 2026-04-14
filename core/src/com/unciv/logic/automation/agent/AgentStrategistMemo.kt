@@ -7,7 +7,9 @@ import kotlinx.serialization.Serializable
 data class AgentStrategistMemoMemory(
     var gameArchetype: String = "",
     var winPath: String? = null,
-    var phase: String = "",
+    var campaignStage: String = "",
+    var decisiveObjective: String? = null,
+    var conversionBlocker: String? = null,
     var thesis: String? = null,
     var pastSummary: String? = null,
     var currentSituation: String? = null,
@@ -27,7 +29,7 @@ data class AgentStrategistMemoMemory(
     var lastReviewedTurn: Int = 0,
     var lastRefreshReason: String? = null,
 ) : IsPartOfGameInfoSerialization {
-    constructor() : this("", null, "", null, null, null, null, null, 0, 0, false, false, null, 0, 0, null, arrayListOf(), 0, 0, 0, null)
+    constructor() : this("", null, "", null, null, null, null, null, null, null, 0, 0, false, false, null, 0, 0, null, arrayListOf(), 0, 0, 0, null)
 }
 
 @Serializable
@@ -39,7 +41,9 @@ data class AgentStrategicPlan(
 @Serializable
 data class AgentStrategistMemoDraft(
     val winPath: String? = null,
-    val phase: String,
+    val campaignStage: String,
+    val decisiveObjective: String,
+    val conversionBlocker: String? = null,
     val thesis: String? = null,
     val pastSummary: String? = null,
     val currentSituation: String? = null,
@@ -49,8 +53,6 @@ data class AgentStrategistMemoDraft(
     val worldModelNotes: List<String> = emptyList(),
     val rivals: List<AgentStrategistRivalNotebookDraft> = emptyList(),
     val campaignTitle: String? = null,
-    val campaignStage: String? = null,
-    val campaignObjective: String? = null,
     val campaignSummary: String? = null,
     val reinforcementPlan: String? = null,
     val campaignDoNotDo: List<String> = emptyList(),

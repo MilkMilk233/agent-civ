@@ -48,7 +48,9 @@ object AgentStrategistPromptBuilder {
             {
               "memo": {
                 "winPath": "Domination",
-                "phase": "opener",
+                "campaignStage": "staging",
+                "decisiveObjective": "take the forward city before the rival stabilizes",
+                "conversionBlocker": "optional",
                 "thesis": "optional",
                 "pastSummary": "optional",
                 "currentSituation": "optional",
@@ -60,8 +62,6 @@ object AgentStrategistPromptBuilder {
                   {"rivalCiv": "Persia", "summary": "optional", "notes": ["optional"]}
                 ],
                 "campaignTitle": "optional",
-                "campaignStage": "optional",
-                "campaignObjective": "optional",
                 "campaignSummary": "optional",
                 "reinforcementPlan": "optional",
                 "campaignDoNotDo": ["optional"],
@@ -82,15 +82,20 @@ object AgentStrategistPromptBuilder {
             $cheatSheetSection
             - Use only public setup context and the factual state in Strategist Brief JSON.
             - Think of Strategist Brief JSON as the onboarding packet you would hand to a fresh strategist on your team: it gives the setup, the current empire, the current notebook, and the known rival picture.
-            - lastStrategistMemo is the previous strategist memo. worldModel, rivalNotebooks, campaign, empirePlan, recentChanges, and lessons are the current shared notebook. Use them to orient yourself quickly, not to repeat stale wording.
+            - lastStrategistMemo is the previous strategist memo. worldModel, rivalNotebooks, campaign, empirePlan, recentChanges, lessons, and tacticianTurnLog are the current shared notebook. Use them to orient yourself quickly, not to repeat stale wording.
+            - tacticianTurnLog is the per-turn delta since the last strategist pass. Read it as execution reality: what changed, what completed, what became obsolete, and what is still being carried forward.
             - citySnapshots and unitSnapshots cover the current empire in compact form. rivalCities, rivalUnits, and campaignPicture describe the known enemy-side and frontier situation. Use them to understand where the empire really stands and what the tactician needs to know next.
             - Your memo is not just for record-keeping. It is the tactician's high-level briefing. Write it so a fresh downstream teammate can quickly understand what changed, what matters now, and what should guide local choices over the next few turns.
+            - Consolidate the tactician delta log into a cleaner current report. If the old memo told the tactician to finish a Scout, found a city, or keep a project, but the delta log shows that instruction is already completed or obsolete, do not repeat it as if it were still live.
             - Optimize for decision-useful clarity, not for sounding formal, exhaustive, or machine-like.
             - If there is one main bottleneck, one main temptation, or one main objective, say it plainly.
             - If the empire should stop drifting and start acting differently, say that plainly too.
             - Do not repeat opener instructions that no longer fit the actual empire size, contact status, or military situation.
             - Treat Strategist Brief JSON as a factual state packet, not a script-written strategic interpretation.
             - Think like a strong human strategist: identify what just changed, what the real bottleneck is, and what the tactician should optimize for next. Do not turn the memo into a long step-by-step playbook.
+            - campaignStage is required. Use a short natural stage label such as scouting, expansion, staging, assault, rebuild, or consolidation.
+            - decisiveObjective is required. Name the next objective that most directly converts the current position into progress. Keep it concrete and game-specific.
+            - conversionBlocker should name the main thing still preventing that objective from converting cleanly, if there is one. If the path is already open, leave it empty instead of inventing filler.
             - thesis should be a single compact sentence capturing the core idea of the notebook update.
             - pastSummary should briefly bring the tactician up to speed on what changed recently and what background context still matters. Keep it to 1-2 sentences.
             - currentSituation should briefly explain what is true now, what the empire's real bottleneck or tension is, and what the tactician should understand about the present board. Keep it to 1-3 sentences.
@@ -98,7 +103,7 @@ object AgentStrategistPromptBuilder {
             - tacticianHandoff should be a direct 1-2 sentence handoff to the tactician about what should dominate this turn and the next few turns. If the empire should stop drifting, start marching, declare war now, or ignore a tempting distraction, say that plainly here.
             - worldModelSummary should capture the map-level idea that matters in this game, not generic doctrine. worldModelNotes should be short bullets about meaningful map or information inferences.
             - rivals should only contain rivals that matter right now. Use short natural-language summaries and notes about what we believe, what they threaten, or what should still be remembered when vision drops.
-            - campaignTitle, campaignStage, campaignObjective, campaignSummary, reinforcementPlan, and campaignDoNotDo should describe the current operation in natural human language. This is the main shared intent between you and the tactician.
+            - campaignTitle, campaignSummary, reinforcementPlan, and campaignDoNotDo should describe the current operation in natural human language. This is the main shared intent between you and the tactician.
             - empirePlanSummary and purchaseIntent should explain what our cities and gold are for over the next few turns. Keep empirePlanNotes short and only include things with cross-turn value.
             - recentChanges should be a short list of what changed in this game that the tactician still needs in mind. lessons should be short cautions or reminders worth carrying forward.
             - For domination-oriented states, think in natural campaign language when useful: is the empire still getting ready, already moving on the target, close to declaring, or in danger of stalling out?

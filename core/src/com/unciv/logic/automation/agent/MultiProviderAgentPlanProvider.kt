@@ -129,7 +129,8 @@ class MultiProviderAgentPlanProvider(
                 turn = civInfo.gameInfo.turns,
                 details = mapOf(
                     "winPath" to (parsedPlan.memo.winPath ?: ""),
-                    "phase" to parsedPlan.memo.phase,
+                    "campaignStage" to parsedPlan.memo.campaignStage,
+                    "decisiveObjective" to parsedPlan.memo.decisiveObjective,
                     "reviewInTurns" to parsedPlan.memo.reviewInTurns.toString(),
                     "notes" to (parsedPlan.notes ?: ""),
                     "parsedPlan" to json.encodeToString(parsedPlan),
