@@ -58,6 +58,15 @@ object AgentStrategistPromptBuilder {
                   "milestoneHorizonTurns": 4,
                   "blockerKind": "contact"
                 },
+                "campaignControl": {
+                  "commitmentLevel": "prepare",
+                  "battleReadiness": "nearly_ready",
+                  "supplyHealth": "healthy",
+                  "nextCheckpointKind": "city_founded",
+                  "nextCheckpointSummary": "convert the second city into real map tempo",
+                  "checkpointHorizonTurns": 4,
+                  "pivotTriggerKind": "stalled"
+                },
                 "thesis": "optional",
                 "pastSummary": "optional",
                 "currentSituation": "optional",
@@ -92,7 +101,15 @@ object AgentStrategistPromptBuilder {
             - lastStrategistMemo is the previous strategist memo. worldModel, rivalNotebooks, campaign, empirePlan, recentChanges, lessons, and tacticianTurnLog are the current shared notebook. Use them to orient yourself quickly, not to repeat stale wording.
             - tacticianTurnLog is the per-turn delta since the last strategist pass. Read it as execution reality: what changed, what completed, what became obsolete, and what is still being carried forward.
             - planHealth in the brief is the script-managed continuity scaffold for the current plan thread. Use it as evidence about age, progress, contradictions, and opportunity cost, not as a replacement for judgment.
+            - campaignControl in the brief is the script-managed control scaffold for the active campaign. Use it to summarize commitment, battle readiness, supply health, next checkpoint, and what should force a rethink if the line stalls.
             - If planHealth says the current thread is strained or contradicted, treat that as a serious warning that the old memo may now be losing the game. Rewrite the story plainly instead of preserving stale coherence.
+            - Use campaignControl to keep the memo in the middle ground a strong human wants: committed enough to finish a live campaign, but willing to pivot when readiness or supply no longer justify the line.
+            - Think about campaignControl the way a strong human would: choose a campaign, name the next checkpoint, commit for a short window, then reassess at checkpoints instead of re-deciding from zero every turn or postponing forever.
+            - If campaignControl says checkpointStatus is missed, explain plainly whether the right response is launch now, stabilize first, or pivot away. Do not leave the memo in a vague “still preparing” state.
+            - If campaignControl says launchWindowOpen is true while battleReadiness is ready or engaged, be skeptical of another passive staging turn unless there is a concrete immediate payoff for waiting.
+            - If campaignControl says supplyHealth is fragile or collapsing, say that plainly and stop treating more army growth as harmless.
+            - Do not label battleReadiness as ready unless the current visible package looks capable of actually converting the next checkpoint soon.
+            - Do not label supplyHealth as healthy if treasury, happiness, science, or city count are already showing that the campaign is expensive to hold.
             - citySnapshots and unitSnapshots cover the current empire in compact form. rivalCities, rivalUnits, and campaignPicture describe the known enemy-side and frontier situation. Use them to understand where the empire really stands and what the tactician needs to know next.
             - Your memo is not just for record-keeping. It is the tactician's high-level briefing. Write it so a fresh downstream teammate can quickly understand what changed, what matters now, and what should guide local choices over the next few turns.
             - Consolidate the tactician delta log into a cleaner current report. If the old memo told the tactician to finish a Scout, found a city, or keep a project, but the delta log shows that instruction is already completed or obsolete, do not repeat it as if it were still live.
@@ -107,6 +124,9 @@ object AgentStrategistPromptBuilder {
             - decisiveObjective is required. Name the next objective that most directly converts the current position into progress. Keep it concrete and game-specific.
             - conversionBlocker should name the main thing still preventing that objective from converting cleanly, if there is one. If the path is already open, leave it empty instead of inventing filler.
             - planHealth is the small typed label block that the memory manager will track over time. Use short lowercase labels with underscores when useful, such as expand, declare_war, capture_city, city_founded, city_captured, economy_unstable, or no_melee. Keep nextMilestoneSummary human-readable and short.
+            - campaignControl is the companion typed label block for campaign commitment and sustainability. Use short lowercase labels such as prepare, commit, launch_window, sustain, stabilize, not_ready, nearly_ready, ready, overextended, healthy, strained, fragile, or collapsing when they fit. Keep nextCheckpointSummary human-readable and short.
+            - nextCheckpointSummary should describe the next concrete state change that would prove the campaign is converting, such as founding the second city, declaring war, starting the assault, or taking the first city.
+            - pivotTriggerKind should name the main reason this campaign should be reconsidered if it stalls, such as missed_checkpoint, supply_collapse, stalled_launch, or campaign_drift.
             - thesis should be a single compact sentence capturing the core idea of the notebook update.
             - pastSummary should briefly bring the tactician up to speed on what changed recently and what background context still matters. Keep it to 1-2 sentences.
             - currentSituation should briefly explain what is true now, what the empire's real bottleneck or tension is, and what the tactician should understand about the present board. Keep it to 1-3 sentences.

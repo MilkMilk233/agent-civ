@@ -77,6 +77,9 @@ data class AgentPlanHealthObservation(
 data class AgentTacticianReflection(
     val summary: String? = null,
     val memoValidity: String? = null,
+    val commitmentLevel: String? = null,
+    val battleReadiness: String? = null,
+    val supplyHealth: String? = null,
     val whatChanged: List<String> = emptyList(),
     val completed: List<String> = emptyList(),
     val stillBlocked: List<String> = emptyList(),

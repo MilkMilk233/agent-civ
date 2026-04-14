@@ -7,6 +7,7 @@ data class AgentPlannerBrief(
     val gameContext: AgentPublicGameContextObservation,
     val strategy: AgentPlannerStrategyObservation,
     val planHealth: AgentPlanHealthObservation? = null,
+    val campaignControl: AgentCampaignControlObservation? = null,
     val memoryContext: AgentPlannerMemoryContextObservation? = null,
     val campaignContext: AgentPlannerCampaignContextObservation? = null,
     val objectiveTheater: AgentPlannerObjectiveTheaterObservation? = null,
@@ -68,6 +69,9 @@ data class AgentPlannerTacticianTurnLogObservation(
     val obsolete: List<String> = emptyList(),
     val carryForward: List<String> = emptyList(),
     val memoValidity: String? = null,
+    val commitmentLevel: String? = null,
+    val battleReadiness: String? = null,
+    val supplyHealth: String? = null,
 )
 
 @Serializable

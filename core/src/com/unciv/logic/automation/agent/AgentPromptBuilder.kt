@@ -61,6 +61,9 @@ object AgentPromptBuilder {
               "tacticianReflection": {
                 "summary": "optional",
                 "memoValidity": "healthy",
+                "commitmentLevel": "optional",
+                "battleReadiness": "optional",
+                "supplyHealth": "optional",
                 "whatChanged": ["optional"],
                 "completed": ["optional"],
                 "stillBlocked": ["optional"],
@@ -90,7 +93,14 @@ object AgentPromptBuilder {
             - objectiveTheater is the surfaced battlefield around the current decisive objective. Treat it as the current operational map: those units and support cities are the ones that can materially affect the objective now, while the rest of the empire is compacted into reserves.
             - captureReadiness is the conversion read around the current objective. Use it to judge whether the current force package can actually take or hold the objective soon, especially whether healthy capture-capable melee are missing, worn down, or ready.
             - planHealth is the script-managed health scaffold for the current plan thread. Treat it as factual continuity evidence about objective age, milestone labels, contradictions, opportunity costs, and pivot pressure.
+            - campaignControl is the companion control scaffold for the active campaign. Use it to understand how committed the empire already is, whether the battle package looks not_ready / nearly_ready / ready / overextended, whether supply looks healthy or strained, and what checkpoint should convert next.
             - If planHealth says the current thread is strained or contradicted, stop spending this turn preserving the old setup just because it was once coherent. Either convert now from the current board, or take actions that make the pivot real on the board this turn.
+            - Read campaignControl together with captureReadiness. If battleReadiness is low and supplyHealth is strained, do not keep growing a vanity army. If battleReadiness is ready and supplyHealth is still healthy, more passive staging becomes suspicious.
+            - Use campaignControl like a strong human would use campaign judgment: a campaign should be stable enough to execute for a short window, but not so sticky that it survives missed checkpoints forever.
+            - If campaignControl says checkpointStatus is missed, treat that as a serious warning that the current line needs real conversion or a real pivot this turn. Do not spend another full turn preserving the same stale setup unless the current brief shows a concrete immediate payoff.
+            - If campaignControl says launchWindowOpen is true and battleReadiness is ready or engaged, more passive staging is usually a mistake unless this turn directly improves the launch.
+            - If campaignControl says supplyHealth is fragile or collapsing, value actions that stabilize or convert the current campaign over more broad military accumulation.
+            - Do not mistake army size for campaign readiness. Readiness means the current visible force package can actually found, declare, take, or hold the next checkpoint soon.
             - Use decisiveObjective and conversionBlocker together: push actions that advance the objective directly, and spend tempo solving the blocker only when that really improves conversion.
             - Because this call is stateless, do not assume any hidden context beyond Memory JSON and Planner Brief JSON. If the strategist wants a major shift, make sure that shift is reflected in this turn's actual legal actions rather than letting stale local habits persist automatically.
             - If the strategist memo says "finish X" or "produce Y", verify from the current brief and tacticianTurnLog that X is still unfinished and Y is still the live intent. Do not keep following a completed instruction just because it still appears in older memo text.
@@ -118,6 +128,8 @@ object AgentPromptBuilder {
             - If mustActNow includes a city that still needs a project choice, that choice usually deserves action before extra map-polishing moves.
             - If mustActNow includes a Settler that can found on its current tile and the strategist memo still wants that city, founding it usually outranks routine observation moves.
             - If mustActNow says the current plan should pivot, do not spend the turn on “one more turn of staging” unless the current brief shows a concrete immediate payoff for that delay.
+            - If mustActNow says a launch window is open, treat that like a real tempo warning rather than a decorative note.
+            - If mustActNow says campaign supply is under pressure, do not keep choosing actions whose main effect is to make the current stalled line even more expensive.
             - Only return an empty actions list when the surfaced actions are genuinely low-value or disruptive relative to the strategist memo and the current board state.
             - When preserve-progress instincts conflict with concrete frontline state, rival pressure, or better city tempo choices visible in the brief, trust the visible state and the strategist briefing over inertia.
             - If tacticianHandoff says to stop delaying for recon, upkeep, or passive infrastructure, believe it and act accordingly.
@@ -127,8 +139,10 @@ object AgentPromptBuilder {
             - When captureReadiness says healthy capture units are thin or missing, treat melee buys, melee builds, and preserving existing capture units as higher priority than extra ranged chip or side-target cleanup.
             - If a safe civilian capture is available with a melee unit in the objective theater, prefer capturing that unit over merely killing it with ranged damage.
             - If planHealth opportunity costs say an idle army or one-city economy is bleeding tempo, treat more passive military staging as suspicious unless it immediately improves conversion.
+            - If campaignControl holdingCosts say the empire is carrying a ready army, a ready Settler, or a stalled one-city military package, make this turn reduce that holding cost instead of preserving it.
             - Use strategistRefreshRequest only for a real strategic emergency: the strategist memo assumptions are broken by war, a critical rival surge, a collapse in the current plan, or another major shift that should trigger an immediate strategist review.
             - memoValidity should use a short label such as healthy, strained, or contradicted. Mark it as strained or contradicted when current reality clearly no longer matches the old memo's assumptions.
+            - commitmentLevel, battleReadiness, and supplyHealth in tacticianReflection are short lowercase labels for the next stateless call. Use them only when this turn materially clarified the campaign posture, readiness, or supply state.
             - If you intentionally hold actions, explain the concrete payoff and mark memoValidity as strained or contradicted when this is another turn of delay instead of real progress.
             - Keep tacticianReflection sparse and concrete. Use short bullets, not essays, and only mention deltas that matter across turns.
             - Use only unit IDs, cities, action types, tiles, and constructions present in Planner Brief JSON.

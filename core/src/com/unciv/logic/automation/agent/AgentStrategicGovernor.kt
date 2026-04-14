@@ -10,8 +10,9 @@ object AgentStrategicGovernor {
         val primaryThreat = empireObservation.victoryThreats.firstOrNull()
         val memo = memory.lastStrategistMemo.takeIf { it.campaignStage.isNotBlank() }
         val planHealth = memory.planHealth.toObservation(observation.turn)
-        val attentionFacts = buildAttentionFacts(observation, empireObservation, planHealth)
-        val mustActNow = buildMustActNow(observation, empireObservation, planHealth)
+        val campaignControl = memory.campaignControl.toObservation(observation.turn)
+        val attentionFacts = buildAttentionFacts(observation, empireObservation, planHealth, campaignControl)
+        val mustActNow = buildMustActNow(observation, empireObservation, planHealth, campaignControl)
         val campaignContext = buildCampaignContext(memory, observation, empireObservation)
         val cityHighlights = selectCityHighlights(observation, gameContext, campaignContext)
         val memoryContext = buildMemoryContext(memory, observation, empireObservation)
@@ -50,6 +51,7 @@ object AgentStrategicGovernor {
                 tacticianHandoff = memo?.tacticianHandoff ?: memo?.futurePlan,
             ),
             planHealth = planHealth,
+            campaignControl = campaignControl,
             memoryContext = memoryContext,
             campaignContext = campaignContext,
             objectiveTheater = unitSurfacing.objectiveTheater,
@@ -128,6 +130,9 @@ object AgentStrategicGovernor {
                     obsolete = entry.obsolete,
                     carryForward = entry.carryForward,
                     memoValidity = entry.memoValidity,
+                    commitmentLevel = entry.commitmentLevel,
+                    battleReadiness = entry.battleReadiness,
+                    supplyHealth = entry.supplyHealth,
                 )
             },
         )
@@ -137,6 +142,7 @@ object AgentStrategicGovernor {
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
         planHealth: AgentPlanHealthObservation?,
+        campaignControl: AgentCampaignControlObservation?,
     ): List<AgentPlannerMustActObservation> {
         val items = arrayListOf<AgentPlannerMustActObservation>()
 
@@ -195,6 +201,39 @@ object AgentStrategicGovernor {
             )
         }
 
+        campaignControl?.let { liveCampaignControl ->
+            if (liveCampaignControl.checkpointStatus.equals("missed", ignoreCase = true)) {
+                items += AgentPlannerMustActObservation(
+                    kind = "campaign_checkpoint_missed",
+                    headline = "The current campaign missed its checkpoint",
+                    detail = liveCampaignControl.pivotTriggers.firstOrNull()
+                        ?: liveCampaignControl.nextCheckpointSummary
+                        ?: "The old line should either convert now or pivot into a new live plan.",
+                )
+            } else if (
+                liveCampaignControl.launchWindowOpen &&
+                !observation.empireSummary.isAtWar &&
+                liveCampaignControl.battleReadiness in setOf("ready", "engaged")
+            ) {
+                items += AgentPlannerMustActObservation(
+                    kind = "launch_window_open",
+                    headline = "The current campaign looks launchable now",
+                    detail = liveCampaignControl.holdingCosts.firstOrNull()
+                        ?: liveCampaignControl.nextCheckpointSummary
+                        ?: "More passive staging is now suspicious unless it pays off immediately.",
+                )
+            }
+
+            if (liveCampaignControl.supplyHealth in setOf("fragile", "collapsing")) {
+                items += AgentPlannerMustActObservation(
+                    kind = "campaign_supply_pressure",
+                    headline = "Campaign supply is under real pressure",
+                    detail = liveCampaignControl.holdingCosts.firstOrNull()
+                        ?: "The empire cannot keep paying for a stalled line indefinitely.",
+                )
+            }
+        }
+
         return items
     }
 
@@ -218,6 +257,7 @@ object AgentStrategicGovernor {
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
         planHealth: AgentPlanHealthObservation?,
+        campaignControl: AgentCampaignControlObservation?,
     ): List<ObservationFact> {
         val facts = linkedMapOf<String, ObservationFact>()
         fun addFact(fact: ObservationFact) {
@@ -259,7 +299,65 @@ object AgentStrategicGovernor {
                                 detail = cost,
                             )
                         )
-                    }
+                }
+            }
+        }
+
+        campaignControl?.let { liveCampaignControl ->
+            when {
+                liveCampaignControl.checkpointStatus.equals("missed", ignoreCase = true) -> addFact(
+                    ObservationFact(
+                        category = "campaign",
+                        severity = "warning",
+                        headline = "Current campaign missed its checkpoint",
+                        detail = liveCampaignControl.pivotTriggers.firstOrNull()
+                            ?: liveCampaignControl.nextCheckpointSummary
+                            ?: "The current line should be converted or rewritten now.",
+                    )
+                )
+                liveCampaignControl.launchWindowOpen &&
+                    !observation.empireSummary.isAtWar &&
+                    liveCampaignControl.battleReadiness in setOf("ready", "engaged") -> addFact(
+                    ObservationFact(
+                        category = "campaign",
+                        severity = "warning",
+                        headline = "A launch window is open",
+                        detail = liveCampaignControl.holdingCosts.firstOrNull()
+                            ?: "The force package already looks launchable, so more passive staging is suspicious.",
+                    )
+                )
+            }
+
+            when (liveCampaignControl.supplyHealth) {
+                "collapsing" -> addFact(
+                    ObservationFact(
+                        category = "campaign",
+                        severity = "warning",
+                        headline = "Campaign supply is collapsing",
+                        detail = liveCampaignControl.holdingCosts.firstOrNull()
+                            ?: "Treasury, happiness, or science strain is now severe enough to threaten the line.",
+                    )
+                )
+                "fragile", "strained" -> addFact(
+                    ObservationFact(
+                        category = "campaign",
+                        severity = "warning",
+                        headline = "Campaign sustainment is under pressure",
+                        detail = liveCampaignControl.holdingCosts.firstOrNull()
+                            ?: "Waiting or overbuilding is making the campaign more expensive each turn.",
+                    )
+                )
+            }
+
+            liveCampaignControl.pivotTriggers.take(2).forEach { trigger ->
+                addFact(
+                    ObservationFact(
+                        category = "campaign",
+                        severity = "warning",
+                        headline = "Campaign control warning",
+                        detail = trigger,
+                    )
+                )
             }
         }
 

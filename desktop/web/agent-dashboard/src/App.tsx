@@ -891,8 +891,11 @@ function TurnDetail({
   const tacticianTurnLogMemory = objectArray(memoryRecord?.tacticianTurnLog);
   const lastStrategistMemoMemory = asRecord(memoryRecord?.lastStrategistMemo);
   const memoryPlanHealth = asRecord(memoryRecord?.planHealth);
+  const memoryCampaignControl = asRecord(memoryRecord?.campaignControl);
   const strategistPlanHealth = asRecord(strategistBrief?.planHealth);
+  const strategistCampaignControl = asRecord(strategistBrief?.campaignControl);
   const plannerPlanHealth = asRecord(plannerBrief?.planHealth);
+  const plannerCampaignControl = asRecord(plannerBrief?.campaignControl);
   const worldModelNotes = objectArray(worldModelMemory?.notes);
   const worldModelAnchors = objectArray(worldModelMemory?.anchors);
   const campaignNotes = objectArray(campaignMemory?.notes);
@@ -1206,6 +1209,13 @@ function TurnDetail({
             emptyTitle="No plan-health memory"
             emptyBody="No typed plan-health state was carried into this turn."
           />
+          <CampaignControlCard
+            title="Campaign control"
+            subtitle="Script-managed campaign state that tracks commitment, readiness, supply, checkpoints, and why the current line may need to launch or pivot."
+            campaignControl={memoryCampaignControl}
+            emptyTitle="No campaign-control memory"
+            emptyBody="No typed campaign-control state was carried into this turn."
+          />
           <StrategistMemoMemorySection memo={lastStrategistMemoMemory} />
           <TacticianTurnLogSection entries={tacticianTurnLogMemory} />
 
@@ -1227,6 +1237,7 @@ function TurnDetail({
               title="Strategist inputs"
               brief={strategistBrief}
               planHealth={strategistPlanHealth}
+              campaignControl={strategistCampaignControl}
               threats={strategistRivalThreats}
               campaignPicture={strategistCampaignPicture}
             />
@@ -1269,6 +1280,7 @@ function TurnDetail({
                 </>
               ) : null}
               <PlanHealthLabelsBlock labels={asRecord(strategistMemo.planHealth)} />
+              <CampaignControlLabelsBlock labels={asRecord(strategistMemo.campaignControl)} />
               {stringValue(strategistMemo.pastSummary) ? (
                 <>
                   <SectionLabel text="Past" />
@@ -1357,6 +1369,13 @@ function TurnDetail({
             planHealth={plannerPlanHealth}
             emptyTitle="No tactical plan health"
             emptyBody="The tactical brief did not surface any plan-health observation on this turn."
+          />
+          <CampaignControlCard
+            title="Campaign control seen by tactician"
+            subtitle="The typed campaign-control scaffold surfaced into the tactical brief for this turn."
+            campaignControl={plannerCampaignControl}
+            emptyTitle="No tactical campaign control"
+            emptyBody="The tactical brief did not surface any campaign-control observation on this turn."
           />
 
           <Card title="Objective theater" subtitle="The full surfaced battlefield slice around the current decisive objective, plus a compact reserve summary.">
@@ -1649,6 +1668,30 @@ function PlanHealthCard({
   );
 }
 
+function CampaignControlCard({
+  title,
+  subtitle,
+  campaignControl,
+  emptyTitle,
+  emptyBody,
+}: {
+  title: string;
+  subtitle: string;
+  campaignControl: Record<string, unknown> | null;
+  emptyTitle: string;
+  emptyBody: string;
+}) {
+  return (
+    <Card title={title} subtitle={subtitle}>
+      {campaignControl && Object.keys(campaignControl).length ? (
+        <CampaignControlBody campaignControl={campaignControl} />
+      ) : (
+        <EmptyCardState title={emptyTitle} body={emptyBody} />
+      )}
+    </Card>
+  );
+}
+
 function PlanHealthEmbeddedSection({ planHealth }: { planHealth: Record<string, unknown> | null }) {
   if (!planHealth || !Object.keys(planHealth).length) return null;
   return (
@@ -1656,6 +1699,18 @@ function PlanHealthEmbeddedSection({ planHealth }: { planHealth: Record<string, 
       <SectionLabel text="Plan health" />
       <div className="structured-item">
         <PlanHealthBody planHealth={planHealth} embedded />
+      </div>
+    </>
+  );
+}
+
+function CampaignControlEmbeddedSection({ campaignControl }: { campaignControl: Record<string, unknown> | null }) {
+  if (!campaignControl || !Object.keys(campaignControl).length) return null;
+  return (
+    <>
+      <SectionLabel text="Campaign control" />
+      <div className="structured-item">
+        <CampaignControlBody campaignControl={campaignControl} embedded />
       </div>
     </>
   );
@@ -1675,6 +1730,26 @@ function PlanHealthLabelsBlock({ labels }: { labels: Record<string, unknown> | n
       <SectionLabel text="Typed plan labels" />
       {values.length ? <TagList values={values} tone="accent" /> : null}
       {stringValue(labels.nextMilestoneSummary) ? <p className="card-paragraph">{stringValue(labels.nextMilestoneSummary)}</p> : null}
+    </>
+  );
+}
+
+function CampaignControlLabelsBlock({ labels }: { labels: Record<string, unknown> | null }) {
+  if (!labels || !Object.keys(labels).length) return null;
+  const values = [
+    stringValue(labels.commitmentLevel) ? `commitment ${stringValue(labels.commitmentLevel)}` : "",
+    stringValue(labels.battleReadiness) ? `readiness ${stringValue(labels.battleReadiness)}` : "",
+    stringValue(labels.supplyHealth) ? `supply ${stringValue(labels.supplyHealth)}` : "",
+    stringValue(labels.nextCheckpointKind) ? `checkpoint ${stringValue(labels.nextCheckpointKind)}` : "",
+    numberValue(labels.checkpointHorizonTurns) !== null ? `horizon ${formatNumber(numberValue(labels.checkpointHorizonTurns))}` : "",
+    stringValue(labels.pivotTriggerKind) ? `pivot ${stringValue(labels.pivotTriggerKind)}` : "",
+  ].filter(Boolean);
+  if (!values.length && !stringValue(labels.nextCheckpointSummary)) return null;
+  return (
+    <>
+      <SectionLabel text="Typed campaign labels" />
+      {values.length ? <TagList values={values} tone="accent" /> : null}
+      {stringValue(labels.nextCheckpointSummary) ? <p className="card-paragraph">{stringValue(labels.nextCheckpointSummary)}</p> : null}
     </>
   );
 }
@@ -1723,6 +1798,58 @@ function PlanHealthBody({
         <>
           <SectionLabel text="Pivot reason" />
           <p className="card-paragraph">{stringValue(planHealth.pivotReason)}</p>
+        </>
+      ) : null}
+    </>
+  );
+
+  if (embedded) return summary;
+  return <>{summary}</>;
+}
+
+function CampaignControlBody({
+  campaignControl,
+  embedded = false,
+}: {
+  campaignControl: Record<string, unknown>;
+  embedded?: boolean;
+}) {
+  const holdingCosts = stringList(campaignControl.holdingCosts);
+  const pivotTriggers = stringList(campaignControl.pivotTriggers);
+  const summary = (
+    <>
+      <div className="summary-grid compact">
+        <SummaryStat label="Commitment" value={stringValue(campaignControl.commitmentLevel) || "—"} />
+        <SummaryStat label="Readiness" value={stringValue(campaignControl.battleReadiness) || "—"} />
+        <SummaryStat label="Supply" value={stringValue(campaignControl.supplyHealth) || "—"} />
+        <SummaryStat label="Checkpoint" value={stringValue(campaignControl.nextCheckpointKind) || "—"} />
+        <SummaryStat label="Checkpoint status" value={stringValue(campaignControl.checkpointStatus) || "—"} />
+        <SummaryStat label="Launch window" value={booleanText(campaignControl.launchWindowOpen)} />
+        <SummaryStat label="Commitment age" value={nullableNumberText(campaignControl.commitmentAgeTurns)} />
+        <SummaryStat label="Since checkpoint" value={nullableNumberText(campaignControl.turnsSinceCheckpoint)} />
+      </div>
+      {stringValue(campaignControl.nextCheckpointSummary) ? (
+        <>
+          <SectionLabel text="Next checkpoint summary" />
+          <p className="card-paragraph">{stringValue(campaignControl.nextCheckpointSummary)}</p>
+        </>
+      ) : null}
+      {stringValue(campaignControl.pivotTriggerKind) ? (
+        <>
+          <SectionLabel text="Pivot trigger kind" />
+          <TagList values={[stringValue(campaignControl.pivotTriggerKind)]} tone="warning" />
+        </>
+      ) : null}
+      {holdingCosts.length ? (
+        <>
+          <SectionLabel text="Holding costs" />
+          <TagList values={holdingCosts} tone="warning" />
+        </>
+      ) : null}
+      {pivotTriggers.length ? (
+        <>
+          <SectionLabel text="Pivot triggers" />
+          <TagList values={pivotTriggers} tone="warning" />
         </>
       ) : null}
     </>
@@ -1871,6 +1998,7 @@ function StrategistMemoMemorySection({ memo }: { memo: Record<string, unknown> |
             </>
           ) : null}
           <PlanHealthLabelsBlock labels={asRecord(memo.planHealth)} />
+          <CampaignControlLabelsBlock labels={asRecord(memo.campaignControl)} />
           {stringValue(memo.tacticianHandoff) ? (
             <>
               <SectionLabel text="Tactician handoff" />
@@ -1918,12 +2046,15 @@ function TacticianTurnLogSection({ entries }: { entries: Record<string, unknown>
                       <strong>{`Turn ${formatNumber(numberValue(entry.turn))}`}</strong>
                       <div className="tag-list compact">
                         {stringValue(entry.campaignStage) ? <span className="tag neutral">{stringValue(entry.campaignStage)}</span> : null}
-                        {numberValue(entry.basedOnStrategistTurn) !== null ? (
+                      {numberValue(entry.basedOnStrategistTurn) !== null ? (
                           <span className="tag neutral">{`memo ${formatNumber(numberValue(entry.basedOnStrategistTurn))}`}</span>
                         ) : null}
                         {stringValue(entry.memoValidity) ? (
                           <span className={`tag ${tagToneFromPlanHealth(stringValue(entry.memoValidity))}`}>{stringValue(entry.memoValidity)}</span>
                         ) : null}
+                        {stringValue(entry.commitmentLevel) ? <span className="tag neutral">{`commit ${stringValue(entry.commitmentLevel)}`}</span> : null}
+                        {stringValue(entry.battleReadiness) ? <span className="tag neutral">{`ready ${stringValue(entry.battleReadiness)}`}</span> : null}
+                        {stringValue(entry.supplyHealth) ? <span className="tag neutral">{`supply ${stringValue(entry.supplyHealth)}`}</span> : null}
                       </div>
                     </div>
                     {stringValue(entry.summary) ? <p className="card-paragraph">{stringValue(entry.summary)}</p> : null}
@@ -2171,12 +2302,14 @@ function StrategistContextSection({
   title,
   brief,
   planHealth,
+  campaignControl,
   threats,
   campaignPicture,
 }: {
   title: string;
   brief: Record<string, unknown> | null;
   planHealth: Record<string, unknown> | null;
+  campaignControl: Record<string, unknown> | null;
   threats: Record<string, unknown>[];
   campaignPicture: Record<string, unknown> | null;
 }) {
@@ -2209,6 +2342,7 @@ function StrategistContextSection({
           <TagList values={enabledVictories} tone="accent" />
 
           <PlanHealthEmbeddedSection planHealth={planHealth} />
+          <CampaignControlEmbeddedSection campaignControl={campaignControl} />
 
           {lastStrategistMemo ? (
             <>
@@ -2244,6 +2378,7 @@ function StrategistContextSection({
                   </>
                 ) : null}
                 <PlanHealthLabelsBlock labels={asRecord(lastStrategistMemo.planHealth)} />
+                <CampaignControlLabelsBlock labels={asRecord(lastStrategistMemo.campaignControl)} />
               </div>
             </>
           ) : null}

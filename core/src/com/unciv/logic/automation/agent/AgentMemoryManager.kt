@@ -1,6 +1,7 @@
 package com.unciv.logic.automation.agent
 
 import com.unciv.logic.civilization.Civilization
+import com.unciv.logic.map.mapunit.MapUnit
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -41,10 +42,12 @@ object AgentMemoryManager {
             campaign = pruneCampaign(existing.campaign, empireObservation, turn),
             empirePlan = pruneEmpirePlan(existing.empirePlan, turn),
             planHealth = prunePlanHealth(existing.planHealth, turn),
+            campaignControl = pruneCampaignControl(existing.campaignControl, turn),
             recentChanges = pruneNotes(existing.recentChanges, turn, maxRecentChanges),
             lessons = ArrayList(existing.lessons.takeLast(maxLessons).map { it.copy() }),
             lastStrategistMemo = existing.lastStrategistMemo.copy(
                 planHealth = existing.lastStrategistMemo.planHealth.copy(),
+                campaignControl = existing.lastStrategistMemo.campaignControl.copy(),
                 reviewCityNames = ArrayList(existing.lastStrategistMemo.reviewCityNames),
             ),
             tacticianTurnLog = pruneTacticianTurnLog(existing.tacticianTurnLog, turn),
@@ -65,13 +68,24 @@ object AgentMemoryManager {
                 .map { it.copy() }
             ),
         )
+        val reconciledPlanHealth = reconcilePlanHealth(
+            current = basePrepared.planHealth,
+            memo = basePrepared.lastStrategistMemo,
+            snapshot = buildPlanHealthSnapshot(observation, empireObservation),
+            turn = turn,
+            latestMemoValidity = basePrepared.tacticianTurnLog.lastOrNull()?.memoValidity,
+        )
         val prepared = basePrepared.copy(
-            planHealth = reconcilePlanHealth(
-                current = basePrepared.planHealth,
+            planHealth = reconciledPlanHealth,
+            campaignControl = reconcileCampaignControl(
+                current = basePrepared.campaignControl,
                 memo = basePrepared.lastStrategistMemo,
-                snapshot = buildPlanHealthSnapshot(observation, empireObservation),
+                planHealth = reconciledPlanHealth,
+                snapshot = buildCampaignControlSnapshot(observation, empireObservation, basePrepared.lastStrategistMemo),
                 turn = turn,
-                latestMemoValidity = basePrepared.tacticianTurnLog.lastOrNull()?.memoValidity,
+                latestCommitmentLevel = basePrepared.tacticianTurnLog.lastOrNull()?.commitmentLevel,
+                latestBattleReadiness = basePrepared.tacticianTurnLog.lastOrNull()?.battleReadiness,
+                latestSupplyHealth = basePrepared.tacticianTurnLog.lastOrNull()?.supplyHealth,
             ),
         )
 
@@ -143,13 +157,24 @@ object AgentMemoryManager {
                 unitAssignments = intentReconciliation.unitAssignments,
                 recentFailures = recentFailures,
             )
+            val reconciledPlanHealth = reconcilePlanHealth(
+                current = updated.planHealth,
+                memo = updated.lastStrategistMemo,
+                snapshot = buildPlanHealthSnapshot(civInfo, observation),
+                turn = turn,
+                latestMemoValidity = updated.tacticianTurnLog.lastOrNull()?.memoValidity,
+            )
             val reconciled = updated.copy(
-                planHealth = reconcilePlanHealth(
-                    current = updated.planHealth,
+                planHealth = reconciledPlanHealth,
+                campaignControl = reconcileCampaignControl(
+                    current = updated.campaignControl,
                     memo = updated.lastStrategistMemo,
-                    snapshot = buildPlanHealthSnapshot(civInfo, observation),
+                    planHealth = reconciledPlanHealth,
+                    snapshot = buildCampaignControlSnapshot(civInfo, observation, empireObservation, updated.lastStrategistMemo),
                     turn = turn,
-                    latestMemoValidity = updated.tacticianTurnLog.lastOrNull()?.memoValidity,
+                    latestCommitmentLevel = updated.tacticianTurnLog.lastOrNull()?.commitmentLevel,
+                    latestBattleReadiness = updated.tacticianTurnLog.lastOrNull()?.battleReadiness,
+                    latestSupplyHealth = updated.tacticianTurnLog.lastOrNull()?.supplyHealth,
                 ),
             )
             civInfo.agentMemory = reconciled.clone()
@@ -197,13 +222,24 @@ object AgentMemoryManager {
             ),
             recentFailures = recentFailures,
         )
+        val reconciledPlanHealth = reconcilePlanHealth(
+            current = updated.planHealth,
+            memo = updated.lastStrategistMemo,
+            snapshot = buildPlanHealthSnapshot(civInfo, observation),
+            turn = turn,
+            latestMemoValidity = updated.tacticianTurnLog.lastOrNull()?.memoValidity,
+        )
         val reconciled = updated.copy(
-            planHealth = reconcilePlanHealth(
-                current = updated.planHealth,
+            planHealth = reconciledPlanHealth,
+            campaignControl = reconcileCampaignControl(
+                current = updated.campaignControl,
                 memo = updated.lastStrategistMemo,
-                snapshot = buildPlanHealthSnapshot(civInfo, observation),
+                planHealth = reconciledPlanHealth,
+                snapshot = buildCampaignControlSnapshot(civInfo, observation, empireObservation, updated.lastStrategistMemo),
                 turn = turn,
-                latestMemoValidity = updated.tacticianTurnLog.lastOrNull()?.memoValidity,
+                latestCommitmentLevel = updated.tacticianTurnLog.lastOrNull()?.commitmentLevel,
+                latestBattleReadiness = updated.tacticianTurnLog.lastOrNull()?.battleReadiness,
+                latestSupplyHealth = updated.tacticianTurnLog.lastOrNull()?.supplyHealth,
             ),
         )
         civInfo.agentMemory = reconciled.clone()
@@ -264,6 +300,7 @@ object AgentMemoryManager {
             decisiveObjective = strategicPlan.memo.decisiveObjective.trim().takeUnless { it.isEmpty() },
             conversionBlocker = strategicPlan.memo.conversionBlocker?.trim().takeUnless { it.isNullOrEmpty() },
             planHealth = normalizePlanHealthLabels(strategicPlan.memo.planHealth),
+            campaignControl = normalizeCampaignControlLabels(strategicPlan.memo.campaignControl),
             thesis = strategicPlan.memo.thesis?.trim().takeUnless { it.isNullOrEmpty() },
             pastSummary = strategicPlan.memo.pastSummary?.trim().takeUnless { it.isNullOrEmpty() },
             currentSituation = strategicPlan.memo.currentSituation?.trim().takeUnless { it.isNullOrEmpty() },
@@ -297,6 +334,7 @@ object AgentMemoryManager {
             campaign = buildCampaignMemory(memory.campaign, strategicPlan.memo, observation, empireObservation, turn),
             empirePlan = buildEmpirePlan(memory.empirePlan, strategicPlan.memo, turn),
             planHealth = buildPlanHealth(memory.planHealth, memory.lastStrategistMemo, strategicPlan.memo, turn),
+            campaignControl = buildCampaignControl(memory.campaignControl, memory.lastStrategistMemo, strategicPlan.memo, turn),
             recentChanges = buildNoteList("recent_change", "change", strategicPlan.memo.recentChanges, turn, recentChangeHorizonTurns, maxRecentChanges),
             lessons = buildNoteList("lesson", "lesson", strategicPlan.memo.lessons, turn, turn + 200, maxLessons),
             lastStrategistMemo = memo,
@@ -323,6 +361,20 @@ object AgentMemoryManager {
             return AgentStrategistRefreshRequest(
                 urgency = "emergency",
                 reason = requestedReason.ifBlank { buildPlanHealthRefreshReason(planHealth) },
+            )
+        }
+        val campaignControl = memory.campaignControl
+        val excessiveHoldingCosts = campaignControl.holdingCosts.size >= 2 &&
+            campaignControl.launchWindowOpen &&
+            !observation.empireSummary.isAtWar
+        if (
+            campaignControl.checkpointStatus.equals("missed", ignoreCase = true) ||
+            campaignControl.supplyHealth.equals("collapsing", ignoreCase = true) ||
+            excessiveHoldingCosts
+        ) {
+            return AgentStrategistRefreshRequest(
+                urgency = "emergency",
+                reason = requestedReason.ifBlank { buildCampaignControlRefreshReason(campaignControl) },
             )
         }
         if (observation.empireSummary.isAtWar && !looksWarAware(memory)) {
@@ -356,6 +408,21 @@ object AgentMemoryManager {
             ?: "The current plan-health signals say the active campaign thread has gone stale and should be refreshed."
     }
 
+    private fun buildCampaignControlRefreshReason(campaignControl: AgentCampaignControlMemory): String {
+        return campaignControl.pivotTriggers.firstOrNull()
+            ?: campaignControl.holdingCosts.firstOrNull()
+            ?: when {
+                campaignControl.checkpointStatus.equals("missed", ignoreCase = true) ->
+                    "The campaign missed its checkpoint and should be reconsidered immediately."
+                campaignControl.supplyHealth.equals("collapsing", ignoreCase = true) ->
+                    "Campaign supply is collapsing and needs a fresh strategist decision."
+                campaignControl.launchWindowOpen ->
+                    "A launch window appears open, but the campaign is still stalling."
+                else ->
+                    "The campaign-control signals say the current line is no longer healthy."
+            }
+    }
+
     private fun looksWarAware(memory: AgentMemory): Boolean {
         val haystack = listOfNotNull(
             memory.campaign.stage,
@@ -381,10 +448,12 @@ object AgentMemoryManager {
             campaign = pruneCampaign(memory.campaign, empireObservation, turn),
             empirePlan = pruneEmpirePlan(memory.empirePlan, turn),
             planHealth = prunePlanHealth(memory.planHealth, turn),
+            campaignControl = pruneCampaignControl(memory.campaignControl, turn),
             recentChanges = pruneNotes(memory.recentChanges, turn, maxRecentChanges),
             lessons = ArrayList(memory.lessons.takeLast(maxLessons).map { it.copy() }),
             lastStrategistMemo = memory.lastStrategistMemo.copy(
                 planHealth = memory.lastStrategistMemo.planHealth.copy(),
+                campaignControl = memory.lastStrategistMemo.campaignControl.copy(),
                 reviewCityNames = ArrayList(memory.lastStrategistMemo.reviewCityNames),
             ),
             tacticianTurnLog = pruneTacticianTurnLog(memory.tacticianTurnLog, turn),
@@ -405,6 +474,32 @@ object AgentMemoryManager {
         val visibleRivalCities: Int,
         val visibleRivalUnits: Int,
     )
+
+    private data class CampaignControlSnapshot(
+        val cityCount: Int,
+        val militaryUnitCount: Int,
+        val settlerUnits: Int,
+        val settlersReady: Int,
+        val isAtWar: Boolean,
+        val contactComplete: Boolean,
+        val gold: Int,
+        val happiness: Int,
+        val sciencePerTurn: Int,
+        val visibleRivalCities: Int,
+        val visibleRivalUnits: Int,
+        val objectiveVisible: Boolean,
+        val objectiveIsCapital: Boolean,
+        val frontlineCombatUnits: Int,
+        val healthyCaptureUnitsNearObjective: Int,
+        val rangedSupportUnitsNearObjective: Int,
+        val primaryThreatScoreDelta: Int? = null,
+        val primaryThreatForceDelta: Int? = null,
+        val primaryThreatTechnologyDelta: Int? = null,
+    )
+
+    private val campaignCombatRoles = setOf("melee", "ranged", "siege", "mounted", "armored", "naval_melee", "naval_ranged")
+    private val campaignCaptureRoles = setOf("melee", "mounted", "armored", "naval_melee")
+    private val campaignRangedRoles = setOf("ranged", "siege", "naval_ranged")
 
     private fun buildPlanHealthSnapshot(
         observation: AgentObservation,
@@ -437,6 +532,108 @@ object AgentMemoryManager {
             happiness = civInfo.getHappiness(),
             visibleRivalCities = startingObservation.visibleThreatsAndTargets.count { it.kind == "city" && it.civName != startingObservation.civName },
             visibleRivalUnits = startingObservation.visibleThreatsAndTargets.count { it.kind == "unit" && it.civName != startingObservation.civName },
+        )
+    }
+
+    private fun buildCampaignControlSnapshot(
+        observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+        memo: AgentStrategistMemoMemory,
+    ): CampaignControlSnapshot {
+        val objectiveTarget = selectCampaignControlObjectiveTarget(memo, observation.visibleThreatsAndTargets)
+        val frontlineUnits = objectiveTarget?.let { target ->
+            observation.units.filter { unit ->
+                unit.role in campaignCombatRoles &&
+                    axialDistance(unit.x, unit.y, target.x, target.y) <= 4
+            }.toList()
+        }.orEmpty()
+        val primaryThreat = empireObservation.victoryThreats.firstOrNull {
+            memo.reviewPrimaryRivalCiv != null && it.civName == memo.reviewPrimaryRivalCiv
+        } ?: empireObservation.victoryThreats.firstOrNull()
+        val objectiveText = listOfNotNull(memo.decisiveObjective, memo.futurePlan, memo.tacticianHandoff)
+            .joinToString(" ")
+            .lowercase()
+        return CampaignControlSnapshot(
+            cityCount = observation.empireSummary.cityCount,
+            militaryUnitCount = observation.empireSummary.militaryUnitCount,
+            settlerUnits = observation.units.count { it.role == "settler" },
+            settlersReady = observation.empireSummary.settlersReady,
+            isAtWar = observation.empireSummary.isAtWar,
+            contactComplete = empireObservation.gameContext.contactComplete,
+            gold = observation.empireSummary.gold,
+            happiness = observation.empireSummary.happiness,
+            sciencePerTurn = observation.empireSummary.sciencePerTurn,
+            visibleRivalCities = observation.visibleThreatsAndTargets.count { it.kind == "city" && it.civName != observation.civName },
+            visibleRivalUnits = observation.visibleThreatsAndTargets.count { it.kind == "unit" && it.civName != observation.civName },
+            objectiveVisible = objectiveTarget != null,
+            objectiveIsCapital = objectiveTarget?.facts?.any { it.equals("Capital", ignoreCase = true) } == true ||
+                objectiveText.contains("capital"),
+            frontlineCombatUnits = frontlineUnits.size,
+            healthyCaptureUnitsNearObjective = frontlineUnits.count {
+                it.role in campaignCaptureRoles &&
+                    it.health >= 70 &&
+                    objectiveTarget != null &&
+                    axialDistance(it.x, it.y, objectiveTarget.x, objectiveTarget.y) <= 2
+            },
+            rangedSupportUnitsNearObjective = frontlineUnits.count {
+                it.role in campaignRangedRoles && it.health >= 60
+            },
+            primaryThreatScoreDelta = primaryThreat?.scoreDeltaVsUs,
+            primaryThreatForceDelta = primaryThreat?.forceDeltaVsUs,
+            primaryThreatTechnologyDelta = primaryThreat?.technologyDeltaVsUs,
+        )
+    }
+
+    private fun buildCampaignControlSnapshot(
+        civInfo: Civilization,
+        startingObservation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+        memo: AgentStrategistMemoMemory,
+    ): CampaignControlSnapshot {
+        val objectiveTarget = selectCampaignControlObjectiveTarget(memo, startingObservation.visibleThreatsAndTargets)
+        val frontlineUnits = objectiveTarget?.let { target ->
+            civInfo.units.getCivUnits().filter { unit ->
+                val role = classifyCampaignUnitRole(unit)
+                role in campaignCombatRoles &&
+                    axialDistance(unit.getTile().position.x, unit.getTile().position.y, target.x, target.y) <= 4
+            }.toList()
+        }.orEmpty()
+        val primaryThreat = empireObservation.victoryThreats.firstOrNull {
+            memo.reviewPrimaryRivalCiv != null && it.civName == memo.reviewPrimaryRivalCiv
+        } ?: empireObservation.victoryThreats.firstOrNull()
+        val objectiveText = listOfNotNull(memo.decisiveObjective, memo.futurePlan, memo.tacticianHandoff)
+            .joinToString(" ")
+            .lowercase()
+        return CampaignControlSnapshot(
+            cityCount = civInfo.cities.size,
+            militaryUnitCount = civInfo.units.getCivUnits().count { it.isMilitary() },
+            settlerUnits = civInfo.units.getCivUnits().count { classifyCampaignUnitRole(it) == "settler" },
+            settlersReady = civInfo.units.getCivUnits().count { classifyCampaignUnitRole(it) == "settler" && it.currentMovement > 0f },
+            isAtWar = civInfo.isAtWar(),
+            contactComplete = civInfo.getKnownCivs().any { !it.isBarbarian && !it.isCityState },
+            gold = civInfo.gold,
+            happiness = civInfo.getHappiness(),
+            sciencePerTurn = civInfo.stats.statsForNextTurn.science.toInt(),
+            visibleRivalCities = startingObservation.visibleThreatsAndTargets.count { it.kind == "city" && it.civName != startingObservation.civName },
+            visibleRivalUnits = startingObservation.visibleThreatsAndTargets.count { it.kind == "unit" && it.civName != startingObservation.civName },
+            objectiveVisible = objectiveTarget != null,
+            objectiveIsCapital = objectiveTarget?.facts?.any { it.equals("Capital", ignoreCase = true) } == true ||
+                objectiveText.contains("capital"),
+            frontlineCombatUnits = frontlineUnits.size,
+            healthyCaptureUnitsNearObjective = frontlineUnits.count { unit ->
+                val role = classifyCampaignUnitRole(unit)
+                role in campaignCaptureRoles &&
+                    unit.health >= 70 &&
+                    objectiveTarget != null &&
+                    axialDistance(unit.getTile().position.x, unit.getTile().position.y, objectiveTarget.x, objectiveTarget.y) <= 2
+            },
+            rangedSupportUnitsNearObjective = frontlineUnits.count { unit ->
+                classifyCampaignUnitRole(unit) in campaignRangedRoles &&
+                    unit.health >= 60
+            },
+            primaryThreatScoreDelta = primaryThreat?.scoreDeltaVsUs,
+            primaryThreatForceDelta = primaryThreat?.forceDeltaVsUs,
+            primaryThreatTechnologyDelta = primaryThreat?.technologyDeltaVsUs,
         )
     }
 
@@ -517,6 +714,342 @@ object AgentMemoryManager {
             ),
             turn,
         )
+    }
+
+    private fun reconcileCampaignControl(
+        current: AgentCampaignControlMemory,
+        memo: AgentStrategistMemoMemory,
+        planHealth: AgentPlanHealthMemory,
+        snapshot: CampaignControlSnapshot,
+        turn: Int,
+        latestCommitmentLevel: String?,
+        latestBattleReadiness: String?,
+        latestSupplyHealth: String?,
+    ): AgentCampaignControlMemory {
+        if (!hasStrategistMemo(memo)) return pruneCampaignControl(current.copy(lastUpdatedTurn = turn), turn)
+
+        val labels = normalizeCampaignControlLabels(memo.campaignControl)
+        val objectiveKind = planHealth.objectiveKind ?: planHealth.nextMilestoneKind
+        val checkpointKind = labels.nextCheckpointKind ?: planHealth.nextMilestoneKind ?: objectiveKind
+        val checkpointSummary = labels.nextCheckpointSummary
+            ?: planHealth.nextMilestoneSummary
+            ?: memo.decisiveObjective
+            ?: memo.futurePlan
+        val checkpointHorizonTurns = labels.checkpointHorizonTurns
+            ?: planHealth.milestoneHorizonTurns
+            ?: defaultCampaignCheckpointHorizon(checkpointKind)
+        val commitmentStartedTurn = current.commitmentStartedTurn.takeIf { it > 0 }
+            ?: memo.createdTurn.takeIf { it > 0 }
+            ?: turn
+        val commitmentAgeTurns = (turn - commitmentStartedTurn).coerceAtLeast(0)
+        val battleReadiness = deriveBattleReadiness(
+            latestLabel = latestBattleReadiness,
+            memoLabel = labels.battleReadiness,
+            objectiveKind = objectiveKind,
+            snapshot = snapshot,
+        )
+        val supplyHealth = deriveSupplyHealth(
+            latestLabel = latestSupplyHealth,
+            memoLabel = labels.supplyHealth,
+            snapshot = snapshot,
+        )
+        val launchWindowOpen = deriveLaunchWindowOpen(
+            objectiveKind = objectiveKind,
+            battleReadiness = battleReadiness,
+            supplyHealth = supplyHealth,
+            snapshot = snapshot,
+        )
+        val commitmentLevel = deriveCommitmentLevel(
+            latestLabel = latestCommitmentLevel,
+            memoLabel = labels.commitmentLevel,
+            objectiveKind = objectiveKind,
+            planHealth = planHealth,
+            launchWindowOpen = launchWindowOpen,
+            snapshot = snapshot,
+            commitmentAgeTurns = commitmentAgeTurns,
+        )
+        val checkpointAchieved = isCheckpointAchieved(
+            checkpointKind = checkpointKind,
+            snapshot = snapshot,
+            memo = memo,
+        )
+        val checkpointStatus = when {
+            checkpointKind.isNullOrBlank() -> ""
+            checkpointAchieved -> "completed"
+            launchWindowOpen && commitmentAgeTurns >= checkpointHorizonTurns -> "holding"
+            commitmentAgeTurns >= checkpointHorizonTurns -> "missed"
+            commitmentLevel == "probing" -> "open"
+            else -> "building"
+        }
+        val holdingCosts = deriveCampaignHoldingCosts(
+            planHealth = planHealth,
+            objectiveKind = objectiveKind,
+            snapshot = snapshot,
+            battleReadiness = battleReadiness,
+            supplyHealth = supplyHealth,
+            checkpointStatus = checkpointStatus,
+            launchWindowOpen = launchWindowOpen,
+            commitmentAgeTurns = commitmentAgeTurns,
+            checkpointHorizonTurns = checkpointHorizonTurns,
+        )
+        val pivotTriggers = deriveCampaignPivotTriggers(
+            planHealth = planHealth,
+            objectiveKind = objectiveKind,
+            snapshot = snapshot,
+            battleReadiness = battleReadiness,
+            supplyHealth = supplyHealth,
+            checkpointStatus = checkpointStatus,
+            launchWindowOpen = launchWindowOpen,
+            commitmentAgeTurns = commitmentAgeTurns,
+            checkpointHorizonTurns = checkpointHorizonTurns,
+        )
+        val pivotTriggerKind = labels.pivotTriggerKind ?: when {
+            supplyHealth == "collapsing" -> "supply_collapse"
+            checkpointStatus == "missed" -> "missed_checkpoint"
+            launchWindowOpen && pivotTriggers.isNotEmpty() -> "stalled_launch"
+            pivotTriggers.isNotEmpty() -> "campaign_drift"
+            else -> null
+        }
+
+        return pruneCampaignControl(
+            AgentCampaignControlMemory(
+                commitmentLevel = commitmentLevel,
+                battleReadiness = battleReadiness,
+                supplyHealth = supplyHealth,
+                nextCheckpointKind = checkpointKind,
+                nextCheckpointSummary = checkpointSummary,
+                checkpointHorizonTurns = checkpointHorizonTurns,
+                pivotTriggerKind = pivotTriggerKind,
+                checkpointStatus = checkpointStatus,
+                commitmentStartedTurn = commitmentStartedTurn,
+                lastCheckpointTurn = if (checkpointAchieved) turn else current.lastCheckpointTurn.takeIf { it > 0 } ?: commitmentStartedTurn,
+                launchWindowOpen = launchWindowOpen,
+                holdingCosts = ArrayList(holdingCosts),
+                pivotTriggers = ArrayList(pivotTriggers),
+                lastUpdatedTurn = turn,
+            ),
+            turn,
+        )
+    }
+
+    private fun deriveCommitmentLevel(
+        latestLabel: String?,
+        memoLabel: String?,
+        objectiveKind: String?,
+        planHealth: AgentPlanHealthMemory,
+        launchWindowOpen: Boolean,
+        snapshot: CampaignControlSnapshot,
+        commitmentAgeTurns: Int,
+    ): String {
+        normalizeControlLabel(latestLabel)?.let { return it }
+        normalizeControlLabel(memoLabel)?.let { return it }
+        if (planHealth.pivotRecommended || planHealth.status.equals("contradicted", ignoreCase = true)) return "pivoting"
+        if (snapshot.isAtWar) return "committed"
+        if (launchWindowOpen && commitmentAgeTurns >= 1) return "committed"
+        if (!objectiveKind.isNullOrBlank()) return "building"
+        return "probing"
+    }
+
+    private fun deriveBattleReadiness(
+        latestLabel: String?,
+        memoLabel: String?,
+        objectiveKind: String?,
+        snapshot: CampaignControlSnapshot,
+    ): String {
+        normalizeControlLabel(latestLabel)?.let { return it }
+        normalizeControlLabel(memoLabel)?.let { return it }
+        return when {
+            isExpansionObjective(objectiveKind) && snapshot.settlersReady > 0 -> "ready"
+            isExpansionObjective(objectiveKind) && snapshot.settlerUnits > 0 -> "nearly_ready"
+            isExpansionObjective(objectiveKind) -> "not_ready"
+            isWarLikeObjective(objectiveKind) && snapshot.isAtWar && snapshot.frontlineCombatUnits >= 2 -> "engaged"
+            isWarLikeObjective(objectiveKind) &&
+                snapshot.objectiveVisible &&
+                snapshot.healthyCaptureUnitsNearObjective >= 1 &&
+                snapshot.rangedSupportUnitsNearObjective >= 1 -> "ready"
+            isWarLikeObjective(objectiveKind) &&
+                (snapshot.frontlineCombatUnits >= 2 || snapshot.militaryUnitCount >= 4) -> "nearly_ready"
+            isWarLikeObjective(objectiveKind) -> "not_ready"
+            else -> "forming"
+        }
+    }
+
+    private fun deriveSupplyHealth(
+        latestLabel: String?,
+        memoLabel: String?,
+        snapshot: CampaignControlSnapshot,
+    ): String {
+        normalizeControlLabel(latestLabel)?.let { return it }
+        normalizeControlLabel(memoLabel)?.let { return it }
+        return when {
+            snapshot.gold <= -75 || snapshot.happiness <= -5 -> "collapsing"
+            snapshot.gold < 0 || snapshot.happiness < 0 -> "fragile"
+            snapshot.cityCount <= 1 && snapshot.militaryUnitCount >= 8 -> "strained"
+            snapshot.gold <= 40 && snapshot.militaryUnitCount >= maxOf(6, snapshot.cityCount * 3) -> "strained"
+            snapshot.sciencePerTurn <= 0 && snapshot.militaryUnitCount >= maxOf(6, snapshot.cityCount * 3) -> "fragile"
+            else -> "healthy"
+        }
+    }
+
+    private fun deriveLaunchWindowOpen(
+        objectiveKind: String?,
+        battleReadiness: String,
+        supplyHealth: String,
+        snapshot: CampaignControlSnapshot,
+    ): Boolean {
+        if (supplyHealth == "collapsing") return false
+        return when {
+            isExpansionObjective(objectiveKind) -> snapshot.settlersReady > 0 || battleReadiness == "ready"
+            isWarLikeObjective(objectiveKind) -> snapshot.objectiveVisible && battleReadiness in setOf("ready", "engaged")
+            else -> battleReadiness == "ready"
+        }
+    }
+
+    private fun isCheckpointAchieved(
+        checkpointKind: String?,
+        snapshot: CampaignControlSnapshot,
+        memo: AgentStrategistMemoMemory,
+    ): Boolean {
+        return when (checkpointKind) {
+            "city_founded", "city_captured" -> snapshot.cityCount > memo.reviewCityCount
+            "second_city_founded" -> snapshot.cityCount >= 2
+            "war_declared" -> snapshot.isAtWar
+            "contact_made" -> snapshot.contactComplete
+            "capture_capital" -> snapshot.cityCount > memo.reviewCityCount
+            else -> false
+        }
+    }
+
+    private fun deriveCampaignHoldingCosts(
+        planHealth: AgentPlanHealthMemory,
+        objectiveKind: String?,
+        snapshot: CampaignControlSnapshot,
+        battleReadiness: String,
+        supplyHealth: String,
+        checkpointStatus: String,
+        launchWindowOpen: Boolean,
+        commitmentAgeTurns: Int,
+        checkpointHorizonTurns: Int,
+    ): List<String> {
+        val costs = linkedSetOf<String>()
+        planHealth.opportunityCosts.forEach(costs::add)
+        if (isExpansionObjective(objectiveKind) && snapshot.settlersReady > 0 && checkpointStatus != "completed") {
+            costs += "A ready Settler is waiting while the next city is still unresolved."
+        }
+        if (isWarLikeObjective(objectiveKind) && launchWindowOpen && !snapshot.isAtWar && commitmentAgeTurns >= checkpointHorizonTurns) {
+            costs += "The battle package looks launchable, but the campaign is still waiting instead of converting."
+        }
+        if (snapshot.cityCount <= 1 && snapshot.militaryUnitCount >= 8) {
+            costs += "A one-city empire is carrying a campaign-sized military package."
+        }
+        if (supplyHealth in setOf("strained", "fragile", "collapsing")) {
+            costs += "Campaign sustainment is under pressure while this line remains unresolved."
+        }
+        if (battleReadiness == "ready" && snapshot.primaryThreatScoreDelta != null && snapshot.primaryThreatScoreDelta > 0 && commitmentAgeTurns >= checkpointHorizonTurns) {
+            costs += "The rival score lead is growing while a ready campaign still has not converted."
+        }
+        return costs.take(4)
+    }
+
+    private fun deriveCampaignPivotTriggers(
+        planHealth: AgentPlanHealthMemory,
+        objectiveKind: String?,
+        snapshot: CampaignControlSnapshot,
+        battleReadiness: String,
+        supplyHealth: String,
+        checkpointStatus: String,
+        launchWindowOpen: Boolean,
+        commitmentAgeTurns: Int,
+        checkpointHorizonTurns: Int,
+    ): List<String> {
+        val triggers = linkedSetOf<String>()
+        planHealth.contradictions.forEach(triggers::add)
+        if (checkpointStatus == "missed") {
+            triggers += "The campaign missed its checkpoint and should either convert now or be rewritten."
+        }
+        if (supplyHealth == "collapsing") {
+            triggers += "Campaign supply is collapsing faster than the current line is paying back."
+        }
+        if (launchWindowOpen && isWarLikeObjective(objectiveKind) && !snapshot.isAtWar && commitmentAgeTurns >= checkpointHorizonTurns) {
+            triggers += "The war line looks ready enough, but the empire is still delaying the launch."
+        }
+        if (battleReadiness == "not_ready" && snapshot.militaryUnitCount >= 8 && supplyHealth in setOf("fragile", "collapsing")) {
+            triggers += "The empire is paying for buildup that is still not actually ready to convert."
+        }
+        if (snapshot.primaryThreatTechnologyDelta != null && snapshot.primaryThreatTechnologyDelta > 0 && commitmentAgeTurns >= checkpointHorizonTurns) {
+            triggers += "The rival tech edge is improving while this campaign remains unresolved."
+        }
+        return triggers.take(4)
+    }
+
+    private fun defaultCampaignCheckpointHorizon(checkpointKind: String?): Int {
+        return when (checkpointKind) {
+            "contact_made", "city_founded", "second_city_founded" -> 4
+            "war_declared", "city_captured", "capture_capital" -> 5
+            else -> 5
+        }
+    }
+
+    private fun normalizeControlLabel(raw: String?): String? {
+        return raw?.trim()
+            ?.lowercase()
+            ?.replace(' ', '_')
+            ?.takeUnless { it.isEmpty() }
+    }
+
+    private fun selectCampaignControlObjectiveTarget(
+        memo: AgentStrategistMemoMemory,
+        visibleTargets: List<VisibleTargetObservation>,
+    ): VisibleTargetObservation? {
+        val visibleCities = visibleTargets.filter { it.kind == "city" }
+        if (visibleCities.isEmpty()) return null
+        val objectiveText = listOfNotNull(memo.decisiveObjective, memo.futurePlan, memo.tacticianHandoff)
+            .joinToString(" ")
+            .lowercase()
+        val primaryRival = memo.reviewPrimaryRivalCiv?.lowercase()
+        visibleCities.firstOrNull { target -> objectiveText.contains(target.name.lowercase()) }?.let { return it }
+        visibleCities.firstOrNull {
+            primaryRival != null &&
+                it.civName.lowercase() == primaryRival &&
+                it.facts.any { fact -> fact.equals("Capital", ignoreCase = true) }
+        }?.let { return it }
+        visibleCities.firstOrNull {
+            primaryRival != null && it.civName.lowercase() == primaryRival
+        }?.let { return it }
+        visibleCities.firstOrNull { target ->
+            target.facts.any { it.equals("Capital", ignoreCase = true) } && objectiveText.contains("capital")
+        }?.let { return it }
+        return visibleCities.minByOrNull { it.distanceToClosestUnit ?: Int.MAX_VALUE }
+    }
+
+    private fun axialDistance(ax: Int, ay: Int, bx: Int, by: Int): Int {
+        val dx = ax - bx
+        val dy = ay - by
+        val dz = -dx - dy
+        return maxOf(kotlin.math.abs(dx), kotlin.math.abs(dy), kotlin.math.abs(dz))
+    }
+
+    private fun classifyCampaignUnitRole(unit: MapUnit): String {
+        return when {
+            unit.baseUnit.isCityFounder() -> "settler"
+            unit.cache.hasUniqueToBuildImprovements -> "worker"
+            unit.isGreatPerson() -> "great_person"
+            unit.baseUnit.isAirUnit() -> "air"
+            unit.baseUnit.isWaterUnit && unit.baseUnit.isRanged() -> "naval_ranged"
+            unit.baseUnit.isWaterUnit -> "naval_melee"
+            unit.baseUnit.isProbablySiegeUnit() -> "siege"
+            unit.baseUnit.isRanged() -> "ranged"
+            unit.isCivilian() -> "civilian"
+            else -> "melee"
+        }
+    }
+
+    private fun isWarLikeObjective(objectiveKind: String?): Boolean {
+        return objectiveKind in setOf("declare_war", "capture_city", "capture_capital", "assault", "siege")
+    }
+
+    private fun isExpansionObjective(objectiveKind: String?): Boolean {
+        return objectiveKind in setOf("expand", "settle_city", "found_city", "second_city_founded")
     }
 
     private fun deriveProgressSignals(
@@ -634,15 +1167,18 @@ object AgentMemoryManager {
                 .filter { it.turn <= turn }
                 .takeLast(maxTacticianTurnLogEntries)
                 .map { entry ->
-                    entry.copy(
-                        whatChanged = ArrayList(entry.whatChanged),
-                        completed = ArrayList(entry.completed),
-                        stillBlocked = ArrayList(entry.stillBlocked),
-                        obsolete = ArrayList(entry.obsolete),
-                        carryForward = ArrayList(entry.carryForward),
-                        memoValidity = entry.memoValidity,
-                    )
-                }
+                entry.copy(
+                    whatChanged = ArrayList(entry.whatChanged),
+                    completed = ArrayList(entry.completed),
+                    stillBlocked = ArrayList(entry.stillBlocked),
+                    obsolete = ArrayList(entry.obsolete),
+                    carryForward = ArrayList(entry.carryForward),
+                    memoValidity = entry.memoValidity,
+                    commitmentLevel = entry.commitmentLevel,
+                    battleReadiness = entry.battleReadiness,
+                    supplyHealth = entry.supplyHealth,
+                )
+            }
         )
     }
 
@@ -659,6 +1195,9 @@ object AgentMemoryManager {
                     obsolete = ArrayList(existingEntry.obsolete),
                     carryForward = ArrayList(existingEntry.carryForward),
                     memoValidity = existingEntry.memoValidity,
+                    commitmentLevel = existingEntry.commitmentLevel,
+                    battleReadiness = existingEntry.battleReadiness,
+                    supplyHealth = existingEntry.supplyHealth,
                 )
             }
         )
@@ -791,6 +1330,9 @@ object AgentMemoryManager {
             obsolete = ArrayList(mergedObsolete),
             carryForward = ArrayList(mergedCarryForward),
             memoValidity = reflection?.memoValidity?.trim()?.takeUnless { it.isNullOrEmpty() },
+            commitmentLevel = reflection?.commitmentLevel?.trim()?.takeUnless { it.isNullOrEmpty() },
+            battleReadiness = reflection?.battleReadiness?.trim()?.takeUnless { it.isNullOrEmpty() },
+            supplyHealth = reflection?.supplyHealth?.trim()?.takeUnless { it.isNullOrEmpty() },
         )
     }
 
@@ -934,6 +1476,15 @@ object AgentMemoryManager {
             contradictions = ArrayList(planHealth.contradictions.takeLast(4)),
             opportunityCosts = ArrayList(planHealth.opportunityCosts.takeLast(4)),
             lastUpdatedTurn = planHealth.lastUpdatedTurn.takeIf { it > 0 } ?: turn,
+        )
+    }
+
+    private fun pruneCampaignControl(campaignControl: AgentCampaignControlMemory, turn: Int): AgentCampaignControlMemory {
+        if (campaignControl.isEmpty()) return AgentCampaignControlMemory()
+        return campaignControl.copy(
+            holdingCosts = ArrayList(campaignControl.holdingCosts.takeLast(4)),
+            pivotTriggers = ArrayList(campaignControl.pivotTriggers.takeLast(4)),
+            lastUpdatedTurn = campaignControl.lastUpdatedTurn.takeIf { it > 0 } ?: turn,
         )
     }
 
@@ -1098,6 +1649,36 @@ object AgentMemoryManager {
         )
     }
 
+    private fun buildCampaignControl(
+        current: AgentCampaignControlMemory,
+        previousMemo: AgentStrategistMemoMemory,
+        memo: AgentStrategistMemoDraft,
+        turn: Int,
+    ): AgentCampaignControlMemory {
+        val sameThread = isSameCampaignThread(previousMemo, memo)
+        val normalizedLabels = normalizeCampaignControlLabels(memo.campaignControl)
+        return AgentCampaignControlMemory(
+            commitmentLevel = normalizedLabels.commitmentLevel,
+            battleReadiness = normalizedLabels.battleReadiness,
+            supplyHealth = normalizedLabels.supplyHealth,
+            nextCheckpointKind = normalizedLabels.nextCheckpointKind,
+            nextCheckpointSummary = normalizedLabels.nextCheckpointSummary,
+            checkpointHorizonTurns = normalizedLabels.checkpointHorizonTurns,
+            pivotTriggerKind = normalizedLabels.pivotTriggerKind,
+            checkpointStatus = if (sameThread) current.checkpointStatus else "",
+            commitmentStartedTurn = if (sameThread) {
+                current.commitmentStartedTurn.takeIf { it > 0 } ?: previousMemo.createdTurn.takeIf { it > 0 } ?: turn
+            } else {
+                turn
+            },
+            lastCheckpointTurn = if (sameThread) current.lastCheckpointTurn.takeIf { it > 0 } ?: turn else turn,
+            launchWindowOpen = if (sameThread) current.launchWindowOpen else false,
+            holdingCosts = if (sameThread) ArrayList(current.holdingCosts.takeLast(4)) else arrayListOf(),
+            pivotTriggers = if (sameThread) ArrayList(current.pivotTriggers.takeLast(4)) else arrayListOf(),
+            lastUpdatedTurn = turn,
+        )
+    }
+
     private fun normalizePlanHealthLabels(labels: AgentPlanHealthLabels): AgentPlanHealthLabels {
         return AgentPlanHealthLabels(
             objectiveKind = labels.objectiveKind?.trim()?.takeUnless { it.isEmpty() },
@@ -1105,6 +1686,18 @@ object AgentMemoryManager {
             nextMilestoneSummary = labels.nextMilestoneSummary?.trim()?.takeUnless { it.isEmpty() },
             milestoneHorizonTurns = labels.milestoneHorizonTurns?.coerceIn(1, 12),
             blockerKind = labels.blockerKind?.trim()?.takeUnless { it.isEmpty() },
+        )
+    }
+
+    private fun normalizeCampaignControlLabels(labels: AgentCampaignControlLabels): AgentCampaignControlLabels {
+        return AgentCampaignControlLabels(
+            commitmentLevel = labels.commitmentLevel?.trim()?.takeUnless { it.isEmpty() },
+            battleReadiness = labels.battleReadiness?.trim()?.takeUnless { it.isEmpty() },
+            supplyHealth = labels.supplyHealth?.trim()?.takeUnless { it.isEmpty() },
+            nextCheckpointKind = labels.nextCheckpointKind?.trim()?.takeUnless { it.isEmpty() },
+            nextCheckpointSummary = labels.nextCheckpointSummary?.trim()?.takeUnless { it.isEmpty() },
+            checkpointHorizonTurns = labels.checkpointHorizonTurns?.coerceIn(1, 12),
+            pivotTriggerKind = labels.pivotTriggerKind?.trim()?.takeUnless { it.isEmpty() },
         )
     }
 

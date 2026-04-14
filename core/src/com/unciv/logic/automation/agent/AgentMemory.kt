@@ -10,6 +10,7 @@ data class AgentMemory(
     var campaign: CampaignMemory = CampaignMemory(),
     var empirePlan: EmpirePlanMemory = EmpirePlanMemory(),
     var planHealth: AgentPlanHealthMemory = AgentPlanHealthMemory(),
+    var campaignControl: AgentCampaignControlMemory = AgentCampaignControlMemory(),
     var recentChanges: ArrayList<MemoryNote> = arrayListOf(),
     var lessons: ArrayList<MemoryNote> = arrayListOf(),
     var lastStrategistMemo: AgentStrategistMemoMemory = AgentStrategistMemoMemory(),
@@ -24,6 +25,7 @@ data class AgentMemory(
         CampaignMemory(),
         EmpirePlanMemory(),
         AgentPlanHealthMemory(),
+        AgentCampaignControlMemory(),
         arrayListOf(),
         arrayListOf(),
         AgentStrategistMemoMemory(),
@@ -55,10 +57,15 @@ data class AgentMemory(
             contradictions = ArrayList(planHealth.contradictions),
             opportunityCosts = ArrayList(planHealth.opportunityCosts),
         ),
+        campaignControl = campaignControl.copy(
+            holdingCosts = ArrayList(campaignControl.holdingCosts),
+            pivotTriggers = ArrayList(campaignControl.pivotTriggers),
+        ),
         recentChanges = ArrayList(recentChanges.map { it.copy() }),
         lessons = ArrayList(lessons.map { it.copy() }),
         lastStrategistMemo = lastStrategistMemo.copy(
             planHealth = lastStrategistMemo.planHealth.copy(),
+            campaignControl = lastStrategistMemo.campaignControl.copy(),
             reviewCityNames = ArrayList(lastStrategistMemo.reviewCityNames),
         ),
         tacticianTurnLog = ArrayList(
@@ -70,6 +77,9 @@ data class AgentMemory(
                     obsolete = ArrayList(entry.obsolete),
                     carryForward = ArrayList(entry.carryForward),
                     memoValidity = entry.memoValidity,
+                    commitmentLevel = entry.commitmentLevel,
+                    battleReadiness = entry.battleReadiness,
+                    supplyHealth = entry.supplyHealth,
                 )
             }
         ),
@@ -182,8 +192,11 @@ data class TacticianTurnLogEntry(
     var obsolete: ArrayList<String> = arrayListOf(),
     var carryForward: ArrayList<String> = arrayListOf(),
     var memoValidity: String? = null,
+    var commitmentLevel: String? = null,
+    var battleReadiness: String? = null,
+    var supplyHealth: String? = null,
 ) : IsPartOfGameInfoSerialization {
-    constructor() : this(0, null, null, null, "", arrayListOf(), arrayListOf(), arrayListOf(), arrayListOf(), arrayListOf(), null)
+    constructor() : this(0, null, null, null, "", arrayListOf(), arrayListOf(), arrayListOf(), arrayListOf(), arrayListOf(), null, null, null, null)
 }
 
 @Serializable
