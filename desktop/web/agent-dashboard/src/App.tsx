@@ -1121,6 +1121,7 @@ function TurnDetail({
                   <SummaryStat label="Stage" value={stringValue(campaignMemory.stage) || "—"} />
                   <SummaryStat label="Objective" value={stringValue(campaignMemory.decisiveObjective) || "—"} />
                   <SummaryStat label="Primary rival" value={stringValue(campaignMemory.primaryRivalCiv) || "—"} />
+                  <SummaryStat label="Last updated" value={formatNumber(numberValue(campaignMemory.lastUpdatedTurn))} />
                 </div>
                 {stringValue(campaignMemory.summary) ? <p className="card-paragraph">{stringValue(campaignMemory.summary)}</p> : null}
                 {stringValue(campaignMemory.conversionBlocker) ? (
@@ -1151,6 +1152,10 @@ function TurnDetail({
           <Card title="Empire plan notebook" subtitle="How the empire's production and purchases are supposed to support the current game plan.">
             {empirePlanMemory ? (
               <>
+                <div className="summary-grid compact">
+                  <SummaryStat label="Last updated" value={formatNumber(numberValue(empirePlanMemory.lastUpdatedTurn))} />
+                  <SummaryStat label="Notes" value={formatNumber(empirePlanNotes.length)} />
+                </div>
                 {stringValue(empirePlanMemory.summary) ? <p className="card-paragraph">{stringValue(empirePlanMemory.summary)}</p> : null}
                 {stringValue(empirePlanMemory.purchaseIntent) ? (
                   <>
@@ -1181,6 +1186,7 @@ function TurnDetail({
             emptyTitle="No lessons"
             emptyBody="No lessons or cautions were carried into this turn."
           />
+          <StrategistMemoMemorySection memo={lastStrategistMemoMemory} />
           <TacticianTurnLogSection entries={tacticianTurnLogMemory} />
 
           <CityIntentMemorySection intents={cityIntentsMemory} />
@@ -1224,10 +1230,16 @@ function TurnDetail({
                 <SummaryStat label="Win path" value={stringValue(strategistMemo.winPath)} />
                 <SummaryStat label="Stage" value={stringValue(strategistMemo.campaignStage)} />
                 <SummaryStat label="Objective" value={stringValue(strategistMemo.decisiveObjective)} />
+                <SummaryStat label="Strategist pass" value={strategistArtifacts ? "Ran this turn" : "Carried memo"} />
                 <SummaryStat label="Review turn" value={formatNumber(numberValue(strategistMemo.reviewAfterTurn))} />
                 <SummaryStat label="Created" value={memoCreatedTurn === null ? "Unknown" : `Turn ${formatNumber(memoCreatedTurn)}`} />
                 <SummaryStat label="Last reviewed" value={memoLastReviewedTurn === null ? "Unknown" : `Turn ${formatNumber(memoLastReviewedTurn)}`} />
               </div>
+              <p className="mini-note">
+                {strategistArtifacts
+                  ? "A fresh strategist LLM pass ran on this turn. Use the literal artifacts section below to inspect the exact request, raw response, and parsed strategist plan."
+                  : "No strategist LLM pass ran on this turn. The memo shown here was carried forward from earlier turns, and the tactician relied on current observation plus memory deltas."}
+              </p>
               <p className="card-paragraph">{stringValue(strategistMemo.thesis) || "No strategist thesis recorded."}</p>
               {stringValue(strategistMemo.conversionBlocker) ? (
                 <>
@@ -1677,6 +1689,76 @@ function MemoryNotesCard({
         <MemoryNotesSection title={title} notes={notes} embedded />
       ) : (
         <EmptyCardState title={emptyTitle} body={emptyBody} />
+      )}
+    </Card>
+  );
+}
+
+function StrategistMemoMemorySection({ memo }: { memo: Record<string, unknown> | null }) {
+  return (
+    <Card title="Last strategist memo" subtitle="The strategist memo snapshot currently stored in shared memory, before any new strategist pass on this turn.">
+      {memo && Object.keys(memo).length ? (
+        <>
+          <div className="summary-grid compact">
+            <SummaryStat label="Archetype" value={stringValue(memo.gameArchetype) || "—"} />
+            <SummaryStat label="Win path" value={stringValue(memo.winPath) || "—"} />
+            <SummaryStat label="Stage" value={stringValue(memo.campaignStage) || "—"} />
+            <SummaryStat label="Objective" value={stringValue(memo.decisiveObjective) || "—"} />
+            <SummaryStat label="Created" value={formatNumber(numberValue(memo.createdTurn))} />
+            <SummaryStat label="Last reviewed" value={formatNumber(numberValue(memo.lastReviewedTurn))} />
+            <SummaryStat label="Review after" value={formatNumber(numberValue(memo.reviewAfterTurn))} />
+            <SummaryStat label="Refresh reason" value={stringValue(memo.lastRefreshReason) || "—"} />
+          </div>
+          {stringValue(memo.thesis) ? <p className="card-paragraph">{stringValue(memo.thesis)}</p> : null}
+          {stringValue(memo.conversionBlocker) ? (
+            <>
+              <SectionLabel text="Conversion blocker" />
+              <p className="card-paragraph">{stringValue(memo.conversionBlocker)}</p>
+            </>
+          ) : null}
+          {stringValue(memo.pastSummary) ? (
+            <>
+              <SectionLabel text="Past" />
+              <p className="card-paragraph">{stringValue(memo.pastSummary)}</p>
+            </>
+          ) : null}
+          {stringValue(memo.currentSituation) ? (
+            <>
+              <SectionLabel text="Now" />
+              <p className="card-paragraph">{stringValue(memo.currentSituation)}</p>
+            </>
+          ) : null}
+          {stringValue(memo.futurePlan) ? (
+            <>
+              <SectionLabel text="Future" />
+              <p className="card-paragraph">{stringValue(memo.futurePlan)}</p>
+            </>
+          ) : null}
+          {stringValue(memo.tacticianHandoff) ? (
+            <>
+              <SectionLabel text="Tactician handoff" />
+              <p className="card-paragraph">{stringValue(memo.tacticianHandoff)}</p>
+            </>
+          ) : null}
+          <div className="summary-grid compact">
+            <SummaryStat label="Cities at review" value={formatNumber(numberValue(memo.reviewCityCount))} />
+            <SummaryStat label="Military units at review" value={formatNumber(numberValue(memo.reviewMilitaryUnitCount))} />
+            <SummaryStat label="At war at review" value={booleanText(memo.reviewIsAtWar)} />
+            <SummaryStat label="Contact complete" value={booleanText(memo.reviewContactComplete)} />
+            <SummaryStat label="Visible rival cities" value={formatNumber(numberValue(memo.reviewVisibleRivalCities))} />
+            <SummaryStat label="Visible rival units" value={formatNumber(numberValue(memo.reviewVisibleRivalUnits))} />
+            <SummaryStat label="Primary rival" value={stringValue(memo.reviewPrimaryRivalCiv) || "—"} />
+            <SummaryStat label="Research at review" value={stringValue(memo.reviewResearch) || "—"} />
+          </div>
+          {stringList(memo.reviewCityNames).length ? (
+            <>
+              <SectionLabel text="City names at review" />
+              <TagList values={stringList(memo.reviewCityNames)} tone="accent" />
+            </>
+          ) : null}
+        </>
+      ) : (
+        <EmptyCardState title="No stored strategist memo" body="The shared memory did not carry a last-strategist-memo snapshot into this turn." />
       )}
     </Card>
   );
@@ -3195,6 +3277,7 @@ function AttemptLadderSection({
                 <MiniMetric label="Prompt size" value={attempt.prompt ? `${formatNumber(attempt.prompt.length)} chars` : "—"} />
                 <MiniMetric label="Brief JSON" value={attempt.plannerBriefJson ? "captured" : "—"} />
                 <MiniMetric label="Raw response" value={attempt.rawResponse ? "captured" : "—"} />
+                <MiniMetric label="Parsed plan JSON" value={attempt.parsedPlanJson ? "captured" : "—"} />
               </div>
 
               {attempt.parsedPlan ? (
@@ -3218,6 +3301,9 @@ function AttemptLadderSection({
                   <pre>{formatProviderRetryTimeline(attempt.providerRetries)}</pre>
                 </details>
               ) : null}
+
+              {attempt.rawResponse ? <CodeDisclosure title="Raw tactical response" content={attempt.rawResponse} /> : null}
+              {attempt.parsedPlanJson ? <CodeDisclosure title="Parsed tactical plan JSON" content={attempt.parsedPlanJson} /> : null}
 
               {attempt.requestError ? (
                 <details className="code-disclosure">
@@ -3265,6 +3351,8 @@ function LiteralArtifactsSection({
             <CodeDisclosure title="Memory JSON" content={latestAttempt.memoryJson || JSON.stringify(memory, null, 2)} />
             <CodeDisclosure title="Planner Brief JSON" content={latestAttempt.plannerBriefJson || JSON.stringify(plannerBrief, null, 2)} />
             {latestAttempt.retryContext ? <CodeDisclosure title="Retry Context JSON" content={latestAttempt.retryContext} /> : null}
+            {latestAttempt.rawResponse ? <CodeDisclosure title="Raw Tactical Response" content={latestAttempt.rawResponse} /> : null}
+            {latestAttempt.parsedPlanJson ? <CodeDisclosure title="Parsed Tactical Plan JSON" content={latestAttempt.parsedPlanJson} /> : null}
             <CodeDisclosure title="Exact Tactical Prompt" content={latestAttempt.prompt} />
           </>
         ) : (
@@ -3275,16 +3363,28 @@ function LiteralArtifactsSection({
       <Card title="Strategist prompt artifacts" subtitle="Exact strategist brief and prompt text when a strategist pass happened on this turn.">
         {strategistArtifacts ? (
           <>
+            <div className="summary-grid compact">
+              <SummaryStat label="Strategist pass on this turn" value="Yes" />
+              <SummaryStat label="Raw response" value={strategistArtifacts.rawResponse ? "Captured" : "Missing"} />
+              <SummaryStat label="Parsed plan JSON" value={strategistArtifacts.parsedPlanJson ? "Captured" : "Missing"} />
+            </div>
             {strategistArtifacts.retryEvents.length ? (
               <CodeDisclosure title="Strategist provider retry timeline" content={formatProviderRetryTimeline(strategistArtifacts.retryEvents)} />
             ) : null}
             {strategistArtifacts.requestError ? <CodeDisclosure title="Strategist final provider error" content={strategistArtifacts.requestError} /> : null}
             <CodeDisclosure title="Strategist Brief JSON" content={strategistArtifacts.briefJson || JSON.stringify(strategistBrief, null, 2)} />
             {strategistArtifacts.refreshRequest ? <CodeDisclosure title="Refresh Request JSON" content={strategistArtifacts.refreshRequest} /> : null}
+            {strategistArtifacts.rawResponse ? <CodeDisclosure title="Raw Strategist Response" content={strategistArtifacts.rawResponse} /> : null}
+            {strategistArtifacts.parsedPlanJson ? <CodeDisclosure title="Parsed Strategist Plan JSON" content={strategistArtifacts.parsedPlanJson} /> : null}
             <CodeDisclosure title="Exact Strategist Prompt" content={strategistArtifacts.prompt} />
           </>
         ) : (
-          <p className="muted-text">No strategist prompt ran on this turn.</p>
+          <>
+            <div className="summary-grid compact">
+              <SummaryStat label="Strategist pass on this turn" value="No" />
+            </div>
+            <p className="muted-text">No strategist prompt ran on this turn. Any strategist memo shown elsewhere on the page is carried forward from earlier turns.</p>
+          </>
         )}
       </Card>
     </div>
@@ -3666,6 +3766,7 @@ type TacticalAttemptView = {
   plannerBriefJson: string;
   retryContext: string;
   rawResponse: string;
+  parsedPlanJson: string;
   parsedPlan: Record<string, unknown> | null;
   validationFailure: string;
   providerRetries: ProviderRetryView[];
@@ -3676,6 +3777,8 @@ type StrategistArtifactsView = {
   prompt: string;
   briefJson: string;
   refreshRequest: string;
+  rawResponse: string;
+  parsedPlanJson: string;
   retryEvents: ProviderRetryView[];
   requestError: string;
 };
@@ -3838,6 +3941,7 @@ function buildTacticalAttempts(events: ObservabilityEvent[]): TacticalAttemptVie
       plannerBriefJson: request.details?.plannerBriefJson ?? "",
       retryContext: request.details?.retryContextJson ?? "",
       rawResponse: response?.details?.rawResponse ?? "",
+      parsedPlanJson: parsed?.details?.parsedPlan ?? "",
       parsedPlan: parseJsonValue(parsed?.details?.parsedPlan),
       validationFailure: validation?.details?.validationFailuresJson ?? "",
       providerRetries,
@@ -3849,6 +3953,8 @@ function buildTacticalAttempts(events: ObservabilityEvent[]): TacticalAttemptVie
 function buildStrategistArtifacts(events: ObservabilityEvent[]): StrategistArtifactsView | null {
   const request = findLatestEvent(events, ["strategist_llm_request"]);
   if (!request) return null;
+  const response = events.find((event) => event.type === "strategist_llm_response" && event.id > request.id);
+  const parsedPlan = events.find((event) => event.type === "strategist_llm_plan_parsed" && event.id > request.id);
   const retryEvents = events
     .filter((event) => event.type === "strategist_llm_retry_scheduled" && event.id > request.id)
     .map(buildProviderRetryView)
@@ -3858,6 +3964,8 @@ function buildStrategistArtifacts(events: ObservabilityEvent[]): StrategistArtif
     prompt: request.details?.prompt ?? "",
     briefJson: request.details?.strategistBriefJson ?? "",
     refreshRequest: request.details?.refreshRequestJson ?? "",
+    rawResponse: response?.details?.rawResponse ?? "",
+    parsedPlanJson: parsedPlan?.details?.parsedPlan ?? "",
     retryEvents,
     requestError: requestError ? JSON.stringify(requestError.details ?? {}, null, 2) : "",
   };
