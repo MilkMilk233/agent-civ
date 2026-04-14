@@ -84,6 +84,7 @@ object AgentTurnAutomation {
 
         var observationJson = ""
         var empireObservationJson = ""
+        var worldFactsJson = ""
         var memoryJson = ""
         var plannerBrief = AgentPromptBuilder.plannerBrief(memory, observation, empireObservation)
         var plannerBriefJson = ""
@@ -91,6 +92,7 @@ object AgentTurnAutomation {
         fun rebuildArtifacts() {
             observationJson = AgentPromptBuilder.observationJson(observation)
             empireObservationJson = AgentPromptBuilder.empireObservationJson(empireObservation)
+            worldFactsJson = AgentWorldFactsBuilder.json(civInfo)
             memoryJson = AgentMemoryManager.memoryJson(memory)
             plannerBrief = AgentPromptBuilder.plannerBrief(memory, observation, empireObservation)
             plannerBriefJson = AgentPromptBuilder.plannerBriefJson(plannerBrief)
@@ -130,6 +132,7 @@ object AgentTurnAutomation {
                     "strategistMemoJson" to AgentMemoryManager.strategistMemoJson(memory.lastStrategistMemo),
                     "observationJson" to observationJson,
                     "empireObservationJson" to empireObservationJson,
+                    "worldFactsJson" to worldFactsJson,
                     "plannerBriefJson" to plannerBriefJson,
                     "empireResearchCandidates" to empireObservation.researchCandidates.size.toString(),
                     "empirePolicyCandidates" to empireObservation.policyCandidates.size.toString(),

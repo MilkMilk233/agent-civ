@@ -10,6 +10,7 @@
     "baseRuleset": "Civ V - Vanilla",
     "difficulty": "Settler",
     "speed": "Quick",
+    "victoryTypes": ["Domination", "Science", "Cultural", "Diplomatic", "Time"],
     "numberOfCityStates": 0,
     "noBarbarians": true,
     "maxTurns": 330,

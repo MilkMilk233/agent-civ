@@ -43,6 +43,7 @@ data class AgentBatchRunnerRulesetOptions(
     val difficulties: List<String>,
     val speeds: List<String>,
     val civilizations: List<String>,
+    val victoryTypes: List<String>,
 )
 
 @Serializable
@@ -135,9 +136,10 @@ object AgentBatchRunnerService {
                             .filter { it.isMajorCiv }
                             .map { it.name }
                             .sorted()
-                            .toList(),
+                        .toList(),
                     )
                 }.distinct(),
+                victoryTypes = ruleset.victories.keys.toList(),
             )
         }
 

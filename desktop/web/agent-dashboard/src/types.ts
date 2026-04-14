@@ -123,6 +123,7 @@ export interface RunnerRulesetOptions {
   difficulties: string[];
   speeds: string[];
   civilizations: string[];
+  victoryTypes: string[];
 }
 
 export interface RunnerFormOptions {
@@ -146,6 +147,7 @@ export interface TurnRecord {
   turnSummary?: TurnSummary;
   observation: unknown | null;
   empireObservation: unknown | null;
+  worldFacts: unknown | null;
   memory: unknown | null;
   plannerBrief: unknown | null;
   strategistBrief: unknown | null;

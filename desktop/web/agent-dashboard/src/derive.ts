@@ -97,6 +97,7 @@ export function deriveTurns(events: ObservabilityEvent[], turnSummaries: TurnSum
         turnSummary: summary,
         observation: parseJsonValue(details.observationJson),
         empireObservation: parseJsonValue(details.empireObservationJson),
+        worldFacts: parseJsonValue(details.worldFactsJson),
         memory: parseJsonValue(details.memoryJson),
         plannerBrief: parseJsonValue(details.plannerBriefJson),
         strategistBrief: parseJsonValue(strategistRequest?.details?.strategistBriefJson),

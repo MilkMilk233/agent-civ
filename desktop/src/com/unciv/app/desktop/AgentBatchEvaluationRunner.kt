@@ -211,7 +211,9 @@ object AgentBatchEvaluationRunner {
             val mapParameters = config.mapParameters.clone().apply { this.seed = seed }
             val gameSetupInfo = GameSetupInfo(gameParameters, mapParameters)
             gameInfo = GameStarter.startNewGame(gameSetupInfo)
-            gameInfo.gameParameters.victoryTypes = ArrayList(gameInfo.ruleset.victories.keys)
+            if (gameInfo.gameParameters.victoryTypes.isEmpty()) {
+                gameInfo.gameParameters.victoryTypes = ArrayList(gameInfo.ruleset.victories.keys)
+            }
             gameInfo.simulateUntilWin = true
             gameInfo.simulateMaxTurns = config.maxTurns
             UncivGame.Current.gameInfo = gameInfo

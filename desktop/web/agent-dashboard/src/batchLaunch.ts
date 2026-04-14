@@ -11,6 +11,7 @@ export interface BatchLaunchFormState {
   baseRuleset: string;
   difficulty: string;
   speed: string;
+  enabledVictoryTypes: string[];
   mapType: string;
   mapShape: string;
   mapSizeName: string;
@@ -36,6 +37,7 @@ const fallbackOptions: RunnerFormOptions = {
       difficulties: ["Settler", "Chieftain", "Warlord", "Prince", "King", "Emperor", "Immortal", "Deity"],
       speeds: ["Quick", "Standard", "Epic", "Marathon"],
       civilizations: ["Random", "America", "Babylon", "Egypt", "England", "France", "Germany", "Persia", "Rome"],
+      victoryTypes: ["Domination", "Science", "Cultural", "Diplomatic", "Time"],
     },
   ],
   mapTypes: ["Pangaea", "Continents", "Archipelago", "Fractal", "Lakes"],
@@ -77,6 +79,7 @@ export function createDefaultLaunchForm(options: RunnerFormOptions | null): Batc
     baseRuleset: resolved.defaultBaseRuleset,
     difficulty: ruleset.difficulties.includes("Settler") ? "Settler" : ruleset.difficulties[0] ?? "Settler",
     speed: ruleset.speeds.includes("Quick") ? "Quick" : ruleset.speeds[0] ?? "Quick",
+    enabledVictoryTypes: [...ruleset.victoryTypes],
     mapType: resolved.mapTypes.includes("Pangaea") ? "Pangaea" : resolved.mapTypes[0] ?? "Pangaea",
     mapShape: resolved.mapShapes.includes("Hexagonal") ? "Hexagonal" : resolved.mapShapes[0] ?? "Hexagonal",
     mapSizeName: tinyMap?.name ?? "Tiny",
@@ -104,6 +107,7 @@ export function normalizeLaunchForm(
     baseRuleset: choose(current.baseRuleset, resolved.baseRulesets, resolved.defaultBaseRuleset),
     difficulty: choose(current.difficulty, ruleset.difficulties, ruleset.difficulties[0] ?? "Settler"),
     speed: choose(current.speed, ruleset.speeds, ruleset.speeds[0] ?? "Quick"),
+    enabledVictoryTypes: normalizeSelection(current.enabledVictoryTypes, ruleset.victoryTypes),
     mapType: choose(current.mapType, resolved.mapTypes, resolved.mapTypes[0] ?? "Pangaea"),
     mapShape: choose(current.mapShape, resolved.mapShapes, resolved.mapShapes[0] ?? "Hexagonal"),
     mapSizeName: mapSize?.name ?? current.mapSizeName,
@@ -131,6 +135,7 @@ export function buildBatchConfig(form: BatchLaunchFormState, options: RunnerForm
         baseRuleset: normalized.baseRuleset,
         difficulty: normalized.difficulty,
         speed: normalized.speed,
+        victoryTypes: normalizeSelection(normalized.enabledVictoryTypes, chosenRuleset.victoryTypes),
         numberOfCityStates: clampNumber(normalized.numberOfCityStates, 0, 64),
         noBarbarians: normalized.noBarbarians,
         maxTurns: clampNumber(normalized.maxTurns, 10, 2000),
@@ -170,4 +175,9 @@ function choose(value: string, allowed: string[], fallback: string): string {
 function clampNumber(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function normalizeSelection(selected: string[], allowed: string[]): string[] {
+  const normalized = selected.filter((value) => allowed.includes(value));
+  return normalized.length ? normalized : [...allowed];
 }

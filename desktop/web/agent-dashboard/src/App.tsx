@@ -15,6 +15,36 @@ import type {
 import { formatNumber, formatRelative, parseJsonValue } from "./utils";
 
 type Mode = "live" | "replay";
+type WorldFactsMetricKey =
+  | "score"
+  | "force"
+  | "technologies"
+  | "cities"
+  | "population"
+  | "units"
+  | "militaryUnits"
+  | "civilianUnits"
+  | "gold"
+  | "happiness"
+  | "sciencePerTurn"
+  | "culturePerTurn"
+  | "faithPerTurn";
+
+const WORLD_FACTS_METRIC_OPTIONS: Array<{ key: WorldFactsMetricKey; label: string }> = [
+  { key: "score", label: "Total score" },
+  { key: "force", label: "Military force" },
+  { key: "technologies", label: "Technologies" },
+  { key: "cities", label: "Cities" },
+  { key: "population", label: "Population" },
+  { key: "units", label: "Total units" },
+  { key: "militaryUnits", label: "Military units" },
+  { key: "civilianUnits", label: "Civilian units" },
+  { key: "gold", label: "Gold" },
+  { key: "happiness", label: "Happiness" },
+  { key: "sciencePerTurn", label: "Science / turn" },
+  { key: "culturePerTurn", label: "Culture / turn" },
+  { key: "faithPerTurn", label: "Faith / turn" },
+];
 
 export default function App() {
   const [mode, setMode] = useState<Mode>("live");
@@ -29,6 +59,7 @@ export default function App() {
   const [selectedTurnKey, setSelectedTurnKey] = useState<string>("");
   const [launchForm, setLaunchForm] = useState<BatchLaunchFormState>(() => createDefaultLaunchForm(null));
   const [launchModalOpen, setLaunchModalOpen] = useState(false);
+  const [selectedTimelineMetric, setSelectedTimelineMetric] = useState<WorldFactsMetricKey>("score");
   const [error, setError] = useState<string>("");
   const [busy, setBusy] = useState(false);
 
@@ -89,6 +120,10 @@ export default function App() {
   const launchPreviewJson = useMemo(
     () => buildBatchConfig(launchForm, resolvedRunnerOptions),
     [launchForm, resolvedRunnerOptions],
+  );
+  const scoreTimeline = useMemo(
+    () => buildMetricTimeline(turns, selectedTimelineMetric),
+    [selectedTimelineMetric, turns],
   );
   const selectedBatch = batches.find((batch) => batch.batchId === selectedBatchId) ?? null;
   const selectedMatch = matches.find((match) => match.matchId === selectedMatchId) ?? null;
@@ -187,14 +222,23 @@ export default function App() {
       </header>
 
       <section className="hero-row">
-        <Card title="Runner status" subtitle={runnerStatus?.running ? "A batch is currently in progress." : "Ready for the next experiment."}>
-          <div className="summary-grid">
+        <Card
+          className="hero-status-card"
+          title="Runner status"
+          subtitle={runnerStatus?.running ? "A batch is currently in progress." : "Ready for the next experiment."}
+        >
+          <div className="summary-grid compact hero-summary-grid hero-summary-grid-three">
             <SummaryStat label="Current state" value={runnerStatus?.running ? "Running" : "Idle"} />
             <SummaryStat label="Current batch" value={runnerStatus?.currentBatchName || runnerStatus?.currentBatchId || "None"} />
             <SummaryStat label="Last result" value={runnerStatus?.lastCompletedBatchStatus || "None"} />
-            <SummaryStat label="Storage" value={runnerStatus?.storageDir || "Unavailable"} subtle />
           </div>
-          <div className="button-row">
+
+          <div className="hero-meta-block">
+            <span>Storage</span>
+            <strong>{runnerStatus?.storageDir || "Unavailable"}</strong>
+          </div>
+
+          <div className="button-row hero-actions">
             <button onClick={() => void refreshRunner()}>Refresh status</button>
             <button onClick={() => void loadBatches()}>Refresh history</button>
             <button className="danger" disabled={busy || !runnerStatus?.running} onClick={() => void cancelBatch()}>
@@ -203,16 +247,20 @@ export default function App() {
           </div>
         </Card>
 
-        <Card title={mode === "live" ? "Live session" : "Replay session"} subtitle={mode === "live" ? "Current in-memory observability stream." : "Stored evaluations from disk."}>
+        <Card
+          className="hero-status-card"
+          title={mode === "live" ? "Live session" : "Replay session"}
+          subtitle={mode === "live" ? "Current in-memory observability stream." : "Stored evaluations from disk."}
+        >
           {mode === "live" ? (
-            <div className="summary-grid">
+            <div className="summary-grid compact hero-summary-grid">
               <SummaryStat label="Buffered events" value={formatNumber(snapshot?.totalBufferedEvents)} />
               <SummaryStat label="Visible turns" value={formatNumber(turns.length)} />
               <SummaryStat label="Last refresh" value={snapshot ? formatRelative(snapshot.generatedAtEpochMs) : "Not loaded"} />
               <SummaryStat label="Current civ" value={selectedTurn?.civName || "None"} />
             </div>
           ) : (
-            <div className="summary-grid">
+            <div className="summary-grid compact hero-summary-grid">
               <SummaryStat label="Selected batch" value={selectedBatch?.name || selectedBatch?.batchId || "None"} />
               <SummaryStat label="Selected match" value={selectedMatch?.label || selectedMatch?.matchId || "None"} />
               <SummaryStat label="Winner" value={selectedMatch?.winnerCivName || selectedMatch?.winnerSide || "Unknown"} />
@@ -221,6 +269,12 @@ export default function App() {
           )}
           {error ? <p className="error-text">{error}</p> : null}
         </Card>
+
+        <ScoreTimelineCard
+          selectedMetric={selectedTimelineMetric}
+          timeline={scoreTimeline}
+          onMetricChange={setSelectedTimelineMetric}
+        />
       </section>
 
       <section className="workspace-grid">
@@ -328,6 +382,12 @@ function LaunchModal({
   onLaunch: () => void;
 }) {
   const sizes = mapSizeOptions(options);
+  const toggleVictoryType = (victoryType: string) => {
+    const next = form.enabledVictoryTypes.includes(victoryType)
+      ? form.enabledVictoryTypes.filter((value) => value !== victoryType)
+      : [...form.enabledVictoryTypes, victoryType];
+    onChange("enabledVictoryTypes", next);
+  };
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -380,6 +440,22 @@ function LaunchModal({
                 options={selectedRuleset.speeds}
                 onChange={(value) => onChange("speed", value)}
               />
+              <div className="choice-group field-span-two">
+                <p>Enabled victory types</p>
+                <div className="choice-grid">
+                  {selectedRuleset.victoryTypes.map((victoryType) => (
+                    <button
+                      key={victoryType}
+                      type="button"
+                      className={`choice-chip ${form.enabledVictoryTypes.includes(victoryType) ? "selected" : ""}`}
+                      onClick={() => toggleVictoryType(victoryType)}
+                    >
+                      {victoryType}
+                    </button>
+                  ))}
+                </div>
+                <p className="field-hint">Default is all enabled. If you deselect everything, the launcher restores all victory types.</p>
+              </div>
               <ChoiceGroup
                 label="Map size"
                 value={form.mapSizeName}
@@ -456,6 +532,309 @@ function LaunchModal({
   );
 }
 
+type WorldFactsCellTone = "neutral" | "accent" | "warning";
+
+interface WorldFactsCell {
+  primary: string;
+  secondary?: string;
+  tone?: WorldFactsCellTone;
+}
+
+interface WorldFactsRow {
+  label: string;
+  values: WorldFactsCell[];
+}
+
+interface WorldFactsMatrix {
+  title: string;
+  subtitle: string;
+  rows: WorldFactsRow[];
+}
+
+interface WorldFactsColumn {
+  civName: string;
+  subtitle?: string;
+  emphasis?: boolean;
+}
+
+interface WorldFactsViewModel {
+  columns: WorldFactsColumn[];
+  overview: Array<{ label: string; value: string; note?: string }>;
+  matrices: WorldFactsMatrix[];
+  notes: string[];
+}
+
+function WorldFactsLaunchSection({
+  onOpen,
+}: {
+  onOpen: () => void;
+}) {
+  return (
+    <section id="section-world-facts" className="section-shell world-facts-shell">
+      <button type="button" className="world-facts-launch" onClick={onOpen}>
+        <p className="eyebrow">Reality</p>
+        <h2>World facts</h2>
+      </button>
+    </section>
+  );
+}
+
+function WorldFactsModal({
+  turn,
+  data,
+  onClose,
+}: {
+  turn: TurnRecord;
+  data: WorldFactsViewModel;
+  onClose: () => void;
+}) {
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-panel world-facts-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Reality</p>
+            <h2>World facts</h2>
+            <p className="card-subtitle">
+              Exact cross-civilization snapshot at the start of {turn.civName}&apos;s turn {formatNumber(turn.turn)}.
+              This is for dashboard comparison only and is not part of the agent&apos;s prompt.
+            </p>
+          </div>
+          <button className="ghost-button" onClick={onClose}>Close</button>
+        </div>
+
+        <div className="modal-body">
+          <section className="modal-section">
+            <div className="summary-grid compact">
+              {data.overview.map((item) => (
+                <SummaryStat key={item.label} label={item.label} value={item.value} note={item.note} />
+              ))}
+            </div>
+          </section>
+
+          {data.matrices.map((matrix) => (
+            <section key={matrix.title} className="modal-section">
+              <h3>{matrix.title}</h3>
+              <p className="card-subtitle">{matrix.subtitle}</p>
+              <WorldFactsMatrixTable columns={data.columns} matrix={matrix} />
+            </section>
+          ))}
+
+          {data.notes.length ? (
+            <section className="modal-section">
+              <h3>Reading guide</h3>
+              <div className="structured-list">
+                {data.notes.map((note) => (
+                  <article key={note} className="structured-item">
+                    <p className="card-paragraph">{note}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WorldFactsMatrixTable({
+  columns,
+  matrix,
+}: {
+  columns: WorldFactsColumn[];
+  matrix: WorldFactsMatrix;
+}) {
+  return (
+    <div className="world-facts-table-wrap">
+      <table className="world-facts-table">
+        <thead>
+          <tr>
+            <th>Metric</th>
+            {columns.map((column) => (
+              <th key={column.civName} className={column.emphasis ? "is-emphasis" : ""}>
+                <div className="world-facts-column-head">
+                  <strong>{column.civName}</strong>
+                  {column.subtitle ? <small>{column.subtitle}</small> : null}
+                </div>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {matrix.rows.map((row) => (
+            <tr key={row.label}>
+              <th>{row.label}</th>
+              {row.values.map((cell, index) => (
+                <td key={`${row.label}-${columns[index]?.civName ?? index}`}>
+                  <div className={`world-facts-cell${cell.tone ? ` ${cell.tone}` : ""}`}>
+                    <strong>{cell.primary}</strong>
+                    {cell.secondary ? <small>{cell.secondary}</small> : null}
+                  </div>
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+interface ScoreTimelineSeriesPoint {
+  turn: number;
+  value: number;
+}
+
+interface ScoreTimelineSeries {
+  civName: string;
+  color: string;
+  points: ScoreTimelineSeriesPoint[];
+  latestScore: number;
+}
+
+interface ScoreTimelineView {
+  metricKey: WorldFactsMetricKey;
+  metricLabel: string;
+  series: ScoreTimelineSeries[];
+  minTurn: number;
+  maxTurn: number;
+  minValue: number;
+  maxValue: number;
+}
+
+function ScoreTimelineCard({
+  selectedMetric,
+  timeline,
+  onMetricChange,
+}: {
+  selectedMetric: WorldFactsMetricKey;
+  timeline: ScoreTimelineView | null;
+  onMetricChange: (metric: WorldFactsMetricKey) => void;
+}) {
+  const width = 640;
+  const height = 250;
+  const padding = { top: 18, right: 22, bottom: 34, left: 44 };
+
+  if (!timeline || !timeline.series.length) {
+    return (
+      <Card
+        className="hero-chart-card"
+        title="World metric over time"
+        subtitle="Pick any tracked world-facts metric and compare all civilizations over the run."
+      >
+        <label className="chart-metric-picker">
+          <span>Y-axis metric</span>
+          <select value={selectedMetric} onChange={(event) => onMetricChange(event.target.value as WorldFactsMetricKey)}>
+            {WORLD_FACTS_METRIC_OPTIONS.map((option) => (
+              <option key={option.key} value={option.key}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+        <EmptyCardState
+          title="No timeline history yet"
+          body="This card will light up once the trace contains world-facts snapshots for multiple turns."
+        />
+      </Card>
+    );
+  }
+
+  const xRange = Math.max(1, timeline.maxTurn - timeline.minTurn);
+  const yRange = Math.max(1, timeline.maxValue - timeline.minValue);
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const xForTurn = (turn: number) => padding.left + ((turn - timeline.minTurn) / xRange) * plotWidth;
+  const yForScore = (value: number) => padding.top + plotHeight - ((value - timeline.minValue) / yRange) * plotHeight;
+  const yTicks = buildNumericTicks(timeline.minValue, timeline.maxValue, 4);
+  const xTicks = buildIntegerTicks(timeline.minTurn, timeline.maxTurn, 5);
+
+  return (
+    <Card
+      className="hero-chart-card"
+      title={`${timeline.metricLabel} over time`}
+      subtitle="X-axis is turn number, Y-axis is your selected world-facts metric, and each civilization keeps its own color."
+    >
+      <label className="chart-metric-picker">
+        <span>Y-axis metric</span>
+        <select value={selectedMetric} onChange={(event) => onMetricChange(event.target.value as WorldFactsMetricKey)}>
+          {WORLD_FACTS_METRIC_OPTIONS.map((option) => (
+            <option key={option.key} value={option.key}>{option.label}</option>
+          ))}
+        </select>
+      </label>
+
+      <div className="summary-grid compact">
+        <SummaryStat label="Civs tracked" value={formatNumber(timeline.series.length)} />
+        <SummaryStat label="Turns covered" value={`${formatNumber(timeline.minTurn)}–${formatNumber(timeline.maxTurn)}`} />
+        <SummaryStat label="Top value" value={formatNumber(timeline.maxValue)} note={timeline.metricLabel} />
+      </div>
+
+      <div className="score-chart-shell">
+        <svg className="score-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Civilization score history line chart">
+          <rect x="0" y="0" width={width} height={height} rx="20" fill="rgba(250,252,255,0.92)" />
+
+          {yTicks.map((tick) => {
+            const y = yForScore(tick);
+            return (
+              <g key={`y-${tick}`}>
+                <line x1={padding.left} x2={width - padding.right} y1={y} y2={y} className="score-chart-grid-line" />
+                <text x={padding.left - 10} y={y + 4} textAnchor="end" className="score-chart-axis-label">
+                  {formatNumber(tick)}
+                </text>
+              </g>
+            );
+          })}
+
+          {xTicks.map((tick) => {
+            const x = xForTurn(tick);
+            return (
+              <g key={`x-${tick}`}>
+                <line x1={x} x2={x} y1={padding.top} y2={height - padding.bottom} className="score-chart-grid-line vertical" />
+                <text x={x} y={height - 10} textAnchor="middle" className="score-chart-axis-label">
+                  {formatNumber(tick)}
+                </text>
+              </g>
+            );
+          })}
+
+          {timeline.series.map((series) => (
+            <g key={series.civName}>
+              <path
+                d={buildLinePath(series.points, xForTurn, yForScore)}
+                fill="none"
+                stroke={series.color}
+                strokeWidth="3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              {series.points.map((point) => (
+                <circle
+                  key={`${series.civName}-${point.turn}`}
+                  cx={xForTurn(point.turn)}
+                  cy={yForScore(point.value)}
+                  r="3.5"
+                  fill={series.color}
+                  className="score-chart-point"
+                />
+              ))}
+            </g>
+          ))}
+        </svg>
+      </div>
+
+      <div className="score-chart-legend">
+        {timeline.series.map((series) => (
+          <div key={series.civName} className="score-chart-legend-item">
+            <span className="score-chart-legend-swatch" style={{ backgroundColor: series.color }} />
+            <strong>{series.civName}</strong>
+            <small>{formatNumber(series.latestScore)}</small>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 function TurnDetail({
   turn,
 }: {
@@ -463,6 +842,7 @@ function TurnDetail({
 }) {
   const observation = asRecord(turn.observation);
   const empireObservation = asRecord(turn.empireObservation);
+  const worldFacts = asRecord(turn.worldFacts);
   const plannerBrief = asRecord(turn.plannerBrief);
   const strategistBrief = asRecord(turn.strategistBrief);
   const strategistMemo = asRecord(turn.strategistMemo);
@@ -514,9 +894,61 @@ function TurnDetail({
   const cityIntentsMemory = objectArray(memoryRecord?.cityIntents);
   const unitAssignmentsMemory = objectArray(memoryRecord?.unitAssignments);
   const recentFailuresMemory = objectArray(memoryRecord?.recentFailures);
+  const worldFactsCivs = objectArray(worldFacts?.civs);
+  const [worldFactsOpen, setWorldFactsOpen] = useState(false);
+  const worldFactsView = useMemo(
+    () => buildWorldFactsViewModel({
+      civName: turn.civName,
+      worldFacts,
+      worldFactsCivs,
+    }),
+    [turn.civName, worldFacts, worldFactsCivs],
+  );
+  const quickScanCards = [
+    {
+      label: "Strategist thesis",
+      text: firstNonEmptyText(
+        stringValue(strategistMemo?.thesis),
+        stringValue(strategy?.thesis),
+        turn.synopsis,
+      ) || "No strategist thesis recorded.",
+    },
+    {
+      label: "Direct handoff",
+      text: firstNonEmptyText(
+        stringValue(strategistMemo?.tacticianHandoff),
+        stringValue(strategy?.tacticianHandoff),
+        stringValue(strategistMemo?.futurePlan),
+      ) || "No tactician handoff was recorded.",
+    },
+    {
+      label: "Campaign focus",
+      text: firstNonEmptyText(
+        stringValue(campaignMemory?.summary),
+        stringValue(memoryContext?.campaignSummary),
+        stringValue(campaignContext?.primaryRivalCiv),
+      ) || "No campaign summary was carried into this turn.",
+    },
+    {
+      label: "This turn in one line",
+      text: firstNonEmptyText(
+        stringValue(parsedPlan?.notes),
+        stringValue(latestTerminalEvent?.message),
+        turn.turnSummary?.notes,
+      ) || "No compact action summary was recorded.",
+    },
+  ];
 
   return (
     <div className="detail-stack">
+      {worldFactsOpen && worldFactsView ? (
+        <WorldFactsModal
+          turn={turn}
+          data={worldFactsView}
+          onClose={() => setWorldFactsOpen(false)}
+        />
+      ) : null}
+
       <Card
         title={`${turn.civName} · Turn ${turn.turn}`}
         subtitle={turn.turnSummary?.notes || turn.synopsis}
@@ -609,10 +1041,20 @@ function TurnDetail({
           />
           <SummaryStat label="Latest event" value={formatRelative(turn.latestEpochMs)} />
         </div>
+
+        <div className="quick-scan-grid">
+          {quickScanCards.map((item) => (
+            <article key={item.label} className="quick-scan-card">
+              <span>{item.label}</span>
+              <p>{item.text}</p>
+            </article>
+          ))}
+        </div>
       </Card>
 
       <TurnSectionNav
         items={[
+          { id: "section-world-facts", label: "World facts" },
           { id: "section-memory", label: "Memory" },
           { id: "section-strategist-input", label: "Strategist saw" },
           { id: "section-strategist-output", label: "Strategist output" },
@@ -623,14 +1065,16 @@ function TurnDetail({
         ]}
       />
 
+      {worldFactsView ? <WorldFactsLaunchSection onOpen={() => setWorldFactsOpen(true)} /> : null}
+
       <SectionShell
         id="section-memory"
         eyebrow="Memory"
         title="What's in the memory"
         body="This is the shared notebook carried into the turn before any new strategist or tactical inference. It shows the durable world model, campaign notes, rival notes, and carried intents/failures."
       >
-        <div className="reading-flow">
-          <Card title="Memory overview" subtitle="High-level shape of the notebook the agent brought into this turn.">
+        <div className="compact-card-grid">
+          <Card className="full-span" title="Memory overview" subtitle="High-level shape of the notebook the agent brought into this turn.">
             <div className="summary-grid compact">
               <SummaryStat label="World notes" value={formatNumber(worldModelNotes.length)} note={`${formatNumber(worldModelAnchors.length)} anchors`} />
               <SummaryStat label="Rival notebooks" value={formatNumber(rivalMemories.length)} />
@@ -662,78 +1106,72 @@ function TurnDetail({
             )}
           </Card>
 
-          <div className="reading-flow">
-            <Card title="Campaign notebook" subtitle="What operation the agent thinks it is running right now.">
-              {campaignMemory ? (
-                <>
-                  <div className="summary-grid compact">
-                    <SummaryStat label="Title" value={stringValue(campaignMemory.title) || "—"} />
-                    <SummaryStat label="Stage" value={stringValue(campaignMemory.stage) || "—"} />
-                    <SummaryStat label="Objective" value={stringValue(campaignMemory.objective) || "—"} />
-                    <SummaryStat label="Primary rival" value={stringValue(campaignMemory.primaryRivalCiv) || "—"} />
-                  </div>
-                  {stringValue(campaignMemory.summary) ? <p className="card-paragraph">{stringValue(campaignMemory.summary)}</p> : null}
-                  {stringValue(campaignMemory.reinforcementPlan) ? (
-                    <>
-                      <SectionLabel text="Reinforcement plan" />
-                      <p className="card-paragraph">{stringValue(campaignMemory.reinforcementPlan)}</p>
-                    </>
-                  ) : null}
-                  {stringList(campaignMemory.doNotDo).length ? (
-                    <>
-                      <SectionLabel text="Do not do" />
-                      <TagList values={stringList(campaignMemory.doNotDo)} tone="warning" />
-                    </>
-                  ) : null}
-                  <MemoryNotesSection title="Campaign notes" notes={campaignNotes} embedded />
-                </>
-              ) : (
-                <EmptyCardState title="No campaign notebook" body="No campaign memory was stored for this turn." />
-              )}
-            </Card>
+          <Card title="Campaign notebook" subtitle="What operation the agent thinks it is running right now.">
+            {campaignMemory ? (
+              <>
+                <div className="summary-grid compact">
+                  <SummaryStat label="Title" value={stringValue(campaignMemory.title) || "—"} />
+                  <SummaryStat label="Stage" value={stringValue(campaignMemory.stage) || "—"} />
+                  <SummaryStat label="Objective" value={stringValue(campaignMemory.objective) || "—"} />
+                  <SummaryStat label="Primary rival" value={stringValue(campaignMemory.primaryRivalCiv) || "—"} />
+                </div>
+                {stringValue(campaignMemory.summary) ? <p className="card-paragraph">{stringValue(campaignMemory.summary)}</p> : null}
+                {stringValue(campaignMemory.reinforcementPlan) ? (
+                  <>
+                    <SectionLabel text="Reinforcement plan" />
+                    <p className="card-paragraph">{stringValue(campaignMemory.reinforcementPlan)}</p>
+                  </>
+                ) : null}
+                {stringList(campaignMemory.doNotDo).length ? (
+                  <>
+                    <SectionLabel text="Do not do" />
+                    <TagList values={stringList(campaignMemory.doNotDo)} tone="warning" />
+                  </>
+                ) : null}
+                <MemoryNotesSection title="Campaign notes" notes={campaignNotes} embedded />
+              </>
+            ) : (
+              <EmptyCardState title="No campaign notebook" body="No campaign memory was stored for this turn." />
+            )}
+          </Card>
 
-            <Card title="Empire plan notebook" subtitle="How the empire's production and purchases are supposed to support the current game plan.">
-              {empirePlanMemory ? (
-                <>
-                  {stringValue(empirePlanMemory.summary) ? <p className="card-paragraph">{stringValue(empirePlanMemory.summary)}</p> : null}
-                  {stringValue(empirePlanMemory.purchaseIntent) ? (
-                    <>
-                      <SectionLabel text="Purchase intent" />
-                      <p className="card-paragraph">{stringValue(empirePlanMemory.purchaseIntent)}</p>
-                    </>
-                  ) : null}
-                  <MemoryNotesSection title="Empire notes" notes={empirePlanNotes} embedded />
-                </>
-              ) : (
-                <EmptyCardState title="No empire plan" body="No empire-plan notebook was stored for this turn." />
-              )}
-            </Card>
-          </div>
+          <Card title="Empire plan notebook" subtitle="How the empire's production and purchases are supposed to support the current game plan.">
+            {empirePlanMemory ? (
+              <>
+                {stringValue(empirePlanMemory.summary) ? <p className="card-paragraph">{stringValue(empirePlanMemory.summary)}</p> : null}
+                {stringValue(empirePlanMemory.purchaseIntent) ? (
+                  <>
+                    <SectionLabel text="Purchase intent" />
+                    <p className="card-paragraph">{stringValue(empirePlanMemory.purchaseIntent)}</p>
+                  </>
+                ) : null}
+                <MemoryNotesSection title="Empire notes" notes={empirePlanNotes} embedded />
+              </>
+            ) : (
+              <EmptyCardState title="No empire plan" body="No empire-plan notebook was stored for this turn." />
+            )}
+          </Card>
 
           <RivalNotebookSection rivals={rivalMemories} />
 
-          <div className="reading-flow">
-            <MemoryNotesCard
-              title="Recent changes"
-              subtitle="What changed recently enough to still matter as context."
-              notes={recentChangesMemory}
-              emptyTitle="No recent changes"
-              emptyBody="No recent change notes were carried into this turn."
-            />
-            <MemoryNotesCard
-              title="Lessons and cautions"
-              subtitle="Short reminders of what not to repeat."
-              notes={lessonsMemory}
-              emptyTitle="No lessons"
-              emptyBody="No lessons or cautions were carried into this turn."
-            />
-          </div>
+          <MemoryNotesCard
+            title="Recent changes"
+            subtitle="What changed recently enough to still matter as context."
+            notes={recentChangesMemory}
+            emptyTitle="No recent changes"
+            emptyBody="No recent change notes were carried into this turn."
+          />
+          <MemoryNotesCard
+            title="Lessons and cautions"
+            subtitle="Short reminders of what not to repeat."
+            notes={lessonsMemory}
+            emptyTitle="No lessons"
+            emptyBody="No lessons or cautions were carried into this turn."
+          />
 
-          <div className="reading-flow">
-            <CityIntentMemorySection intents={cityIntentsMemory} />
-            <UnitAssignmentMemorySection assignments={unitAssignmentsMemory} />
-            <RecentFailureMemorySection failures={recentFailuresMemory} />
-          </div>
+          <CityIntentMemorySection intents={cityIntentsMemory} />
+          <UnitAssignmentMemorySection assignments={unitAssignmentsMemory} />
+          <RecentFailureMemorySection failures={recentFailuresMemory} />
         </div>
       </SectionShell>
 
@@ -743,14 +1181,15 @@ function TurnDetail({
         title="What the strategist saw"
         body="This is the strategist's input space: broad current state, the previous memo, factual changes since then, and compact city/unit snapshots."
       >
-        <StrategistContextSection
-          title="Strategist inputs"
-          brief={strategistBrief}
-          threats={strategistRivalThreats}
-          campaignPicture={strategistCampaignPicture}
-        />
-
-        <div className="reading-flow">
+        <div className="compact-card-grid">
+          <div className="full-span">
+            <StrategistContextSection
+              title="Strategist inputs"
+              brief={strategistBrief}
+              threats={strategistRivalThreats}
+              campaignPicture={strategistCampaignPicture}
+            />
+          </div>
           <StrategistRivalCitiesSection title="Visible rival cities" cities={strategistRivalCities} />
           <StrategistRivalUnitsSection title="Visible rival units" units={strategistRivalUnits} />
           <StrategistCitySnapshotsSection title="Strategist city snapshots" cities={strategistCitySnapshots} />
@@ -812,7 +1251,7 @@ function TurnDetail({
         title="What the tactician saw"
         body="This is the compressed tactical packet that the planner actually used. It separates full board reality from the smaller planner brief so you can see what was surfaced and what stayed hidden."
       >
-        <div className="reading-flow">
+        <div className="compact-card-grid">
           <Card title="Tactical brief" subtitle="Only the tactician-specific tactical context that shaped this turn. The strategist's Past / Now / Future report is shown only in the strategist output section.">
             {plannerBrief ? (
               <>
@@ -844,70 +1283,63 @@ function TurnDetail({
             )}
           </Card>
 
-          <div className="reading-flow">
-            <PerceptionCoverageSection
-              observation={observation}
-              perceptionSummary={perceptionSummary}
-              attentionFacts={attentionFacts}
-              cityHighlights={cityHighlights}
-              unitHighlights={unitHighlights}
-              threatHighlights={threatHighlights}
-              hiddenCities={hiddenCities}
-              hiddenUnits={hiddenUnits}
-              hiddenThreats={hiddenThreats}
-              suppressedContext={suppressedContext}
-            />
-            <Card title="Empire picture" subtitle="Macro state shared around the tactical turn.">
-              {empireObservation ? (
-                <div className="summary-grid compact">
-                  <SummaryStat label="Ruleset" value={stringValue(asRecord(empireObservation.gameContext)?.rulesetName)} />
-                  <SummaryStat label="Map" value={`${stringValue(asRecord(empireObservation.gameContext)?.mapSize)} ${stringValue(asRecord(empireObservation.gameContext)?.mapType)}`.trim()} />
-                  <SummaryStat label="Victory goal" value={stringValue(empireObservation.victoryGoal)} />
-                  <SummaryStat label="Research" value={stringValue(empireObservation.currentResearch)} />
-                  <SummaryStat label="Gold" value={formatNumber(numberValue(empireObservation.gold))} />
-                  <SummaryStat label="Happiness" value={formatNumber(numberValue(empireObservation.happiness))} />
+          <PerceptionCoverageSection
+            observation={observation}
+            perceptionSummary={perceptionSummary}
+            attentionFacts={attentionFacts}
+            cityHighlights={cityHighlights}
+            unitHighlights={unitHighlights}
+            threatHighlights={threatHighlights}
+            hiddenCities={hiddenCities}
+            hiddenUnits={hiddenUnits}
+            hiddenThreats={hiddenThreats}
+            suppressedContext={suppressedContext}
+          />
+          <Card title="Empire picture" subtitle="Macro state shared around the tactical turn.">
+            {empireObservation ? (
+              <div className="summary-grid compact">
+                <SummaryStat label="Ruleset" value={stringValue(asRecord(empireObservation.gameContext)?.rulesetName)} />
+                <SummaryStat label="Map" value={`${stringValue(asRecord(empireObservation.gameContext)?.mapSize)} ${stringValue(asRecord(empireObservation.gameContext)?.mapType)}`.trim()} />
+                <SummaryStat label="Victory goal" value={stringValue(empireObservation.victoryGoal)} />
+                <SummaryStat label="Research" value={stringValue(empireObservation.currentResearch)} />
+                <SummaryStat label="Gold" value={formatNumber(numberValue(empireObservation.gold))} />
+                <SummaryStat label="Happiness" value={formatNumber(numberValue(empireObservation.happiness))} />
+              </div>
+            ) : (
+              <p className="muted-text">No empire observation captured.</p>
+            )}
+          </Card>
+          <Card title="Campaign context" subtitle="The factual rival/frontier packet the tactician received for pressure and war decisions.">
+            {campaignContext ? (
+              <>
+                <div className="summary-grid compact summary-grid-four">
+                  <SummaryStat label="Primary rival" value={stringValue(campaignContext.primaryRivalCiv)} />
+                  <SummaryStat label="At war" value={booleanText(campaignContext.atWar)} />
+                  <SummaryStat label="War choice surfaced" value={booleanText(campaignContext.warChoiceAvailable)} />
+                  <SummaryStat label="Visible rival cities" value={formatNumber(numberValue(campaignContext.visibleRivalCities))} />
+                  <SummaryStat label="Visible rival units" value={formatNumber(numberValue(campaignContext.visibleRivalUnits))} />
+                  <SummaryStat label="Frontline combat" value={formatNumber(numberValue(campaignContext.frontlineFriendlyCombatUnits))} />
+                  <SummaryStat label="Melee near objective" value={formatNumber(numberValue(campaignContext.meleeUnitsNearObjective))} />
+                  <SummaryStat label="Ranged near objective" value={formatNumber(numberValue(campaignContext.rangedUnitsNearObjective))} />
                 </div>
-              ) : (
-                <p className="muted-text">No empire observation captured.</p>
-              )}
-            </Card>
-            <Card title="Campaign context" subtitle="The factual rival/frontier packet the tactician received for pressure and war decisions.">
-              {campaignContext ? (
-                <>
-                  <div className="summary-grid compact summary-grid-four">
-                    <SummaryStat label="Primary rival" value={stringValue(campaignContext.primaryRivalCiv)} />
-                    <SummaryStat label="At war" value={booleanText(campaignContext.atWar)} />
-                    <SummaryStat label="War choice surfaced" value={booleanText(campaignContext.warChoiceAvailable)} />
-                    <SummaryStat label="Visible rival cities" value={formatNumber(numberValue(campaignContext.visibleRivalCities))} />
-                    <SummaryStat label="Visible rival units" value={formatNumber(numberValue(campaignContext.visibleRivalUnits))} />
-                    <SummaryStat label="Frontline combat" value={formatNumber(numberValue(campaignContext.frontlineFriendlyCombatUnits))} />
-                    <SummaryStat label="Melee near objective" value={formatNumber(numberValue(campaignContext.meleeUnitsNearObjective))} />
-                    <SummaryStat label="Ranged near objective" value={formatNumber(numberValue(campaignContext.rangedUnitsNearObjective))} />
-                  </div>
-                  <div className="structured-list">
-                    {campaignTargetItem("Visible target", asRecord(campaignContext.visibleTarget))}
-                    {campaignTargetItem("Visible capital", asRecord(campaignContext.visibleCapital))}
-                    {campaignTargetItem("Last-known target", asRecord(campaignContext.lastKnownTarget))}
-                    {campaignTargetItem("Last-known capital", asRecord(campaignContext.lastKnownCapital))}
-                  </div>
-                </>
-              ) : (
-                <EmptyCardState
-                  title="No campaign context"
-                  body="No rival/frontier packet was surfaced to the tactician on this turn."
-                />
-              )}
-            </Card>
-          </div>
+                <div className="structured-list">
+                  {campaignTargetItem("Visible target", asRecord(campaignContext.visibleTarget))}
+                  {campaignTargetItem("Visible capital", asRecord(campaignContext.visibleCapital))}
+                  {campaignTargetItem("Last-known target", asRecord(campaignContext.lastKnownTarget))}
+                  {campaignTargetItem("Last-known capital", asRecord(campaignContext.lastKnownCapital))}
+                </div>
+              </>
+            ) : (
+              <EmptyCardState
+                title="No campaign context"
+                body="No rival/frontier packet was surfaced to the tactician on this turn."
+              />
+            )}
+          </Card>
 
-          <div className="reading-flow">
-            <AlertSection title="Attention facts" facts={attentionFacts} />
-            <ProgressSection title="Progress already in motion" items={progressInMotion} />
-          </div>
-
-          <div className="reading-flow">
-            <ThreatHighlightsSection title="Threats the tactician could see" threats={threatHighlights} />
-          </div>
+          <AlertSection title="Attention facts" facts={attentionFacts} />
+          <ProgressSection title="Progress already in motion" items={progressInMotion} />
+          <ThreatHighlightsSection title="Threats the tactician could see" threats={threatHighlights} />
 
           <EmpireChoicesSection title="Empire choices" choices={empireChoices} />
 
@@ -922,7 +1354,7 @@ function TurnDetail({
         title="What the agent decided"
         body="These are the structured actions the tactician returned, plus the retry and validation story that determined whether they stuck."
       >
-        <div className="reading-flow">
+        <div className="compact-card-grid">
           <ActionPlanSection
             title="Planned actions"
             actions={plannedActions}
@@ -930,9 +1362,10 @@ function TurnDetail({
             candidateLookup={candidateLookup}
           />
           <DomainSummarySection title="Applied outcome" value={turn.outcomeDomainSummary} />
+          <div className="full-span">
+            <AttemptLadderSection attempts={tacticalAttempts} validationFailures={turn.validationFailures} />
+          </div>
         </div>
-
-        <AttemptLadderSection attempts={tacticalAttempts} validationFailures={turn.validationFailures} />
       </SectionShell>
 
       <SectionShell
@@ -981,14 +1414,16 @@ function TurnDetail({
 function Card({
   title,
   subtitle,
+  className,
   children,
 }: {
   title: string;
   subtitle?: string;
+  className?: string;
   children: React.ReactNode;
 }) {
   return (
-    <section className="card">
+    <section className={`card${className ? ` ${className}` : ""}`}>
       <div className="card-header">
         <div>
           <h3>{title}</h3>
@@ -1164,19 +1599,26 @@ function RivalNotebookSection({ rivals }: { rivals: Record<string, unknown>[] })
               <article key={`${stringValue(rival.rivalCiv)}-${index}`} className="structured-item">
                 <div className="structured-item-header">
                   <strong>{stringValue(rival.rivalCiv) || "Unknown rival"}</strong>
-                  <div className="tag-list compact">
-                    <span className="tag neutral">{formatNumber(notes.length)} notes</span>
-                    <span className="tag neutral">{formatNumber(anchors.length)} anchors</span>
-                    <span className="tag neutral">updated {formatNumber(numberValue(rival.lastUpdatedTurn))}</span>
-                  </div>
+                <div className="tag-list compact">
+                  <span className="tag neutral">{formatNumber(notes.length)} notes</span>
+                  <span className="tag neutral">{formatNumber(anchors.length)} anchors</span>
+                  <span className="tag neutral">updated {formatNumber(numberValue(rival.lastUpdatedTurn))}</span>
                 </div>
-                {stringValue(rival.summary) ? <p className="card-paragraph">{stringValue(rival.summary)}</p> : null}
-                <MemoryNotesSection title="Rival notes" notes={notes} embedded />
-                <MemoryAnchorsSection title="Rival anchors" anchors={anchors} />
-              </article>
-            );
-          })}
-        </div>
+              </div>
+              {stringValue(rival.summary) ? <p className="card-paragraph">{stringValue(rival.summary)}</p> : null}
+              {(notes.length || anchors.length) ? (
+                <details className="inline-disclosure">
+                  <summary>Open rival notes and anchors</summary>
+                  <div className="inline-disclosure-body">
+                    <MemoryNotesSection title="Rival notes" notes={notes} embedded />
+                    <MemoryAnchorsSection title="Rival anchors" anchors={anchors} />
+                  </div>
+                </details>
+              ) : null}
+            </article>
+          );
+        })}
+      </div>
       ) : (
         <EmptyCardState title="No rival notebooks" body="No rival-specific memory was stored for this turn." />
       )}
@@ -1188,25 +1630,30 @@ function CityIntentMemorySection({ intents }: { intents: Record<string, unknown>
   return (
     <Card title="City intents" subtitle="Carry-over purpose attached to cities from earlier turns.">
       {intents.length ? (
-        <div className="structured-list">
-          {intents.map((intent, index) => (
-            <article key={`${stringValue(intent.cityName)}-${index}`} className="structured-item">
-              <div className="structured-item-header">
-                <strong>{stringValue(intent.cityName) || "Unknown city"}</strong>
-                <div className="tag-list compact">
-                  {stringValue(intent.intent) ? <span className="tag neutral">{stringValue(intent.intent)}</span> : null}
-                  {stringValue(intent.target) ? <span className="tag neutral">{stringValue(intent.target)}</span> : null}
-                </div>
-              </div>
-              {stringList(intent.reasons).length ? <p className="card-paragraph">{stringList(intent.reasons).join(" ")}</p> : null}
-              <p className="mini-note">
-                {formatCoordinateText(numberValue(intent.cityX), numberValue(intent.cityY))}
-                {` · last progress ${formatNumber(numberValue(intent.lastProgressTurn))}`}
-                {` · stale after ${formatNumber(numberValue(intent.staleAfterTurn))}`}
-              </p>
-            </article>
-          ))}
-        </div>
+        <details className="inline-disclosure">
+          <summary>Open {formatNumber(intents.length)} carried city intents</summary>
+          <div className="inline-disclosure-body">
+            <div className="structured-list">
+              {intents.map((intent, index) => (
+                <article key={`${stringValue(intent.cityName)}-${index}`} className="structured-item">
+                  <div className="structured-item-header">
+                    <strong>{stringValue(intent.cityName) || "Unknown city"}</strong>
+                    <div className="tag-list compact">
+                      {stringValue(intent.intent) ? <span className="tag neutral">{stringValue(intent.intent)}</span> : null}
+                      {stringValue(intent.target) ? <span className="tag neutral">{stringValue(intent.target)}</span> : null}
+                    </div>
+                  </div>
+                  {stringList(intent.reasons).length ? <p className="card-paragraph">{stringList(intent.reasons).join(" ")}</p> : null}
+                  <p className="mini-note">
+                    {formatCoordinateText(numberValue(intent.cityX), numberValue(intent.cityY))}
+                    {` · last progress ${formatNumber(numberValue(intent.lastProgressTurn))}`}
+                    {` · stale after ${formatNumber(numberValue(intent.staleAfterTurn))}`}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </div>
+        </details>
       ) : (
         <EmptyCardState title="No city intents" body="No city-level intent memory was carried into this turn." />
       )}
@@ -1218,25 +1665,30 @@ function UnitAssignmentMemorySection({ assignments }: { assignments: Record<stri
   return (
     <Card title="Unit assignments" subtitle="Carry-over role and target hints attached to units from earlier turns.">
       {assignments.length ? (
-        <div className="structured-list">
-          {assignments.map((assignment, index) => (
-            <article key={`${stringValue(assignment.unitName)}-${index}`} className="structured-item">
-              <div className="structured-item-header">
-                <strong>{stringValue(assignment.unitName) || `Unit ${formatNumber(numberValue(assignment.unitId))}`}</strong>
-                <div className="tag-list compact">
-                  {stringValue(assignment.role) ? <span className="tag neutral">{stringValue(assignment.role)}</span> : null}
-                  <span className="tag neutral">#{formatNumber(numberValue(assignment.unitId))}</span>
-                </div>
-              </div>
-              {stringValue(assignment.detail) ? <p className="card-paragraph">{stringValue(assignment.detail)}</p> : null}
-              <p className="mini-note">
-                {`target ${formatCoordinateText(numberValue(assignment.targetX), numberValue(assignment.targetY))}`}
-                {` · last progress ${formatNumber(numberValue(assignment.lastProgressTurn))}`}
-                {` · stale after ${formatNumber(numberValue(assignment.staleAfterTurn))}`}
-              </p>
-            </article>
-          ))}
-        </div>
+        <details className="inline-disclosure">
+          <summary>Open {formatNumber(assignments.length)} carried unit assignments</summary>
+          <div className="inline-disclosure-body">
+            <div className="structured-list">
+              {assignments.map((assignment, index) => (
+                <article key={`${stringValue(assignment.unitName)}-${index}`} className="structured-item">
+                  <div className="structured-item-header">
+                    <strong>{stringValue(assignment.unitName) || `Unit ${formatNumber(numberValue(assignment.unitId))}`}</strong>
+                    <div className="tag-list compact">
+                      {stringValue(assignment.role) ? <span className="tag neutral">{stringValue(assignment.role)}</span> : null}
+                      <span className="tag neutral">#{formatNumber(numberValue(assignment.unitId))}</span>
+                    </div>
+                  </div>
+                  {stringValue(assignment.detail) ? <p className="card-paragraph">{stringValue(assignment.detail)}</p> : null}
+                  <p className="mini-note">
+                    {`target ${formatCoordinateText(numberValue(assignment.targetX), numberValue(assignment.targetY))}`}
+                    {` · last progress ${formatNumber(numberValue(assignment.lastProgressTurn))}`}
+                    {` · stale after ${formatNumber(numberValue(assignment.staleAfterTurn))}`}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </div>
+        </details>
       ) : (
         <EmptyCardState title="No unit assignments" body="No unit-assignment memory was carried into this turn." />
       )}
@@ -1248,24 +1700,29 @@ function RecentFailureMemorySection({ failures }: { failures: Record<string, unk
   return (
     <Card title="Recent failures" subtitle="Short memory of plan/execution failures the agent was carrying forward.">
       {failures.length ? (
-        <div className="structured-list">
-          {failures.map((failure, index) => (
-            <article key={`${stringValue(failure.summary)}-${index}`} className="structured-item">
-              <div className="structured-item-header">
-                <strong>{stringValue(failure.summary) || "Untitled failure"}</strong>
-                <div className="tag-list compact">
-                  {stringValue(failure.kind) ? <span className="tag warning">{stringValue(failure.kind)}</span> : null}
-                  {stringValue(failure.actionType) ? <span className="tag neutral">{stringValue(failure.actionType)}</span> : null}
-                </div>
-              </div>
-              <p className="mini-note">
-                {`turn ${formatNumber(numberValue(failure.turn))}`}
-                {numberValue(failure.unitId) !== null ? ` · unit #${formatNumber(numberValue(failure.unitId))}` : ""}
-                {(numberValue(failure.cityX) !== null || numberValue(failure.cityY) !== null) ? ` · city ${formatCoordinateText(numberValue(failure.cityX), numberValue(failure.cityY))}` : ""}
-              </p>
-            </article>
-          ))}
-        </div>
+        <details className="inline-disclosure">
+          <summary>Open {formatNumber(failures.length)} recent failures</summary>
+          <div className="inline-disclosure-body">
+            <div className="structured-list">
+              {failures.map((failure, index) => (
+                <article key={`${stringValue(failure.summary)}-${index}`} className="structured-item">
+                  <div className="structured-item-header">
+                    <strong>{stringValue(failure.summary) || "Untitled failure"}</strong>
+                    <div className="tag-list compact">
+                      {stringValue(failure.kind) ? <span className="tag warning">{stringValue(failure.kind)}</span> : null}
+                      {stringValue(failure.actionType) ? <span className="tag neutral">{stringValue(failure.actionType)}</span> : null}
+                    </div>
+                  </div>
+                  <p className="mini-note">
+                    {`turn ${formatNumber(numberValue(failure.turn))}`}
+                    {numberValue(failure.unitId) !== null ? ` · unit #${formatNumber(numberValue(failure.unitId))}` : ""}
+                    {(numberValue(failure.cityX) !== null || numberValue(failure.cityY) !== null) ? ` · city ${formatCoordinateText(numberValue(failure.cityX), numberValue(failure.cityY))}` : ""}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </div>
+        </details>
       ) : (
         <EmptyCardState title="No recent failures" body="No recent-failure memory was carried into this turn." />
       )}
@@ -1485,7 +1942,7 @@ function StrategistRivalCitiesSection({
   return (
     <Card title={title} subtitle="Factual foreign city sightings available to the strategist.">
       {cities.length ? (
-        <div className="structured-list">
+        <div className="structured-list structured-list-grid">
           {cities.map((city, index) => (
             <article key={`${stringValue(city.civName)}-${stringValue(city.name)}-${index}`} className="structured-item">
               <div className="structured-item-header">
@@ -1528,7 +1985,7 @@ function StrategistRivalUnitsSection({
   return (
     <Card title={title} subtitle="Factual foreign unit sightings available to the strategist.">
       {units.length ? (
-        <div className="structured-list">
+        <div className="structured-list structured-list-grid">
           {units.map((unit, index) => (
             <article key={`${stringValue(unit.civName)}-${stringValue(unit.name)}-${index}`} className="structured-item">
               <div className="structured-item-header">
@@ -1592,7 +2049,7 @@ function StrategistCitySnapshotsSection({
   return (
     <Card title={title} subtitle="All current cities shared with the strategist in compact form.">
       {cities.length ? (
-        <div className="structured-list">
+        <div className="structured-list structured-list-grid">
           {cities.map((city, index) => {
             const projectOptions = objectArray(city.projectOptions);
             const optionLabels = projectOptions.map((option) => formatStrategistProjectOption(option)).filter(Boolean);
@@ -1665,7 +2122,7 @@ function StrategistUnitSnapshotsSection({
   return (
     <Card title={title} subtitle="All current units shared with the strategist in compact form.">
       {units.length ? (
-        <div className="structured-list">
+        <div className="structured-list structured-list-grid">
           {units.map((unit, index) => {
             const progress = asRecord(unit.assignmentProgress);
             const signals = [...stringList(unit.reasons), ...stringList(unit.localFacts)].slice(0, 6);
@@ -1730,7 +2187,7 @@ function ThreatHighlightsSection({
   embedded?: boolean;
 }) {
   const content = threats.length ? (
-    <div className="structured-list">
+    <div className={`structured-list${embedded ? "" : " structured-list-grid"}`}>
       {threats.map((threat, index) => (
         <article key={`${stringValue(threat.civName)}-${stringValue(threat.name)}-${index}`} className="structured-item">
           <div className="structured-item-header">
@@ -1836,6 +2293,318 @@ function TurnSectionNav({
       ))}
     </nav>
   );
+}
+
+function buildWorldFactsViewModel({
+  civName,
+  worldFacts,
+  worldFactsCivs,
+}: {
+  civName: string;
+  worldFacts: Record<string, unknown> | null;
+  worldFactsCivs: Record<string, unknown>[];
+}): WorldFactsViewModel | null {
+  if (!worldFactsCivs.length) return null;
+
+  const exactFactsByCiv = new Map<string, Record<string, unknown>>();
+  for (const fact of worldFactsCivs) {
+    const name = stringValue(fact.civName);
+    if (name) exactFactsByCiv.set(name, fact);
+  }
+
+  const columns = worldFactsCivs
+    .slice()
+    .sort((left, right) => compareWorldFactsColumns(left, right, civName))
+    .map((fact) => ({
+      civName: stringValue(fact.civName),
+      subtitle: describeWorldFactsColumn(fact, stringValue(fact.civName) === civName),
+      emphasis: stringValue(fact.civName) === civName,
+    }))
+    .filter((column) => column.civName);
+
+  if (!columns.length) return null;
+
+  const selfFacts = exactFactsByCiv.get(civName);
+  const selfScore = numberValue(selfFacts?.score);
+  const selfForce = numberValue(selfFacts?.force);
+  const selfTech = numberValue(selfFacts?.technologies);
+  const snapshotTurn = numberValue(worldFacts?.turn);
+  const scoreLeader = worldFactsLeader(worldFactsCivs, "score");
+  const forceLeader = worldFactsLeader(worldFactsCivs, "force");
+  const techLeader = worldFactsLeader(worldFactsCivs, "technologies");
+  const scienceLeader = worldFactsLeader(worldFactsCivs, "sciencePerTurn");
+  const cityLeader = worldFactsLeader(worldFactsCivs, "cities");
+
+  const overview = [
+    { label: "Civs compared", value: formatNumber(columns.length) },
+    {
+      label: "Major civs",
+      value: formatNumber(columns.filter((column) => booleanValue(exactFactsByCiv.get(column.civName)?.isMajorCiv)).length),
+    },
+    {
+      label: "City-states",
+      value: formatNumber(columns.filter((column) => booleanValue(exactFactsByCiv.get(column.civName)?.isCityState)).length),
+    },
+    {
+      label: "Score leader",
+      value: scoreLeader ? `${stringValue(scoreLeader.civName)} · ${formatNumber(numberValue(scoreLeader.score))}` : "—",
+    },
+    {
+      label: "Force leader",
+      value: forceLeader ? `${stringValue(forceLeader.civName)} · ${formatNumber(numberValue(forceLeader.force))}` : "—",
+    },
+    {
+      label: "Tech leader",
+      value: techLeader ? `${stringValue(techLeader.civName)} · ${formatNumber(numberValue(techLeader.technologies))}` : "—",
+    },
+    {
+      label: "Science leader",
+      value: scienceLeader ? `${stringValue(scienceLeader.civName)} · ${formatNumber(numberValue(scienceLeader.sciencePerTurn))}` : "—",
+    },
+    {
+      label: "City leader",
+      value: cityLeader ? `${stringValue(cityLeader.civName)} · ${formatNumber(numberValue(cityLeader.cities))}` : "—",
+    },
+    {
+      label: "Snapshot turn",
+      value: snapshotTurn === null ? "—" : formatNumber(snapshotTurn),
+    },
+  ];
+
+  const exactNumberRow = (label: string, field: string): WorldFactsRow => ({
+    label,
+    values: columns.map((column) => {
+      const exact = exactFactsByCiv.get(column.civName);
+      const value = numberValue(exact?.[field]);
+      return worldFactsCell(value === null ? "—" : formatNumber(value), value === null ? "not logged" : "exact", column.civName === civName ? "accent" : "neutral");
+    }),
+  });
+
+  const exactTextRow = (label: string, field: string): WorldFactsRow => ({
+    label,
+    values: columns.map((column) => {
+      const exact = exactFactsByCiv.get(column.civName);
+      const value = stringValue(exact?.[field]);
+      return worldFactsCell(value || "—", value ? "exact" : "not logged", column.civName === civName ? "accent" : "neutral");
+    }),
+  });
+
+  const deltaRow = (label: string, field: "score" | "force" | "technologies"): WorldFactsRow => ({
+    label,
+    values: columns.map((column) => {
+      if (column.civName === civName) return worldFactsCell("0", "baseline", "accent");
+      const exact = exactFactsByCiv.get(column.civName);
+      const value = numberValue(exact?.[field]);
+      const exactDelta = (() => {
+        if (value === null) return null;
+        if (field === "score" && selfScore !== null) return value - selfScore;
+        if (field === "force" && selfForce !== null) return value - selfForce;
+        if (field === "technologies" && selfTech !== null) return value - selfTech;
+        return null;
+      })();
+      return worldFactsCell(
+        exactDelta === null ? "—" : signedNumberText(exactDelta),
+        exactDelta !== null ? "exact delta" : "unavailable",
+        deltaTone(exactDelta),
+      );
+    }),
+  });
+
+  const matrices: WorldFactsMatrix[] = [
+    {
+      title: "Standings",
+      subtitle: "Exact empire ranking and relative gaps against your current civilization.",
+      rows: [
+        exactNumberRow("Score", "score"),
+        exactNumberRow("Force", "force"),
+        exactNumberRow("Technologies", "technologies"),
+        deltaRow("Score gap vs us", "score"),
+        deltaRow("Force gap vs us", "force"),
+        deltaRow("Tech gap vs us", "technologies"),
+      ],
+    },
+    {
+      title: "Empire size and military",
+      subtitle: "Exact structural stats for each civilization in this world snapshot.",
+      rows: [
+        exactTextRow("Capital", "capitalName"),
+        exactNumberRow("Cities", "cities"),
+        exactNumberRow("Population", "population"),
+        exactNumberRow("Units", "units"),
+        exactNumberRow("Military units", "militaryUnits"),
+        exactNumberRow("Civilian units", "civilianUnits"),
+      ],
+    },
+    {
+      title: "Economy and research",
+      subtitle: "Exact current macro state per civilization from the world snapshot.",
+      rows: [
+        exactNumberRow("Gold", "gold"),
+        exactNumberRow("Happiness", "happiness"),
+        exactNumberRow("Science / turn", "sciencePerTurn"),
+        exactNumberRow("Culture / turn", "culturePerTurn"),
+        exactNumberRow("Faith / turn", "faithPerTurn"),
+        exactTextRow("Current research", "currentResearch"),
+        exactNumberRow("Research turns left", "currentResearchTurnsLeft"),
+        {
+          label: "Relation",
+          values: columns.map((column) => {
+            const exact = exactFactsByCiv.get(column.civName);
+            return worldFactsCell(stringValue(exact?.relation) || (column.civName === civName ? "self" : "foreign"), "world facts", column.civName === civName ? "accent" : "neutral");
+          }),
+        },
+        {
+          label: "At war with us",
+          values: columns.map((column) => {
+            const exact = exactFactsByCiv.get(column.civName);
+            const atWar = column.civName === civName ? false : booleanValue(exact?.isAtWarWithUs);
+            return worldFactsCell(atWar ? "yes" : "no", "world facts", atWar ? "warning" : column.civName === civName ? "accent" : "neutral");
+          }),
+        },
+      ],
+    },
+  ];
+
+  const notes = [
+    "This modal is a pure dashboard god view: the numbers here are exact world-state values captured only for inspection and are not part of the agent's prompt.",
+    "Columns are real existing civilizations from the logged world snapshot; if a civilization is absent here, it was not present in that snapshot.",
+    "Positive gap rows mean that civilization is ahead of you in that metric; negative means you are ahead.",
+  ];
+
+  return {
+    columns,
+    overview,
+    matrices,
+    notes,
+  };
+}
+
+function buildMetricTimeline(turns: TurnRecord[], metricKey: WorldFactsMetricKey): ScoreTimelineView | null {
+  const snapshots = new Map<number, Record<string, unknown>>();
+
+  for (const turn of turns) {
+    const worldFacts = asRecord(turn.worldFacts);
+    const snapshotTurn = numberValue(worldFacts?.turn);
+    const civs = objectArray(worldFacts?.civs);
+    if (snapshotTurn === null || !civs.length) continue;
+    if (!snapshots.has(snapshotTurn)) {
+      snapshots.set(snapshotTurn, worldFacts);
+    }
+  }
+
+  const orderedSnapshots = Array.from(snapshots.entries())
+    .sort((left, right) => left[0] - right[0])
+    .map(([, snapshot]) => snapshot);
+
+  if (!orderedSnapshots.length) return null;
+
+  const metricLabel = WORLD_FACTS_METRIC_OPTIONS.find((option) => option.key === metricKey)?.label ?? metricKey;
+  const colors = ["#1d7cf2", "#15c7b8", "#ff8f4d", "#ef5a72", "#7f69f6", "#2f9b5f", "#d18b00", "#7a5a46"];
+  const seriesMap = new Map<string, ScoreTimelineSeriesPoint[]>();
+
+  for (const snapshot of orderedSnapshots) {
+    const turn = numberValue(snapshot.turn);
+    const civs = objectArray(snapshot.civs);
+    if (turn === null) continue;
+    for (const civ of civs) {
+      const civName = stringValue(civ.civName);
+      const value = numberValue(civ[metricKey]);
+      if (!civName || value === null) continue;
+      const series = seriesMap.get(civName) ?? [];
+      if (series[series.length - 1]?.turn !== turn) {
+        series.push({ turn, value });
+      }
+      seriesMap.set(civName, series);
+    }
+  }
+
+  const series = Array.from(seriesMap.entries())
+    .map(([civName, points], index) => ({
+      civName,
+      color: colors[index % colors.length],
+      points,
+      latestScore: points[points.length - 1]?.value ?? 0,
+    }))
+    .filter((entry) => entry.points.length >= 1)
+    .sort((left, right) => right.latestScore - left.latestScore);
+
+  if (!series.length) return null;
+
+  const turnsCovered = series.flatMap((entry) => entry.points.map((point) => point.turn));
+  const values = series.flatMap((entry) => entry.points.map((point) => point.value));
+
+  return {
+    metricKey,
+    metricLabel,
+    series,
+    minTurn: Math.min(...turnsCovered),
+    maxTurn: Math.max(...turnsCovered),
+    minValue: Math.min(...values),
+    maxValue: Math.max(...values),
+  };
+}
+
+function buildLinePath(
+  points: ScoreTimelineSeriesPoint[],
+  xForTurn: (turn: number) => number,
+  yForScore: (score: number) => number,
+) {
+  return points
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${xForTurn(point.turn).toFixed(2)} ${yForScore(point.value).toFixed(2)}`)
+    .join(" ");
+}
+
+function buildNumericTicks(min: number, max: number, steps: number) {
+  if (min === max) return [min];
+  return Array.from({ length: steps + 1 }, (_, index) => Math.round(min + ((max - min) * index) / steps));
+}
+
+function buildIntegerTicks(min: number, max: number, steps: number) {
+  if (min === max) return [min];
+  const values = new Set<number>();
+  for (let index = 0; index <= steps; index += 1) {
+    values.add(Math.round(min + ((max - min) * index) / steps));
+  }
+  return Array.from(values).sort((left, right) => left - right);
+}
+
+function worldFactsCell(primary: string, secondary?: string, tone: WorldFactsCellTone = "neutral"): WorldFactsCell {
+  return { primary, secondary, tone };
+}
+
+function deltaTone(value: number | null): WorldFactsCellTone {
+  if (value === null) return "neutral";
+  if (value > 0) return "warning";
+  if (value < 0) return "accent";
+  return "neutral";
+}
+
+function compareWorldFactsColumns(left: Record<string, unknown>, right: Record<string, unknown>, selfCivName: string) {
+  const leftName = stringValue(left.civName);
+  const rightName = stringValue(right.civName);
+  if (leftName === selfCivName && rightName !== selfCivName) return -1;
+  if (rightName === selfCivName && leftName !== selfCivName) return 1;
+  const leftMajor = booleanValue(left.isMajorCiv);
+  const rightMajor = booleanValue(right.isMajorCiv);
+  if (leftMajor !== rightMajor) return leftMajor ? -1 : 1;
+  const leftScore = numberValue(left.score) ?? -1;
+  const rightScore = numberValue(right.score) ?? -1;
+  if (leftScore !== rightScore) return rightScore - leftScore;
+  return leftName.localeCompare(rightName);
+}
+
+function worldFactsLeader(civs: Record<string, unknown>[], field: string) {
+  return civs
+    .filter((civ) => numberValue(civ[field]) !== null)
+    .sort((left, right) => (numberValue(right[field]) ?? -1) - (numberValue(left[field]) ?? -1))[0] ?? null;
+}
+
+function describeWorldFactsColumn(exact: Record<string, unknown> | undefined, isSelf: boolean) {
+  if (isSelf) return "you";
+  if (!exact) return "foreign";
+  if (booleanValue(exact.isCityState)) return "city-state";
+  if (booleanValue(exact.isAtWarWithUs)) return "at war";
+  return stringValue(exact.relation) || "foreign";
 }
 
 function StoryStage({
@@ -1965,7 +2734,7 @@ function CityHighlightsSection({ title, cities }: { title: string; cities: Recor
   return (
     <Card title={title}>
       {cities.length ? (
-        <div className="structured-list">
+        <div className="structured-list structured-list-grid">
           {cities.map((city, index) => {
             const state = asRecord(city.state);
             const project = asRecord(city.project);
@@ -2066,7 +2835,7 @@ function UnitHighlightsSection({ title, units }: { title: string; units: Record<
   return (
     <Card title={title}>
       {units.length ? (
-        <div className="structured-list">
+        <div className="structured-list structured-list-grid">
           {units.map((unit, index) => {
             const progress = asRecord(unit.assignmentProgress);
             const reasons = [...stringList(unit.reasons), ...stringList(unit.localFacts)].slice(0, 6);
@@ -2395,6 +3164,13 @@ function EmptyState() {
       <p className="muted-text">Launch a batch or open a replay to inspect the strategist and tactical turns.</p>
     </Card>
   );
+}
+
+function firstNonEmptyText(...values: Array<string | undefined | null>): string {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
