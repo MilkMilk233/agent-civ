@@ -64,6 +64,7 @@ data class AgentMemory(
         recentChanges = ArrayList(recentChanges.map { it.copy() }),
         lessons = ArrayList(lessons.map { it.copy() }),
         lastStrategistMemo = lastStrategistMemo.copy(
+            decisionFrame = lastStrategistMemo.decisionFrame.copy(),
             planHealth = lastStrategistMemo.planHealth.copy(),
             campaignControl = lastStrategistMemo.campaignControl.copy(),
             reviewCityNames = ArrayList(lastStrategistMemo.reviewCityNames),
@@ -76,6 +77,7 @@ data class AgentMemory(
                     stillBlocked = ArrayList(entry.stillBlocked),
                     obsolete = ArrayList(entry.obsolete),
                     carryForward = ArrayList(entry.carryForward),
+                    actionSurfaceMismatch = ArrayList(entry.actionSurfaceMismatch),
                     memoValidity = entry.memoValidity,
                     commitmentLevel = entry.commitmentLevel,
                     battleReadiness = entry.battleReadiness,
@@ -191,12 +193,13 @@ data class TacticianTurnLogEntry(
     var stillBlocked: ArrayList<String> = arrayListOf(),
     var obsolete: ArrayList<String> = arrayListOf(),
     var carryForward: ArrayList<String> = arrayListOf(),
+    var actionSurfaceMismatch: ArrayList<String> = arrayListOf(),
     var memoValidity: String? = null,
     var commitmentLevel: String? = null,
     var battleReadiness: String? = null,
     var supplyHealth: String? = null,
 ) : IsPartOfGameInfoSerialization {
-    constructor() : this(0, null, null, null, "", arrayListOf(), arrayListOf(), arrayListOf(), arrayListOf(), arrayListOf(), null, null, null, null)
+    constructor() : this(0, null, null, null, "", arrayListOf(), arrayListOf(), arrayListOf(), arrayListOf(), arrayListOf(), arrayListOf(), null, null, null, null)
 }
 
 @Serializable

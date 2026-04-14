@@ -852,6 +852,7 @@ function TurnDetail({
   const parsedPlan = asRecord(turn.parsedPlan);
   const empireSummary = asRecord(observation?.empireSummary);
   const strategy = asRecord(plannerBrief?.strategy);
+  const plannerDecisionFocus = asRecord(plannerBrief?.decisionFocus);
   const memoryContext = asRecord(plannerBrief?.memoryContext);
   const campaignContext = asRecord(plannerBrief?.campaignContext);
   const objectiveTheater = asRecord(plannerBrief?.objectiveTheater);
@@ -1279,6 +1280,7 @@ function TurnDetail({
                   <p className="card-paragraph">{stringValue(strategistMemo.conversionBlocker)}</p>
                 </>
               ) : null}
+              <DecisionFrameBlock frame={asRecord(strategistMemo.decisionFrame)} />
               <PlanHealthLabelsBlock labels={asRecord(strategistMemo.planHealth)} />
               <CampaignControlLabelsBlock labels={asRecord(strategistMemo.campaignControl)} />
               {stringValue(strategistMemo.pastSummary) ? (
@@ -1346,6 +1348,7 @@ function TurnDetail({
                     <p className="card-paragraph">{stringValue(strategy?.tacticianHandoff)}</p>
                   </>
                 ) : null}
+                <DecisionFrameBlock frame={asRecord(strategy?.decisionFrame)} />
                 {memoryContext ? (
                   <>
                     <SectionLabel text="Notebook context" />
@@ -1376,6 +1379,11 @@ function TurnDetail({
             campaignControl={plannerCampaignControl}
             emptyTitle="No tactical campaign control"
             emptyBody="The tactical brief did not surface any campaign-control observation on this turn."
+          />
+          <DecisionFocusCard
+            title="Decision focus"
+            subtitle="The mode-aware cockpit that separates critical choices from background chores and highlights where the packet may not support the strategist frame cleanly."
+            decisionFocus={plannerDecisionFocus}
           />
 
           <Card title="Objective theater" subtitle="The full surfaced battlefield slice around the current decisive objective, plus a compact reserve summary.">
@@ -1754,6 +1762,160 @@ function CampaignControlLabelsBlock({ labels }: { labels: Record<string, unknown
   );
 }
 
+function DecisionFrameBlock({ frame }: { frame: Record<string, unknown> | null }) {
+  if (!frame || !Object.keys(frame).length) return null;
+  const mode = stringValue(frame.decisionMode);
+  const targetFrame = stringValue(frame.targetFrame);
+  const whyNow = stringValue(frame.whyNow);
+  const nextCheckpoint = stringValue(frame.nextCheckpoint);
+  const expiryCondition = stringValue(frame.expiryCondition);
+  if (!mode && !targetFrame && !whyNow && !nextCheckpoint && !expiryCondition) return null;
+  return (
+    <>
+      <SectionLabel text="Decision frame" />
+      <div className="structured-item">
+        <div className="summary-grid compact">
+          <SummaryStat label="Mode" value={mode || "—"} />
+          <SummaryStat label="Target frame" value={targetFrame || "—"} />
+        </div>
+        {whyNow ? (
+          <>
+            <SectionLabel text="Why now" />
+            <p className="card-paragraph">{whyNow}</p>
+          </>
+        ) : null}
+        {nextCheckpoint ? (
+          <>
+            <SectionLabel text="Next checkpoint" />
+            <p className="card-paragraph">{nextCheckpoint}</p>
+          </>
+        ) : null}
+        {expiryCondition ? (
+          <>
+            <SectionLabel text="Expiry condition" />
+            <p className="card-paragraph">{expiryCondition}</p>
+          </>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+function DecisionFocusCard({
+  title,
+  subtitle,
+  decisionFocus,
+}: {
+  title: string;
+  subtitle: string;
+  decisionFocus: Record<string, unknown> | null;
+}) {
+  return (
+    <Card title={title} subtitle={subtitle}>
+      {decisionFocus && Object.keys(decisionFocus).length ? (
+        <DecisionFocusBody decisionFocus={decisionFocus} />
+      ) : (
+        <EmptyCardState title="No decision focus" body="The tactical brief did not surface a mode-aware decision-focus block on this turn." />
+      )}
+    </Card>
+  );
+}
+
+function DecisionFocusBody({ decisionFocus }: { decisionFocus: Record<string, unknown> }) {
+  const criticalChoices = objectArray(decisionFocus.criticalChoicesNow);
+  const backgroundChores = stringList(decisionFocus.backgroundChores);
+  const mismatch = stringList(decisionFocus.actionSurfaceMismatch);
+  const launchCohort = asRecord(decisionFocus.launchCohort);
+  const supplySnapshot = asRecord(decisionFocus.supplySnapshot);
+  return (
+    <>
+      <div className="summary-grid compact">
+        <SummaryStat label="Mode" value={stringValue(decisionFocus.mode) || "—"} />
+        <SummaryStat label="Target frame" value={stringValue(decisionFocus.targetFrame) || "—"} />
+        <SummaryStat label="Next checkpoint" value={stringValue(decisionFocus.nextCheckpoint) || "—"} />
+      </div>
+      {stringValue(decisionFocus.whyNow) ? (
+        <>
+          <SectionLabel text="Why now" />
+          <p className="card-paragraph">{stringValue(decisionFocus.whyNow)}</p>
+        </>
+      ) : null}
+      {stringValue(decisionFocus.expiryCondition) ? (
+        <>
+          <SectionLabel text="Expiry condition" />
+          <p className="card-paragraph">{stringValue(decisionFocus.expiryCondition)}</p>
+        </>
+      ) : null}
+      {criticalChoices.length ? (
+        <>
+          <SectionLabel text="Critical choices now" />
+          <div className="structured-list">
+            {criticalChoices.map((item, index) => (
+              <article key={`${stringValue(item.kind)}-${index}`} className="structured-item">
+                <div className="structured-item-header">
+                  <strong>{stringValue(item.headline) || "Critical choice"}</strong>
+                  {stringValue(item.kind) ? (
+                    <div className="tag-list compact">
+                      <span className="tag accent">{stringValue(item.kind)}</span>
+                    </div>
+                  ) : null}
+                </div>
+                {stringValue(item.detail) ? <p className="card-paragraph">{stringValue(item.detail)}</p> : null}
+              </article>
+            ))}
+          </div>
+        </>
+      ) : null}
+      {launchCohort ? (
+        <>
+          <SectionLabel text="Launch cohort" />
+          <div className="structured-item">
+            <div className="summary-grid compact">
+              <SummaryStat label="War state" value={stringValue(launchCohort.warState) || "—"} />
+              <SummaryStat label="Target" value={stringValue(asRecord(launchCohort.target)?.name) || "—"} />
+              <SummaryStat label="Healthy capture" value={formatNumber(numberValue(launchCohort.healthyCaptureUnits))} />
+              <SummaryStat label="Damaged capture" value={formatNumber(numberValue(launchCohort.damagedCaptureUnits))} />
+              <SummaryStat label="Ranged support" value={formatNumber(numberValue(launchCohort.rangedSupportUnits))} />
+              <SummaryStat label="Surfaced melee" value={formatNumber(numberValue(launchCohort.surfacedMeleeUnits))} />
+              <SummaryStat label="Surfaced ranged" value={formatNumber(numberValue(launchCohort.surfacedRangedUnits))} />
+            </div>
+            {stringValue(launchCohort.summary) ? <p className="card-paragraph">{stringValue(launchCohort.summary)}</p> : null}
+            {stringList(launchCohort.supportCities).length ? <TagList values={stringList(launchCohort.supportCities)} tone="accent" /> : null}
+          </div>
+        </>
+      ) : null}
+      {supplySnapshot ? (
+        <>
+          <SectionLabel text="Supply snapshot" />
+          <div className="structured-item">
+            <div className="summary-grid compact">
+              <SummaryStat label="Gold" value={formatNumber(numberValue(supplySnapshot.gold))} />
+              <SummaryStat label="Happiness" value={formatNumber(numberValue(supplySnapshot.happiness))} />
+              <SummaryStat label="Science / turn" value={formatNumber(numberValue(supplySnapshot.sciencePerTurn))} />
+              <SummaryStat label="Cities" value={formatNumber(numberValue(supplySnapshot.cityCount))} />
+              <SummaryStat label="Military units" value={formatNumber(numberValue(supplySnapshot.militaryUnitCount))} />
+              <SummaryStat label="Supply health" value={stringValue(supplySnapshot.supplyHealth) || "—"} />
+            </div>
+            {stringValue(supplySnapshot.summary) ? <p className="card-paragraph">{stringValue(supplySnapshot.summary)}</p> : null}
+          </div>
+        </>
+      ) : null}
+      {backgroundChores.length ? (
+        <>
+          <SectionLabel text="Background chores" />
+          <TagList values={backgroundChores} />
+        </>
+      ) : null}
+      {mismatch.length ? (
+        <>
+          <SectionLabel text="Action-surface mismatch" />
+          <TagList values={mismatch} tone="warning" />
+        </>
+      ) : null}
+    </>
+  );
+}
+
 function PlanHealthBody({
   planHealth,
   embedded = false,
@@ -1979,6 +2141,7 @@ function StrategistMemoMemorySection({ memo }: { memo: Record<string, unknown> |
               <p className="card-paragraph">{stringValue(memo.conversionBlocker)}</p>
             </>
           ) : null}
+          <DecisionFrameBlock frame={asRecord(memo.decisionFrame)} />
           {stringValue(memo.pastSummary) ? (
             <>
               <SectionLabel text="Past" />
@@ -2063,6 +2226,7 @@ function TacticianTurnLogSection({ entries }: { entries: Record<string, unknown>
                     <TacticianTurnLogGroup label="Still blocked" values={stringList(entry.stillBlocked)} tone="warning" />
                     <TacticianTurnLogGroup label="Obsolete" values={stringList(entry.obsolete)} />
                     <TacticianTurnLogGroup label="Carry forward" values={stringList(entry.carryForward)} />
+                    <TacticianTurnLogGroup label="Action-surface mismatch" values={stringList(entry.actionSurfaceMismatch)} tone="warning" />
                   </article>
                 ))}
             </div>
@@ -2348,11 +2512,12 @@ function StrategistContextSection({
             <>
               <SectionLabel text="Last strategist memo" />
               <div className="structured-item">
-                <div className="summary-grid compact">
+              <div className="summary-grid compact">
                   <SummaryStat label="Stage" value={stringValue(lastStrategistMemo.campaignStage)} />
                   <SummaryStat label="Win path" value={stringValue(lastStrategistMemo.winPath)} />
                   <SummaryStat label="Objective" value={stringValue(lastStrategistMemo.decisiveObjective)} />
                 </div>
+                <DecisionFrameBlock frame={asRecord(lastStrategistMemo.decisionFrame)} />
                 {stringValue(lastStrategistMemo.conversionBlocker) ? (
                   <>
                     <SectionLabel text="Conversion blocker" />

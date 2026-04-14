@@ -36,6 +36,7 @@ data class AgentStrategistReportMemo(
     val campaignStage: String,
     val decisiveObjective: String? = null,
     val conversionBlocker: String? = null,
+    val decisionFrame: AgentStrategistDecisionFrame = AgentStrategistDecisionFrame(),
     val planHealth: AgentPlanHealthLabels = AgentPlanHealthLabels(),
     val campaignControl: AgentCampaignControlLabels = AgentCampaignControlLabels(),
     val thesis: String? = null,

@@ -21,6 +21,31 @@ object AgentStrategicGovernor {
         val captureReadiness = buildCaptureReadiness(observation, campaignContext)
         val progressInMotion = buildProgressInMotion(observation, empireObservation, cityHighlights, unitHighlights, campaignContext)
         val threatHighlights = observation.visibleThreatsAndTargets.take(if (observation.empireSummary.isAtWar) 3 else 2)
+        val strategyObservation = AgentPlannerStrategyObservation(
+            gameArchetype = memo?.gameArchetype?.ifBlank { null } ?: gameContext.archetype,
+            winPath = memo?.winPath ?: empireObservation.victoryGoal,
+            campaignStage = memo?.campaignStage ?: defaultCampaignStage(memory, observation, empireObservation, campaignContext),
+            decisiveObjective = memo?.decisiveObjective ?: memory.campaign.decisiveObjective,
+            conversionBlocker = memo?.conversionBlocker ?: memory.campaign.conversionBlocker,
+            decisionFrame = memo?.decisionFrame?.takeUnless { it.isEmpty() },
+            thesis = memo?.thesis,
+            pastSummary = memo?.pastSummary,
+            currentSituation = memo?.currentSituation,
+            futurePlan = memo?.futurePlan,
+            tacticianHandoff = memo?.tacticianHandoff ?: memo?.futurePlan,
+        )
+        val decisionFocus = buildDecisionFocus(
+            observation = observation,
+            empireObservation = empireObservation,
+            strategy = strategyObservation,
+            campaignControl = campaignControl,
+            campaignContext = campaignContext,
+            objectiveTheater = unitSurfacing.objectiveTheater,
+            captureReadiness = captureReadiness,
+            mustActNow = mustActNow,
+            cityHighlights = cityHighlights,
+            unitHighlights = unitHighlights,
+        )
 
         val workerFacts = observation.priorityFacts.count { isWorkerFact(it) }
         val suppressedContext = buildList {
@@ -38,20 +63,10 @@ object AgentStrategicGovernor {
 
         return AgentPlannerBrief(
             gameContext = gameContext,
-            strategy = AgentPlannerStrategyObservation(
-                gameArchetype = memo?.gameArchetype?.ifBlank { null } ?: gameContext.archetype,
-                winPath = memo?.winPath ?: empireObservation.victoryGoal,
-                campaignStage = memo?.campaignStage ?: defaultCampaignStage(memory, observation, empireObservation, campaignContext),
-                decisiveObjective = memo?.decisiveObjective ?: memory.campaign.decisiveObjective,
-                conversionBlocker = memo?.conversionBlocker ?: memory.campaign.conversionBlocker,
-                thesis = memo?.thesis,
-                pastSummary = memo?.pastSummary,
-                currentSituation = memo?.currentSituation,
-                futurePlan = memo?.futurePlan,
-                tacticianHandoff = memo?.tacticianHandoff ?: memo?.futurePlan,
-            ),
+            strategy = strategyObservation,
             planHealth = planHealth,
             campaignControl = campaignControl,
+            decisionFocus = decisionFocus,
             memoryContext = memoryContext,
             campaignContext = campaignContext,
             objectiveTheater = unitSurfacing.objectiveTheater,
@@ -69,6 +84,62 @@ object AgentStrategicGovernor {
             unitHighlights = unitHighlights,
             threatHighlights = threatHighlights,
             suppressedContext = suppressedContext,
+        )
+    }
+
+    private fun buildDecisionFocus(
+        observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+        strategy: AgentPlannerStrategyObservation,
+        campaignControl: AgentCampaignControlObservation?,
+        campaignContext: AgentPlannerCampaignContextObservation?,
+        objectiveTheater: AgentPlannerObjectiveTheaterObservation?,
+        captureReadiness: AgentPlannerCaptureReadinessObservation?,
+        mustActNow: List<AgentPlannerMustActObservation>,
+        cityHighlights: List<AgentCityObservation>,
+        unitHighlights: List<AgentUnitObservation>,
+    ): AgentPlannerDecisionFocusObservation? {
+        val explicitFrame = strategy.decisionFrame?.takeUnless { it.isEmpty() }
+        val mode = explicitFrame?.decisionMode
+            ?: inferDecisionMode(strategy.campaignStage, campaignControl, campaignContext)
+        if (mode.isBlank()) return null
+
+        return AgentPlannerDecisionFocusObservation(
+            mode = mode,
+            targetFrame = explicitFrame?.targetFrame ?: campaignContext?.objectiveTarget?.name,
+            whyNow = explicitFrame?.whyNow ?: strategy.currentSituation ?: strategy.thesis,
+            nextCheckpoint = explicitFrame?.nextCheckpoint
+                ?: campaignControl?.nextCheckpointSummary
+                ?: strategy.futurePlan,
+            expiryCondition = explicitFrame?.expiryCondition
+                ?: campaignControl?.pivotTriggers?.firstOrNull()
+                ?: strategy.conversionBlocker,
+            criticalChoicesNow = buildDecisionPriorities(
+                mode = mode,
+                strategy = strategy,
+                campaignControl = campaignControl,
+                campaignContext = campaignContext,
+                objectiveTheater = objectiveTheater,
+                captureReadiness = captureReadiness,
+                mustActNow = mustActNow,
+                cityHighlights = cityHighlights,
+            ).take(5),
+            backgroundChores = buildBackgroundChores(
+                mode = mode,
+                campaignContext = campaignContext,
+                captureReadiness = captureReadiness,
+            ).take(4),
+            actionSurfaceMismatch = buildActionSurfaceMismatch(
+                mode = mode,
+                observation = observation,
+                campaignContext = campaignContext,
+                captureReadiness = captureReadiness,
+                objectiveTheater = objectiveTheater,
+                cityHighlights = cityHighlights,
+                unitHighlights = unitHighlights,
+            ).take(4),
+            launchCohort = buildLaunchCohort(mode, campaignContext, objectiveTheater, captureReadiness),
+            supplySnapshot = buildSupplySnapshot(observation, empireObservation, campaignControl),
         )
     }
 
@@ -129,6 +200,7 @@ object AgentStrategicGovernor {
                     stillBlocked = entry.stillBlocked,
                     obsolete = entry.obsolete,
                     carryForward = entry.carryForward,
+                    actionSurfaceMismatch = entry.actionSurfaceMismatch,
                     memoValidity = entry.memoValidity,
                     commitmentLevel = entry.commitmentLevel,
                     battleReadiness = entry.battleReadiness,
@@ -235,6 +307,238 @@ object AgentStrategicGovernor {
         }
 
         return items
+    }
+
+    private fun buildDecisionPriorities(
+        mode: String,
+        strategy: AgentPlannerStrategyObservation,
+        campaignControl: AgentCampaignControlObservation?,
+        campaignContext: AgentPlannerCampaignContextObservation?,
+        objectiveTheater: AgentPlannerObjectiveTheaterObservation?,
+        captureReadiness: AgentPlannerCaptureReadinessObservation?,
+        mustActNow: List<AgentPlannerMustActObservation>,
+        cityHighlights: List<AgentCityObservation>,
+    ): List<AgentPlannerDecisionPriorityObservation> {
+        val priorities = arrayListOf<AgentPlannerDecisionPriorityObservation>()
+        mustActNow.take(2).forEach { item ->
+            priorities += AgentPlannerDecisionPriorityObservation(
+                kind = item.kind,
+                headline = item.headline,
+                detail = item.detail,
+            )
+        }
+
+        when (mode) {
+            "launch_now", "assault" -> {
+                if (campaignContext?.warChoiceAvailable == true && !campaignContext.atWar) {
+                    priorities += AgentPlannerDecisionPriorityObservation(
+                        kind = "war_declaration",
+                        headline = "War declaration is a critical live choice",
+                        detail = "The strategist frame says this line should convert now, and a legal war declaration is surfaced this turn.",
+                    )
+                }
+                captureReadiness?.let { readiness ->
+                    priorities += AgentPlannerDecisionPriorityObservation(
+                        kind = "launch_package",
+                        headline = "Judge the current launch package against ${readiness.target.name}",
+                        detail = readiness.summary,
+                    )
+                }
+                if (objectiveTheater != null && objectiveTheater.supportCities.isNotEmpty()) {
+                    priorities += AgentPlannerDecisionPriorityObservation(
+                        kind = "frontline_support",
+                        headline = "Support cities should reinforce the live assault axis",
+                        detail = objectiveTheater.supportCities.joinToString(", ") + " are the closest support cities to the current target.",
+                    )
+                }
+            }
+            "stage_briefly" -> {
+                priorities += AgentPlannerDecisionPriorityObservation(
+                    kind = "checkpoint",
+                    headline = "Keep staging tied to one short checkpoint",
+                    detail = campaignControl?.nextCheckpointSummary
+                        ?: strategy.futurePlan
+                        ?: "Use this turn to complete the missing piece that makes the line truly launchable.",
+                )
+                strategy.conversionBlocker?.let { blocker ->
+                    priorities += AgentPlannerDecisionPriorityObservation(
+                        kind = "blocker",
+                        headline = "The main blocker should dominate staging choices",
+                        detail = blocker,
+                    )
+                }
+            }
+            "pivot_recover", "stabilize" -> {
+                priorities += AgentPlannerDecisionPriorityObservation(
+                    kind = "recovery",
+                    headline = "Recovery is the live campaign, not more drift",
+                    detail = campaignControl?.holdingCosts?.firstOrNull()
+                        ?: "Use this turn to reduce the cost of the stalled line and restore real tempo.",
+                )
+                if (cityHighlights.any { city -> city.project?.status == "needs_choice" || city.project == null }) {
+                    priorities += AgentPlannerDecisionPriorityObservation(
+                        kind = "city_retool",
+                        headline = "City choices should match recovery mode",
+                        detail = "Re-evaluate city builds through the recovery lens instead of preserving a stale campaign by inertia.",
+                    )
+                }
+            }
+            "expand" -> {
+                priorities += AgentPlannerDecisionPriorityObservation(
+                    kind = "expansion",
+                    headline = "Expansion tempo should stay clearer than passive posture",
+                    detail = campaignControl?.nextCheckpointSummary
+                        ?: strategy.futurePlan
+                        ?: "Serve the live expansion checkpoint before polishing secondary chores.",
+                )
+            }
+        }
+
+        if ((captureReadiness?.workerCaptureOpportunities ?: 0) > 0 && mode in setOf("launch_now", "assault", "stage_briefly")) {
+            priorities += AgentPlannerDecisionPriorityObservation(
+                kind = "civilian_capture_window",
+                headline = "A safe civilian capture window is part of the live battle picture",
+                detail = "${captureReadiness?.workerCaptureOpportunities} capture opportunities are surfaced near ${captureReadiness?.target?.name}.",
+            )
+        }
+
+        return priorities.distinctBy { "${it.kind}|${it.headline}" }
+    }
+
+    private fun buildBackgroundChores(
+        mode: String,
+        campaignContext: AgentPlannerCampaignContextObservation?,
+        captureReadiness: AgentPlannerCaptureReadinessObservation?,
+    ): List<String> {
+        return buildList {
+            when (mode) {
+                "launch_now", "assault" -> {
+                    add("Rear-area exploration, extra focus tweaks, and low-value fortify loops are background unless they directly support the launch.")
+                    add("Do not let passive city housekeeping crowd out declaration, marching, or frontline reinforcement.")
+                }
+                "stage_briefly" -> {
+                    add("Use this turn to close the short staging checkpoint, not to reopen broad scouting or city-polish drift.")
+                    add("Background micro should stay subordinate to the missing launch piece.")
+                }
+                "pivot_recover", "stabilize" -> {
+                    add("Speculative assault prep is background unless it directly improves supply or removes immediate danger.")
+                    add("Extra military growth is background when the active story is recovery.")
+                }
+                "expand" -> {
+                    add("Passive military posture and non-critical rear-area micro are background while expansion tempo is still live.")
+                }
+            }
+            if (campaignContext?.objectiveTarget == null && mode in setOf("launch_now", "assault")) {
+                add("Do not burn the turn on fake assault polish when the current target picture is incomplete.")
+            }
+            if (captureReadiness?.status == "thin_capture_line") {
+                add("Extra ranged chip and side cleanup are background if capture capability is still thin.")
+            }
+        }
+    }
+
+    private fun buildActionSurfaceMismatch(
+        mode: String,
+        observation: AgentObservation,
+        campaignContext: AgentPlannerCampaignContextObservation?,
+        captureReadiness: AgentPlannerCaptureReadinessObservation?,
+        objectiveTheater: AgentPlannerObjectiveTheaterObservation?,
+        cityHighlights: List<AgentCityObservation>,
+        unitHighlights: List<AgentUnitObservation>,
+    ): List<String> {
+        return buildList {
+            if (mode in setOf("launch_now", "assault")) {
+                if (campaignContext?.objectiveTarget == null) {
+                    add("The strategist frame says this is a launch/assault turn, but no concrete objective target is resolved in the packet.")
+                }
+                if (campaignContext?.warChoiceAvailable != true && campaignContext?.atWar != true) {
+                    add("The strategist frame says launch/assault, but no declare-war option is currently surfaced.")
+                }
+                if (captureReadiness != null && captureReadiness.healthyCaptureUnits <= 0) {
+                    add("Launch mode is active, but the current packet still shows no healthy capture-capable units near the objective.")
+                }
+                if (objectiveTheater != null && objectiveTheater.surfacedCombatUnits <= 0) {
+                    add("Launch mode is active, but the surfaced objective theater does not currently expose a real combat cohort.")
+                }
+            }
+
+            if (mode in setOf("launch_now", "assault", "stage_briefly") && (captureReadiness?.healthyCaptureUnits ?: 0) <= 1) {
+                val hasFrontlineBuild = cityHighlights.any { city ->
+                    city.actions.chooseProject.any { option -> "frontline" in option.yieldHints } ||
+                        city.actions.purchase.any { option -> "frontline" in option.yieldHints }
+                }
+                if (!hasFrontlineBuild) {
+                    add("The current packet says capture capability is thin, but no surfaced city option advertises frontline reinforcement.")
+                }
+            }
+
+            if (mode == "expand" && observation.empireSummary.settlersReady > 0) {
+                val settlerFoundSurfaced = unitHighlights.any { unit ->
+                    unit.unitOptionCandidates.any { candidate ->
+                        candidate.candidateId.startsWith("unitsettle:") &&
+                            candidate.title.contains("found city here", ignoreCase = true)
+                    }
+                }
+                if (!settlerFoundSurfaced) {
+                    add("Expansion mode is active and a settler is ready, but the highlighted unit packet does not show an immediate found-city option.")
+                }
+            }
+        }.distinct()
+    }
+
+    private fun buildLaunchCohort(
+        mode: String,
+        campaignContext: AgentPlannerCampaignContextObservation?,
+        objectiveTheater: AgentPlannerObjectiveTheaterObservation?,
+        captureReadiness: AgentPlannerCaptureReadinessObservation?,
+    ): AgentPlannerLaunchCohortObservation? {
+        if (mode !in setOf("launch_now", "assault", "stage_briefly")) return null
+        if (campaignContext == null && objectiveTheater == null && captureReadiness == null) return null
+        val target = captureReadiness?.target ?: campaignContext?.objectiveTarget
+        return AgentPlannerLaunchCohortObservation(
+            target = target,
+            warState = when {
+                campaignContext?.atWar == true -> "at_war"
+                campaignContext?.warChoiceAvailable == true -> "war_choice_available"
+                else -> "not_yet_available"
+            },
+            healthyCaptureUnits = captureReadiness?.healthyCaptureUnits ?: 0,
+            damagedCaptureUnits = captureReadiness?.damagedCaptureUnits ?: 0,
+            rangedSupportUnits = captureReadiness?.rangedSupportUnits ?: 0,
+            surfacedMeleeUnits = objectiveTheater?.surfacedMeleeUnits ?: 0,
+            surfacedRangedUnits = objectiveTheater?.surfacedRangedUnits ?: 0,
+            supportCities = objectiveTheater?.supportCities ?: emptyList(),
+            summary = when {
+                captureReadiness != null -> captureReadiness.summary
+                objectiveTheater != null -> "${objectiveTheater.surfacedCombatUnits} surfaced combat units are tied to the objective theater."
+                else -> "The packet is in a war-facing mode, but the launch cohort picture is still sparse."
+            },
+        )
+    }
+
+    private fun buildSupplySnapshot(
+        observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+        campaignControl: AgentCampaignControlObservation?,
+    ): AgentPlannerSupplySnapshotObservation {
+        val summary = buildString {
+            append("${observation.empireSummary.cityCount} cities, ")
+            append("${observation.empireSummary.militaryUnitCount} military units, ")
+            append("${observation.empireSummary.gold} gold, ")
+            append("${observation.empireSummary.happiness} happiness, ")
+            append("${observation.empireSummary.sciencePerTurn} science/turn")
+            campaignControl?.supplyHealth?.let { append(" • supply $it") }
+        }
+        return AgentPlannerSupplySnapshotObservation(
+            gold = observation.empireSummary.gold,
+            happiness = observation.empireSummary.happiness,
+            sciencePerTurn = observation.empireSummary.sciencePerTurn,
+            cityCount = observation.empireSummary.cityCount,
+            militaryUnitCount = observation.empireSummary.militaryUnitCount,
+            supplyHealth = campaignControl?.supplyHealth,
+            holdingCosts = campaignControl?.holdingCosts ?: emptyList(),
+            summary = summary,
+        )
     }
 
     internal fun buildProgressSummary(
@@ -996,6 +1300,25 @@ object AgentStrategicGovernor {
         if (campaignContext?.warChoiceAvailable == true && hasMeaningfulRivalObjective(campaignContext)) return "staging"
         if (campaignContext != null && hasMeaningfulRivalObjective(campaignContext)) return "pressure"
         return "positioning"
+    }
+
+    private fun inferDecisionMode(
+        campaignStage: String,
+        campaignControl: AgentCampaignControlObservation?,
+        campaignContext: AgentPlannerCampaignContextObservation?,
+    ): String {
+        val commitmentLevel = campaignControl?.commitmentLevel
+        if (commitmentLevel == "launch_window" && campaignContext?.warChoiceAvailable == true) return "launch_now"
+        if (
+            campaignControl?.checkpointStatus.equals("missed", ignoreCase = true) &&
+            campaignControl?.supplyHealth in setOf("fragile", "collapsing")
+        ) return "pivot_recover"
+        return when (campaignStage.lowercase()) {
+            "assault" -> "assault"
+            "rebuild", "consolidation", "positioning" -> "stabilize"
+            "expansion", "scouting" -> "expand"
+            else -> "stage_briefly"
+        }
     }
 
     private fun hasMeaningfulRivalObjective(campaignContext: AgentPlannerCampaignContextObservation): Boolean {

@@ -46,6 +46,7 @@ object AgentMemoryManager {
             recentChanges = pruneNotes(existing.recentChanges, turn, maxRecentChanges),
             lessons = ArrayList(existing.lessons.takeLast(maxLessons).map { it.copy() }),
             lastStrategistMemo = existing.lastStrategistMemo.copy(
+                decisionFrame = existing.lastStrategistMemo.decisionFrame.copy(),
                 planHealth = existing.lastStrategistMemo.planHealth.copy(),
                 campaignControl = existing.lastStrategistMemo.campaignControl.copy(),
                 reviewCityNames = ArrayList(existing.lastStrategistMemo.reviewCityNames),
@@ -74,6 +75,7 @@ object AgentMemoryManager {
             snapshot = buildPlanHealthSnapshot(observation, empireObservation),
             turn = turn,
             latestMemoValidity = basePrepared.tacticianTurnLog.lastOrNull()?.memoValidity,
+            latestActionSurfaceMismatch = basePrepared.tacticianTurnLog.lastOrNull()?.actionSurfaceMismatch ?: emptyList(),
         )
         val prepared = basePrepared.copy(
             planHealth = reconciledPlanHealth,
@@ -163,6 +165,7 @@ object AgentMemoryManager {
                 snapshot = buildPlanHealthSnapshot(civInfo, observation),
                 turn = turn,
                 latestMemoValidity = updated.tacticianTurnLog.lastOrNull()?.memoValidity,
+                latestActionSurfaceMismatch = updated.tacticianTurnLog.lastOrNull()?.actionSurfaceMismatch ?: emptyList(),
             )
             val reconciled = updated.copy(
                 planHealth = reconciledPlanHealth,
@@ -228,6 +231,7 @@ object AgentMemoryManager {
             snapshot = buildPlanHealthSnapshot(civInfo, observation),
             turn = turn,
             latestMemoValidity = updated.tacticianTurnLog.lastOrNull()?.memoValidity,
+            latestActionSurfaceMismatch = updated.tacticianTurnLog.lastOrNull()?.actionSurfaceMismatch ?: emptyList(),
         )
         val reconciled = updated.copy(
             planHealth = reconciledPlanHealth,
@@ -299,6 +303,7 @@ object AgentMemoryManager {
             campaignStage = strategicPlan.memo.campaignStage.trim(),
             decisiveObjective = strategicPlan.memo.decisiveObjective.trim().takeUnless { it.isEmpty() },
             conversionBlocker = strategicPlan.memo.conversionBlocker?.trim().takeUnless { it.isNullOrEmpty() },
+            decisionFrame = normalizeStrategistDecisionFrame(strategicPlan.memo.decisionFrame),
             planHealth = normalizePlanHealthLabels(strategicPlan.memo.planHealth),
             campaignControl = normalizeCampaignControlLabels(strategicPlan.memo.campaignControl),
             thesis = strategicPlan.memo.thesis?.trim().takeUnless { it.isNullOrEmpty() },
@@ -643,6 +648,7 @@ object AgentMemoryManager {
         snapshot: PlanHealthSnapshot,
         turn: Int,
         latestMemoValidity: String?,
+        latestActionSurfaceMismatch: List<String>,
     ): AgentPlanHealthMemory {
         if (!hasStrategistMemo(memo)) return prunePlanHealth(current.copy(lastUpdatedTurn = turn), turn)
 
@@ -663,6 +669,7 @@ object AgentMemoryManager {
             milestoneHorizonTurns = milestoneHorizonTurns,
             currentLastProgressTurn = currentLastProgressTurn,
             turn = turn,
+            latestActionSurfaceMismatch = latestActionSurfaceMismatch,
         )
         val opportunityCosts = derivePlanOpportunityCosts(
             memo = memo,
@@ -677,7 +684,7 @@ object AgentMemoryManager {
         val turnsSinceMeaningfulProgress = (turn - lastMeaningfulProgressTurn).coerceAtLeast(0)
         val status = when {
             normalizedMemoValidity == "contradicted" || contradictions.size >= 2 -> "contradicted"
-            normalizedMemoValidity == "strained" || contradictions.isNotEmpty() || opportunityCosts.isNotEmpty() -> "strained"
+            normalizedMemoValidity == "strained" || contradictions.isNotEmpty() || opportunityCosts.isNotEmpty() || latestActionSurfaceMismatch.isNotEmpty() -> "strained"
             else -> "healthy"
         }
         val pivotRecommended = when {
@@ -1080,6 +1087,7 @@ object AgentMemoryManager {
         milestoneHorizonTurns: Int,
         currentLastProgressTurn: Int,
         turn: Int,
+        latestActionSurfaceMismatch: List<String>,
     ): List<String> {
         val contradictions = linkedSetOf<String>()
         val milestoneDue = objectiveAgeTurns >= milestoneHorizonTurns
@@ -1116,6 +1124,12 @@ object AgentMemoryManager {
         if (milestoneDue && snapshot.visibleRivalCities > memo.reviewVisibleRivalCities && snapshot.cityCount <= memo.reviewCityCount) {
             contradictions += "The rival picture grew while our current plan made no concrete city progress."
         }
+        latestActionSurfaceMismatch
+            .mapNotNull { it.trim().takeIf(String::isNotEmpty) }
+            .take(2)
+            .forEach { mismatch ->
+                contradictions += "The tactician could not cleanly serve the strategist frame: $mismatch"
+            }
         return contradictions.toList()
     }
 
@@ -1173,6 +1187,7 @@ object AgentMemoryManager {
                     stillBlocked = ArrayList(entry.stillBlocked),
                     obsolete = ArrayList(entry.obsolete),
                     carryForward = ArrayList(entry.carryForward),
+                    actionSurfaceMismatch = ArrayList(entry.actionSurfaceMismatch),
                     memoValidity = entry.memoValidity,
                     commitmentLevel = entry.commitmentLevel,
                     battleReadiness = entry.battleReadiness,
@@ -1194,6 +1209,7 @@ object AgentMemoryManager {
                     stillBlocked = ArrayList(existingEntry.stillBlocked),
                     obsolete = ArrayList(existingEntry.obsolete),
                     carryForward = ArrayList(existingEntry.carryForward),
+                    actionSurfaceMismatch = ArrayList(existingEntry.actionSurfaceMismatch),
                     memoValidity = existingEntry.memoValidity,
                     commitmentLevel = existingEntry.commitmentLevel,
                     battleReadiness = existingEntry.battleReadiness,
@@ -1308,13 +1324,21 @@ object AgentMemoryManager {
         val mergedStillBlocked = mergeTurnLogBullets(stillBlocked, reflection?.stillBlocked, 3)
         val mergedObsolete = mergeTurnLogBullets(obsolete, reflection?.obsolete, 3)
         val mergedCarryForward = mergeTurnLogBullets(carryForward, reflection?.carryForward, 4)
+        val mergedActionSurfaceMismatch = mergeTurnLogBullets(
+            emptyList(),
+            reflection?.actionSurfaceMismatch,
+            3,
+        )
+        val normalizedMemoValidity = normalizeMemoValidity(reflection?.memoValidity)
+            ?: if (mergedActionSurfaceMismatch.isNotEmpty()) "strained" else null
         if (
             summary.isBlank() &&
             mergedWhatChanged.isEmpty() &&
             mergedCompleted.isEmpty() &&
             mergedObsolete.isEmpty() &&
             mergedStillBlocked.isEmpty() &&
-            mergedCarryForward.isEmpty()
+            mergedCarryForward.isEmpty() &&
+            mergedActionSurfaceMismatch.isEmpty()
         ) {
             return null
         }
@@ -1329,7 +1353,8 @@ object AgentMemoryManager {
             stillBlocked = ArrayList(mergedStillBlocked),
             obsolete = ArrayList(mergedObsolete),
             carryForward = ArrayList(mergedCarryForward),
-            memoValidity = reflection?.memoValidity?.trim()?.takeUnless { it.isNullOrEmpty() },
+            actionSurfaceMismatch = ArrayList(mergedActionSurfaceMismatch),
+            memoValidity = normalizedMemoValidity,
             commitmentLevel = reflection?.commitmentLevel?.trim()?.takeUnless { it.isNullOrEmpty() },
             battleReadiness = reflection?.battleReadiness?.trim()?.takeUnless { it.isNullOrEmpty() },
             supplyHealth = reflection?.supplyHealth?.trim()?.takeUnless { it.isNullOrEmpty() },
@@ -1686,6 +1711,16 @@ object AgentMemoryManager {
             nextMilestoneSummary = labels.nextMilestoneSummary?.trim()?.takeUnless { it.isEmpty() },
             milestoneHorizonTurns = labels.milestoneHorizonTurns?.coerceIn(1, 12),
             blockerKind = labels.blockerKind?.trim()?.takeUnless { it.isEmpty() },
+        )
+    }
+
+    private fun normalizeStrategistDecisionFrame(frame: AgentStrategistDecisionFrame): AgentStrategistDecisionFrame {
+        return AgentStrategistDecisionFrame(
+            decisionMode = frame.decisionMode?.trim()?.takeUnless { it.isEmpty() },
+            targetFrame = frame.targetFrame?.trim()?.takeUnless { it.isEmpty() },
+            whyNow = frame.whyNow?.trim()?.takeUnless { it.isEmpty() },
+            nextCheckpoint = frame.nextCheckpoint?.trim()?.takeUnless { it.isEmpty() },
+            expiryCondition = frame.expiryCondition?.trim()?.takeUnless { it.isEmpty() },
         )
     }
 
@@ -2319,15 +2354,68 @@ object AgentMemoryManager {
         previous: AgentStrategistMemoMemory,
         current: AgentStrategistMemoDraft,
     ): Boolean {
-        val previousStage = previous.campaignStage.trim()
-        val currentStage = current.campaignStage.trim()
         val previousObjective = previous.decisiveObjective?.trim().orEmpty()
         val currentObjective = current.decisiveObjective.trim()
         val previousObjectiveKind = previous.planHealth.objectiveKind?.trim().orEmpty()
         val currentObjectiveKind = current.planHealth.objectiveKind?.trim().orEmpty()
-        return previousStage.isNotBlank() &&
-            previousStage == currentStage &&
-            previousObjective == currentObjective &&
-            previousObjectiveKind == currentObjectiveKind
+        if (!hasStrategistMemo(previous)) return false
+        if (
+            previousObjectiveKind.isNotBlank() &&
+            currentObjectiveKind.isNotBlank() &&
+            previousObjectiveKind != currentObjectiveKind
+        ) return false
+
+        val previousTargetFrame = previous.decisionFrame.targetFrame
+            ?: previous.decisiveObjective
+            ?: previous.futurePlan
+        val currentTargetFrame = current.decisionFrame.targetFrame
+            ?: current.decisiveObjective
+        val targetFrameMatch = describeSameCampaignAxis(previousTargetFrame, currentTargetFrame)
+        val objectiveMatch = describeSameCampaignAxis(previousObjective, currentObjective)
+        val previousModeFamily = campaignModeFamily(previous.decisionFrame.decisionMode ?: previous.campaignStage)
+        val currentModeFamily = campaignModeFamily(current.decisionFrame.decisionMode ?: current.campaignStage)
+
+        return (targetFrameMatch || objectiveMatch) &&
+            (
+                previousObjectiveKind == currentObjectiveKind ||
+                    previousObjectiveKind.isBlank() ||
+                    currentObjectiveKind.isBlank() ||
+                    previousModeFamily == currentModeFamily
+                )
+    }
+
+    private fun describeSameCampaignAxis(previous: String?, current: String?): Boolean {
+        val previousTokens = canonicalCampaignTokens(previous)
+        val currentTokens = canonicalCampaignTokens(current)
+        if (previousTokens.isEmpty() || currentTokens.isEmpty()) return false
+        if (previousTokens == currentTokens) return true
+        val overlap = previousTokens.intersect(currentTokens)
+        if (overlap.isEmpty()) return false
+        val overlapRatio = overlap.size.toDouble() / minOf(previousTokens.size, currentTokens.size).toDouble()
+        return overlapRatio >= 0.5 || overlap.size >= 3
+    }
+
+    private fun canonicalCampaignTokens(text: String?): Set<String> {
+        if (text.isNullOrBlank()) return emptySet()
+        val stopWords = setOf(
+            "the", "a", "an", "to", "for", "of", "and", "or", "with", "before", "after",
+            "this", "that", "our", "their", "your", "from", "into", "over", "under",
+            "while", "still", "now", "next", "real", "current", "main",
+        )
+        return text
+            .lowercase()
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .split(' ')
+            .mapNotNull { token -> token.trim().takeIf { it.length >= 3 && it !in stopWords } }
+            .toSet()
+    }
+
+    private fun campaignModeFamily(raw: String?): String {
+        return when (raw?.trim()?.lowercase()) {
+            "scouting", "expand", "expansion" -> "expand"
+            "stage_briefly", "staging", "pressure", "launch_now", "launch_window", "assault" -> "military"
+            "pivot_recover", "stabilize", "rebuild", "consolidation", "positioning" -> "stabilize"
+            else -> raw?.trim()?.lowercase().orEmpty()
+        }
     }
 }

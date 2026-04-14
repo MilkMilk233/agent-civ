@@ -51,6 +51,13 @@ object AgentStrategistPromptBuilder {
                 "campaignStage": "staging",
                 "decisiveObjective": "take the forward city before the rival stabilizes",
                 "conversionBlocker": "optional",
+                "decisionFrame": {
+                  "decisionMode": "stage_briefly",
+                  "targetFrame": "assemble on the frontier city approach",
+                  "whyNow": "the empire is still building the first real launch package",
+                  "nextCheckpoint": "finish assembly and be ready to declare without more drifting",
+                  "expiryCondition": "if the package still cannot launch after the next short review window"
+                },
                 "planHealth": {
                   "objectiveKind": "expand",
                   "nextMilestoneKind": "city_founded",
@@ -123,6 +130,10 @@ object AgentStrategistPromptBuilder {
             - campaignStage is required. Use a short natural stage label such as scouting, expansion, staging, assault, rebuild, or consolidation.
             - decisiveObjective is required. Name the next objective that most directly converts the current position into progress. Keep it concrete and game-specific.
             - conversionBlocker should name the main thing still preventing that objective from converting cleanly, if there is one. If the path is already open, leave it empty instead of inventing filler.
+            - decisionFrame is the compact strategist-to-tactician contract for this memo. Use it to answer, in plain teammate language, what kind of turn range this is, what target or axis matters most, why this mode is right now, what checkpoint should prove the line is working, and what would make the line stale.
+            - decisionMode should be a short lowercase label such as expand, stage_briefly, launch_now, assault, pivot_recover, or stabilize when they fit. Pick one clear mode instead of smearing together multiple moods.
+            - targetFrame, whyNow, nextCheckpoint, and expiryCondition should be short natural-language lines, not schema jargon or tactical scripts.
+            - If war timing is the real strategic question, own that here. Say whether the empire is still staging briefly, should launch now, or should pivot away from the current line instead of hiding that judgment inside softer prose fields.
             - planHealth is the small typed label block that the memory manager will track over time. Use short lowercase labels with underscores when useful, such as expand, declare_war, capture_city, city_founded, city_captured, economy_unstable, or no_melee. Keep nextMilestoneSummary human-readable and short.
             - campaignControl is the companion typed label block for campaign commitment and sustainability. Use short lowercase labels such as prepare, commit, launch_window, sustain, stabilize, not_ready, nearly_ready, ready, overextended, healthy, strained, fragile, or collapsing when they fit. Keep nextCheckpointSummary human-readable and short.
             - nextCheckpointSummary should describe the next concrete state change that would prove the campaign is converting, such as founding the second city, declaring war, starting the assault, or taking the first city.

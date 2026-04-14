@@ -8,6 +8,7 @@ data class AgentPlannerBrief(
     val strategy: AgentPlannerStrategyObservation,
     val planHealth: AgentPlanHealthObservation? = null,
     val campaignControl: AgentCampaignControlObservation? = null,
+    val decisionFocus: AgentPlannerDecisionFocusObservation? = null,
     val memoryContext: AgentPlannerMemoryContextObservation? = null,
     val campaignContext: AgentPlannerCampaignContextObservation? = null,
     val objectiveTheater: AgentPlannerObjectiveTheaterObservation? = null,
@@ -29,11 +30,58 @@ data class AgentPlannerStrategyObservation(
     val campaignStage: String,
     val decisiveObjective: String? = null,
     val conversionBlocker: String? = null,
+    val decisionFrame: AgentStrategistDecisionFrame? = null,
     val thesis: String? = null,
     val pastSummary: String? = null,
     val currentSituation: String? = null,
     val futurePlan: String? = null,
     val tacticianHandoff: String? = null,
+)
+
+@Serializable
+data class AgentPlannerDecisionFocusObservation(
+    val mode: String,
+    val targetFrame: String? = null,
+    val whyNow: String? = null,
+    val nextCheckpoint: String? = null,
+    val expiryCondition: String? = null,
+    val criticalChoicesNow: List<AgentPlannerDecisionPriorityObservation> = emptyList(),
+    val backgroundChores: List<String> = emptyList(),
+    val actionSurfaceMismatch: List<String> = emptyList(),
+    val launchCohort: AgentPlannerLaunchCohortObservation? = null,
+    val supplySnapshot: AgentPlannerSupplySnapshotObservation? = null,
+)
+
+@Serializable
+data class AgentPlannerDecisionPriorityObservation(
+    val kind: String,
+    val headline: String,
+    val detail: String,
+)
+
+@Serializable
+data class AgentPlannerLaunchCohortObservation(
+    val target: AgentStrategistTargetReference? = null,
+    val warState: String,
+    val healthyCaptureUnits: Int,
+    val damagedCaptureUnits: Int,
+    val rangedSupportUnits: Int,
+    val surfacedMeleeUnits: Int,
+    val surfacedRangedUnits: Int,
+    val supportCities: List<String> = emptyList(),
+    val summary: String,
+)
+
+@Serializable
+data class AgentPlannerSupplySnapshotObservation(
+    val gold: Int,
+    val happiness: Int,
+    val sciencePerTurn: Int,
+    val cityCount: Int,
+    val militaryUnitCount: Int,
+    val supplyHealth: String? = null,
+    val holdingCosts: List<String> = emptyList(),
+    val summary: String,
 )
 
 @Serializable
@@ -68,6 +116,7 @@ data class AgentPlannerTacticianTurnLogObservation(
     val stillBlocked: List<String> = emptyList(),
     val obsolete: List<String> = emptyList(),
     val carryForward: List<String> = emptyList(),
+    val actionSurfaceMismatch: List<String> = emptyList(),
     val memoValidity: String? = null,
     val commitmentLevel: String? = null,
     val battleReadiness: String? = null,

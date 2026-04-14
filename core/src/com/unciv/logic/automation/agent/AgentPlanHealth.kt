@@ -85,6 +85,7 @@ data class AgentTacticianReflection(
     val stillBlocked: List<String> = emptyList(),
     val obsolete: List<String> = emptyList(),
     val carryForward: List<String> = emptyList(),
+    val actionSurfaceMismatch: List<String> = emptyList(),
 )
 
 fun AgentPlanHealthMemory.toObservation(turn: Int): AgentPlanHealthObservation? {

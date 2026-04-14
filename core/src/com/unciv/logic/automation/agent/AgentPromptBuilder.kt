@@ -68,7 +68,8 @@ object AgentPromptBuilder {
                 "completed": ["optional"],
                 "stillBlocked": ["optional"],
                 "obsolete": ["optional"],
-                "carryForward": ["optional"]
+                "carryForward": ["optional"],
+                "actionSurfaceMismatch": ["optional"]
               },
               "notes": "optional"
             }
@@ -80,6 +81,9 @@ object AgentPromptBuilder {
             - The packet defines the real current state and the real legal action space. If a mechanic, action, or option is not surfaced here, do not assume it is available.
             - Planner Brief JSON already includes the current strategist memo under strategy, plus a compact memoryContext slice of the shared notebook.
             - Treat campaignStage as the strategist's read of the current operation, decisiveObjective as the next objective that matters most, conversionBlocker as the main thing still preventing clean conversion, pastSummary as the recent background that still matters, currentSituation as what the strategist thinks is most important now, futurePlan as the next-few-turn intent you should serve, and tacticianHandoff as the strategist's clearest direct message to you.
+            - strategy.decisionFrame is the strategist's compact decision contract for this memo. Read decisionMode as the kind of turn range the strategist believes this is, targetFrame as the main axis or target that matters, nextCheckpoint as the next concrete proof that the line is converting, and expiryCondition as the thing that should stop you from blindly preserving the same story forever.
+            - decisionFocus is the packet's mode-aware cockpit for this turn. criticalChoicesNow are the decisions that should dominate this turn, backgroundChores are the things that should not crowd them out, launchCohort is the compact battle package view when the line is war-facing, supplySnapshot is the compact sustainment picture, and actionSurfaceMismatch lists places where the current surfaced options may not fully support the strategist frame.
+            - When decisionFocus is present, let its criticalChoicesNow outrank background chores unless the current visible board state shows a clearly stronger emergency.
             - Planner Brief JSON may also include mustActNow. These are not strategy conclusions; they are hard unresolved commitments visible on this exact turn, such as a city still needing a real build choice, a Settler that can found immediately, or research still being unchosen.
             - Use only the surfaced legal candidate actions and exact action types from the brief. Do not invent unsupported commands or mod mechanics.
             - Use Memory JSON for continuity when the current brief still supports it: world model notes, rival notebook, campaign memory, empire plan, tactician turn log, city intents, unit assignments, and recent failures.
@@ -105,6 +109,7 @@ object AgentPromptBuilder {
             - Because this call is stateless, do not assume any hidden context beyond Memory JSON and Planner Brief JSON. If the strategist wants a major shift, make sure that shift is reflected in this turn's actual legal actions rather than letting stale local habits persist automatically.
             - If the strategist memo says "finish X" or "produce Y", verify from the current brief and tacticianTurnLog that X is still unfinished and Y is still the live intent. Do not keep following a completed instruction just because it still appears in older memo text.
             - tacticianReflection is your short delta log for the next stateless call. Use it to report what changed, what completed, what is still blocked, what became obsolete, and whether the old memo still looks healthy, strained, or contradicted after this turn.
+            - Use tacticianReflection.actionSurfaceMismatch when the current surfaced options did not actually support the strategist frame cleanly, for example if launch mode was live but the decisive war or melee option was not surfaced.
             - Do not let routine worker upkeep crowd out rival threats, important city tempo choices, or concrete frontline opportunities visible in the current state.
             - Use select_empire_option only with candidateId values from empireChoices. Never invent research, policy, diplomacy, gold, or bombardment commands outside those candidates.
             - Repeated diplomacy that does not materially improve the game state is low priority.
@@ -145,6 +150,7 @@ object AgentPromptBuilder {
             - commitmentLevel, battleReadiness, and supplyHealth in tacticianReflection are short lowercase labels for the next stateless call. Use them only when this turn materially clarified the campaign posture, readiness, or supply state.
             - If you intentionally hold actions, explain the concrete payoff and mark memoValidity as strained or contradicted when this is another turn of delay instead of real progress.
             - Keep tacticianReflection sparse and concrete. Use short bullets, not essays, and only mention deltas that matter across turns.
+            - If the strategist frame was impossible to serve because the current packet lacked a decisive option, say so in actionSurfaceMismatch instead of silently pretending the frame was still executable.
             - Use only unit IDs, cities, action types, tiles, and constructions present in Planner Brief JSON.
             - Do not invent entities.
             - Prefer short, legal plans (0-25 commands).
