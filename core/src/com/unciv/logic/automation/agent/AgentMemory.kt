@@ -9,6 +9,7 @@ data class AgentMemory(
     var rivals: ArrayList<RivalNotebookMemory> = arrayListOf(),
     var campaign: CampaignMemory = CampaignMemory(),
     var empirePlan: EmpirePlanMemory = EmpirePlanMemory(),
+    var planHealth: AgentPlanHealthMemory = AgentPlanHealthMemory(),
     var recentChanges: ArrayList<MemoryNote> = arrayListOf(),
     var lessons: ArrayList<MemoryNote> = arrayListOf(),
     var lastStrategistMemo: AgentStrategistMemoMemory = AgentStrategistMemoMemory(),
@@ -22,6 +23,7 @@ data class AgentMemory(
         arrayListOf(),
         CampaignMemory(),
         EmpirePlanMemory(),
+        AgentPlanHealthMemory(),
         arrayListOf(),
         arrayListOf(),
         AgentStrategistMemoMemory(),
@@ -49,9 +51,14 @@ data class AgentMemory(
         empirePlan = empirePlan.copy(
             notes = ArrayList(empirePlan.notes.map { it.copy() }),
         ),
+        planHealth = planHealth.copy(
+            contradictions = ArrayList(planHealth.contradictions),
+            opportunityCosts = ArrayList(planHealth.opportunityCosts),
+        ),
         recentChanges = ArrayList(recentChanges.map { it.copy() }),
         lessons = ArrayList(lessons.map { it.copy() }),
         lastStrategistMemo = lastStrategistMemo.copy(
+            planHealth = lastStrategistMemo.planHealth.copy(),
             reviewCityNames = ArrayList(lastStrategistMemo.reviewCityNames),
         ),
         tacticianTurnLog = ArrayList(
@@ -62,6 +69,7 @@ data class AgentMemory(
                     stillBlocked = ArrayList(entry.stillBlocked),
                     obsolete = ArrayList(entry.obsolete),
                     carryForward = ArrayList(entry.carryForward),
+                    memoValidity = entry.memoValidity,
                 )
             }
         ),
@@ -173,8 +181,9 @@ data class TacticianTurnLogEntry(
     var stillBlocked: ArrayList<String> = arrayListOf(),
     var obsolete: ArrayList<String> = arrayListOf(),
     var carryForward: ArrayList<String> = arrayListOf(),
+    var memoValidity: String? = null,
 ) : IsPartOfGameInfoSerialization {
-    constructor() : this(0, null, null, null, "", arrayListOf(), arrayListOf(), arrayListOf(), arrayListOf(), arrayListOf())
+    constructor() : this(0, null, null, null, "", arrayListOf(), arrayListOf(), arrayListOf(), arrayListOf(), arrayListOf(), null)
 }
 
 @Serializable

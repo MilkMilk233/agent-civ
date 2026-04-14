@@ -51,6 +51,13 @@ object AgentStrategistPromptBuilder {
                 "campaignStage": "staging",
                 "decisiveObjective": "take the forward city before the rival stabilizes",
                 "conversionBlocker": "optional",
+                "planHealth": {
+                  "objectiveKind": "expand",
+                  "nextMilestoneKind": "city_founded",
+                  "nextMilestoneSummary": "found the second city",
+                  "milestoneHorizonTurns": 4,
+                  "blockerKind": "contact"
+                },
                 "thesis": "optional",
                 "pastSummary": "optional",
                 "currentSituation": "optional",
@@ -84,6 +91,8 @@ object AgentStrategistPromptBuilder {
             - Think of Strategist Brief JSON as the onboarding packet you would hand to a fresh strategist on your team: it gives the setup, the current empire, the current notebook, and the known rival picture.
             - lastStrategistMemo is the previous strategist memo. worldModel, rivalNotebooks, campaign, empirePlan, recentChanges, lessons, and tacticianTurnLog are the current shared notebook. Use them to orient yourself quickly, not to repeat stale wording.
             - tacticianTurnLog is the per-turn delta since the last strategist pass. Read it as execution reality: what changed, what completed, what became obsolete, and what is still being carried forward.
+            - planHealth in the brief is the script-managed continuity scaffold for the current plan thread. Use it as evidence about age, progress, contradictions, and opportunity cost, not as a replacement for judgment.
+            - If planHealth says the current thread is strained or contradicted, treat that as a serious warning that the old memo may now be losing the game. Rewrite the story plainly instead of preserving stale coherence.
             - citySnapshots and unitSnapshots cover the current empire in compact form. rivalCities, rivalUnits, and campaignPicture describe the known enemy-side and frontier situation. Use them to understand where the empire really stands and what the tactician needs to know next.
             - Your memo is not just for record-keeping. It is the tactician's high-level briefing. Write it so a fresh downstream teammate can quickly understand what changed, what matters now, and what should guide local choices over the next few turns.
             - Consolidate the tactician delta log into a cleaner current report. If the old memo told the tactician to finish a Scout, found a city, or keep a project, but the delta log shows that instruction is already completed or obsolete, do not repeat it as if it were still live.
@@ -93,9 +102,11 @@ object AgentStrategistPromptBuilder {
             - Do not repeat opener instructions that no longer fit the actual empire size, contact status, or military situation.
             - Treat Strategist Brief JSON as a factual state packet, not a script-written strategic interpretation.
             - Think like a strong human strategist: identify what just changed, what the real bottleneck is, and what the tactician should optimize for next. Do not turn the memo into a long step-by-step playbook.
+            - If the current line has consumed many turns without city growth, war conversion, or other concrete progress, say so plainly and pivot. Do not euphemize a stale plan as "still preparing" forever.
             - campaignStage is required. Use a short natural stage label such as scouting, expansion, staging, assault, rebuild, or consolidation.
             - decisiveObjective is required. Name the next objective that most directly converts the current position into progress. Keep it concrete and game-specific.
             - conversionBlocker should name the main thing still preventing that objective from converting cleanly, if there is one. If the path is already open, leave it empty instead of inventing filler.
+            - planHealth is the small typed label block that the memory manager will track over time. Use short lowercase labels with underscores when useful, such as expand, declare_war, capture_city, city_founded, city_captured, economy_unstable, or no_melee. Keep nextMilestoneSummary human-readable and short.
             - thesis should be a single compact sentence capturing the core idea of the notebook update.
             - pastSummary should briefly bring the tactician up to speed on what changed recently and what background context still matters. Keep it to 1-2 sentences.
             - currentSituation should briefly explain what is true now, what the empire's real bottleneck or tension is, and what the tactician should understand about the present board. Keep it to 1-3 sentences.
@@ -109,6 +120,7 @@ object AgentStrategistPromptBuilder {
             - For domination-oriented states, think in natural campaign language when useful: is the empire still getting ready, already moving on the target, close to declaring, or in danger of stalling out?
             - If a rival city or capital is visible, futurePlan should usually make the next operational objective understandable in plain language, not drift into generic internal economy maintenance.
             - If war is not yet started, use the visible rival/campaign picture to judge what still truly blocks declaration. If war is already underway, focus on what must happen to take territory instead of defaulting to generic upkeep.
+            - If opportunity cost says the empire is carrying an idle army, one-city economy, or negative treasury while the objective is still unconverted, treat that as evidence the current line is failing, not as a minor housekeeping note.
             - Do not issue exact tactical commands. Avoid wording like "cancel Scout now", "switch Berlin to Warrior", or specific movement orders. Express strategic direction and urgency instead.
             - Do not write numbered plans, city-by-city build scripts, or long branch trees. Avoid repetitive fallback ladders unless the state truly requires one key contingency.
             - Avoid awkward internal jargon or schema-sounding language inside the memo itself. The prose inside the memo fields should read like a smart teammate briefing another teammate.

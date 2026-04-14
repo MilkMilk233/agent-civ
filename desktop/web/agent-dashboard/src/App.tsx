@@ -890,6 +890,9 @@ function TurnDetail({
   const lessonsMemory = objectArray(memoryRecord?.lessons);
   const tacticianTurnLogMemory = objectArray(memoryRecord?.tacticianTurnLog);
   const lastStrategistMemoMemory = asRecord(memoryRecord?.lastStrategistMemo);
+  const memoryPlanHealth = asRecord(memoryRecord?.planHealth);
+  const strategistPlanHealth = asRecord(strategistBrief?.planHealth);
+  const plannerPlanHealth = asRecord(plannerBrief?.planHealth);
   const worldModelNotes = objectArray(worldModelMemory?.notes);
   const worldModelAnchors = objectArray(worldModelMemory?.anchors);
   const campaignNotes = objectArray(campaignMemory?.notes);
@@ -1089,6 +1092,16 @@ function TurnDetail({
               <SummaryStat label="Recent changes" value={formatNumber(recentChangesMemory.length)} />
               <SummaryStat label="Lessons" value={formatNumber(lessonsMemory.length)} />
               <SummaryStat label="Tactician log" value={formatNumber(tacticianTurnLogMemory.length)} />
+              <SummaryStat
+                label="Plan contradictions"
+                value={formatNumber(stringList(memoryPlanHealth?.contradictions).length)}
+                note={stringValue(memoryPlanHealth?.status) || "no status"}
+              />
+              <SummaryStat
+                label="Opportunity costs"
+                value={formatNumber(stringList(memoryPlanHealth?.opportunityCosts).length)}
+                note={booleanText(memoryPlanHealth?.pivotRecommended)}
+              />
               <SummaryStat label="City intents" value={formatNumber(cityIntentsMemory.length)} />
               <SummaryStat label="Unit assignments" value={formatNumber(unitAssignmentsMemory.length)} />
               <SummaryStat label="Recent failures" value={formatNumber(recentFailuresMemory.length)} />
@@ -1186,6 +1199,13 @@ function TurnDetail({
             emptyTitle="No lessons"
             emptyBody="No lessons or cautions were carried into this turn."
           />
+          <PlanHealthCard
+            title="Plan health"
+            subtitle="Script-managed continuity state that tracks whether the active plan is still healthy, contradictory, or expensive to keep waiting on."
+            planHealth={memoryPlanHealth}
+            emptyTitle="No plan-health memory"
+            emptyBody="No typed plan-health state was carried into this turn."
+          />
           <StrategistMemoMemorySection memo={lastStrategistMemoMemory} />
           <TacticianTurnLogSection entries={tacticianTurnLogMemory} />
 
@@ -1206,6 +1226,7 @@ function TurnDetail({
             <StrategistContextSection
               title="Strategist inputs"
               brief={strategistBrief}
+              planHealth={strategistPlanHealth}
               threats={strategistRivalThreats}
               campaignPicture={strategistCampaignPicture}
             />
@@ -1247,6 +1268,7 @@ function TurnDetail({
                   <p className="card-paragraph">{stringValue(strategistMemo.conversionBlocker)}</p>
                 </>
               ) : null}
+              <PlanHealthLabelsBlock labels={asRecord(strategistMemo.planHealth)} />
               {stringValue(strategistMemo.pastSummary) ? (
                 <>
                   <SectionLabel text="Past" />
@@ -1329,6 +1351,13 @@ function TurnDetail({
               <p className="muted-text">Planner brief missing from this turn.</p>
             )}
           </Card>
+          <PlanHealthCard
+            title="Plan health seen by tactician"
+            subtitle="The typed continuity and opportunity-cost signals surfaced into the tactical brief for this turn."
+            planHealth={plannerPlanHealth}
+            emptyTitle="No tactical plan health"
+            emptyBody="The tactical brief did not surface any plan-health observation on this turn."
+          />
 
           <Card title="Objective theater" subtitle="The full surfaced battlefield slice around the current decisive objective, plus a compact reserve summary.">
             {objectiveTheater ? (
@@ -1596,6 +1625,113 @@ function EmptyCardState({
   );
 }
 
+function PlanHealthCard({
+  title,
+  subtitle,
+  planHealth,
+  emptyTitle,
+  emptyBody,
+}: {
+  title: string;
+  subtitle: string;
+  planHealth: Record<string, unknown> | null;
+  emptyTitle: string;
+  emptyBody: string;
+}) {
+  return (
+    <Card title={title} subtitle={subtitle}>
+      {planHealth && Object.keys(planHealth).length ? (
+        <PlanHealthBody planHealth={planHealth} />
+      ) : (
+        <EmptyCardState title={emptyTitle} body={emptyBody} />
+      )}
+    </Card>
+  );
+}
+
+function PlanHealthEmbeddedSection({ planHealth }: { planHealth: Record<string, unknown> | null }) {
+  if (!planHealth || !Object.keys(planHealth).length) return null;
+  return (
+    <>
+      <SectionLabel text="Plan health" />
+      <div className="structured-item">
+        <PlanHealthBody planHealth={planHealth} embedded />
+      </div>
+    </>
+  );
+}
+
+function PlanHealthLabelsBlock({ labels }: { labels: Record<string, unknown> | null }) {
+  if (!labels || !Object.keys(labels).length) return null;
+  const values = [
+    stringValue(labels.objectiveKind) ? `objective ${stringValue(labels.objectiveKind)}` : "",
+    stringValue(labels.nextMilestoneKind) ? `milestone ${stringValue(labels.nextMilestoneKind)}` : "",
+    stringValue(labels.blockerKind) ? `blocker ${stringValue(labels.blockerKind)}` : "",
+    numberValue(labels.milestoneHorizonTurns) !== null ? `horizon ${formatNumber(numberValue(labels.milestoneHorizonTurns))}` : "",
+  ].filter(Boolean);
+  if (!values.length && !stringValue(labels.nextMilestoneSummary)) return null;
+  return (
+    <>
+      <SectionLabel text="Typed plan labels" />
+      {values.length ? <TagList values={values} tone="accent" /> : null}
+      {stringValue(labels.nextMilestoneSummary) ? <p className="card-paragraph">{stringValue(labels.nextMilestoneSummary)}</p> : null}
+    </>
+  );
+}
+
+function PlanHealthBody({
+  planHealth,
+  embedded = false,
+}: {
+  planHealth: Record<string, unknown>;
+  embedded?: boolean;
+}) {
+  const contradictions = stringList(planHealth.contradictions);
+  const opportunityCosts = stringList(planHealth.opportunityCosts);
+  const status = stringValue(planHealth.status);
+  const summary = (
+    <>
+      <div className="summary-grid compact">
+        <SummaryStat label="Status" value={status || "unknown"} note={stringValue(planHealth.pivotReason) || undefined} />
+        <SummaryStat label="Objective kind" value={stringValue(planHealth.objectiveKind) || "—"} />
+        <SummaryStat label="Milestone" value={stringValue(planHealth.nextMilestoneKind) || "—"} />
+        <SummaryStat label="Blocker kind" value={stringValue(planHealth.blockerKind) || "—"} />
+        <SummaryStat label="Objective age" value={nullableNumberText(planHealth.objectiveAgeTurns)} />
+        <SummaryStat label="Since progress" value={nullableNumberText(planHealth.turnsSinceMeaningfulProgress)} />
+        <SummaryStat label="Pivot recommended" value={booleanText(planHealth.pivotRecommended)} />
+        <SummaryStat label="Horizon" value={nullableNumberText(planHealth.milestoneHorizonTurns)} />
+      </div>
+      {stringValue(planHealth.nextMilestoneSummary) ? (
+        <>
+          <SectionLabel text="Next milestone summary" />
+          <p className="card-paragraph">{stringValue(planHealth.nextMilestoneSummary)}</p>
+        </>
+      ) : null}
+      {contradictions.length ? (
+        <>
+          <SectionLabel text="Contradictions" />
+          <TagList values={contradictions} tone="warning" />
+        </>
+      ) : null}
+      {opportunityCosts.length ? (
+        <>
+          <SectionLabel text="Opportunity costs" />
+          <TagList values={opportunityCosts} tone="warning" />
+        </>
+      ) : null}
+      {stringValue(planHealth.pivotReason) ? (
+        <>
+          <SectionLabel text="Pivot reason" />
+          <p className="card-paragraph">{stringValue(planHealth.pivotReason)}</p>
+        </>
+      ) : null}
+    </>
+  );
+
+  if (embedded) return summary;
+  return <>{summary}</>;
+}
+
 function MemoryNotesSection({
   title,
   notes,
@@ -1734,6 +1870,7 @@ function StrategistMemoMemorySection({ memo }: { memo: Record<string, unknown> |
               <p className="card-paragraph">{stringValue(memo.futurePlan)}</p>
             </>
           ) : null}
+          <PlanHealthLabelsBlock labels={asRecord(memo.planHealth)} />
           {stringValue(memo.tacticianHandoff) ? (
             <>
               <SectionLabel text="Tactician handoff" />
@@ -1783,6 +1920,9 @@ function TacticianTurnLogSection({ entries }: { entries: Record<string, unknown>
                         {stringValue(entry.campaignStage) ? <span className="tag neutral">{stringValue(entry.campaignStage)}</span> : null}
                         {numberValue(entry.basedOnStrategistTurn) !== null ? (
                           <span className="tag neutral">{`memo ${formatNumber(numberValue(entry.basedOnStrategistTurn))}`}</span>
+                        ) : null}
+                        {stringValue(entry.memoValidity) ? (
+                          <span className={`tag ${tagToneFromPlanHealth(stringValue(entry.memoValidity))}`}>{stringValue(entry.memoValidity)}</span>
                         ) : null}
                       </div>
                     </div>
@@ -2030,11 +2170,13 @@ function ProgressSection({
 function StrategistContextSection({
   title,
   brief,
+  planHealth,
   threats,
   campaignPicture,
 }: {
   title: string;
   brief: Record<string, unknown> | null;
+  planHealth: Record<string, unknown> | null;
   threats: Record<string, unknown>[];
   campaignPicture: Record<string, unknown> | null;
 }) {
@@ -2065,6 +2207,8 @@ function StrategistContextSection({
 
           <SectionLabel text="Enabled victories" />
           <TagList values={enabledVictories} tone="accent" />
+
+          <PlanHealthEmbeddedSection planHealth={planHealth} />
 
           {lastStrategistMemo ? (
             <>
@@ -2099,6 +2243,7 @@ function StrategistContextSection({
                     <p className="card-paragraph">{stringValue(lastStrategistMemo.futurePlan)}</p>
                   </>
                 ) : null}
+                <PlanHealthLabelsBlock labels={asRecord(lastStrategistMemo.planHealth)} />
               </div>
             </>
           ) : null}
@@ -3615,6 +3760,13 @@ function toneFromSeverity(severity: string): "success" | "warning" | "muted" {
   if (normalized === "critical" || normalized === "warning") return "warning";
   if (normalized === "good" || normalized === "success") return "success";
   return "muted";
+}
+
+function tagToneFromPlanHealth(status: string): "neutral" | "accent" | "warning" {
+  const normalized = status.toLowerCase();
+  if (normalized === "healthy") return "accent";
+  if (normalized === "strained" || normalized === "contradicted") return "warning";
+  return "neutral";
 }
 
 function nullableNumberText(value: unknown): string {

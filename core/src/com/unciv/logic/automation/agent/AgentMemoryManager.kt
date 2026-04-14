@@ -35,14 +35,16 @@ object AgentMemoryManager {
         val validUnits = civInfo.units.getCivUnits().associateBy { it.id }
         val existing = civInfo.agentMemory.clone()
 
-        val prepared = existing.copy(
+        val basePrepared = existing.copy(
             worldModel = pruneWorldModel(existing.worldModel, turn),
             rivals = mergeRivalNotebooks(existing.rivals, observation, empireObservation, turn),
             campaign = pruneCampaign(existing.campaign, empireObservation, turn),
             empirePlan = pruneEmpirePlan(existing.empirePlan, turn),
+            planHealth = prunePlanHealth(existing.planHealth, turn),
             recentChanges = pruneNotes(existing.recentChanges, turn, maxRecentChanges),
             lessons = ArrayList(existing.lessons.takeLast(maxLessons).map { it.copy() }),
             lastStrategistMemo = existing.lastStrategistMemo.copy(
+                planHealth = existing.lastStrategistMemo.planHealth.copy(),
                 reviewCityNames = ArrayList(existing.lastStrategistMemo.reviewCityNames),
             ),
             tacticianTurnLog = pruneTacticianTurnLog(existing.tacticianTurnLog, turn),
@@ -60,7 +62,16 @@ object AgentMemoryManager {
                 existing.recentFailures
                     .filter { turn - it.turn <= recentFailureWindowTurns }
                     .takeLast(maxRecentFailures)
-                    .map { it.copy() }
+                .map { it.copy() }
+            ),
+        )
+        val prepared = basePrepared.copy(
+            planHealth = reconcilePlanHealth(
+                current = basePrepared.planHealth,
+                memo = basePrepared.lastStrategistMemo,
+                snapshot = buildPlanHealthSnapshot(observation, empireObservation),
+                turn = turn,
+                latestMemoValidity = basePrepared.tacticianTurnLog.lastOrNull()?.memoValidity,
             ),
         )
 
@@ -132,8 +143,17 @@ object AgentMemoryManager {
                 unitAssignments = intentReconciliation.unitAssignments,
                 recentFailures = recentFailures,
             )
-            civInfo.agentMemory = updated.clone()
-            return updated
+            val reconciled = updated.copy(
+                planHealth = reconcilePlanHealth(
+                    current = updated.planHealth,
+                    memo = updated.lastStrategistMemo,
+                    snapshot = buildPlanHealthSnapshot(civInfo, observation),
+                    turn = turn,
+                    latestMemoValidity = updated.tacticianTurnLog.lastOrNull()?.memoValidity,
+                ),
+            )
+            civInfo.agentMemory = reconciled.clone()
+            return reconciled
         }
 
         val newCityIntents = deriveCityIntents(observation, plan, turn)
@@ -177,8 +197,17 @@ object AgentMemoryManager {
             ),
             recentFailures = recentFailures,
         )
-        civInfo.agentMemory = updated.clone()
-        return updated
+        val reconciled = updated.copy(
+            planHealth = reconcilePlanHealth(
+                current = updated.planHealth,
+                memo = updated.lastStrategistMemo,
+                snapshot = buildPlanHealthSnapshot(civInfo, observation),
+                turn = turn,
+                latestMemoValidity = updated.tacticianTurnLog.lastOrNull()?.memoValidity,
+            ),
+        )
+        civInfo.agentMemory = reconciled.clone()
+        return reconciled
     }
 
     fun shouldRefreshStrategist(
@@ -194,13 +223,14 @@ object AgentMemoryManager {
                 reason = "No strategist memo exists yet. Build the first game notebook and high-level handoff for this match.",
             )
         }
+        tacticalRefreshIfEmergency(memory, observation, empireObservation, requested = null)?.let { return it }
         if (memo.reviewAfterTurn > 0 && turn >= memo.reviewAfterTurn) {
             return AgentStrategistRefreshRequest(
                 urgency = "scheduled",
                 reason = "Scheduled strategist review: refresh the game notebook and next few-turn handoff from the current board state.",
             )
         }
-        return tacticalRefreshIfEmergency(memory, observation, empireObservation, requested = null)
+        return null
     }
 
     fun shouldHonorTacticalStrategistRefresh(
@@ -233,6 +263,7 @@ object AgentMemoryManager {
             campaignStage = strategicPlan.memo.campaignStage.trim(),
             decisiveObjective = strategicPlan.memo.decisiveObjective.trim().takeUnless { it.isEmpty() },
             conversionBlocker = strategicPlan.memo.conversionBlocker?.trim().takeUnless { it.isNullOrEmpty() },
+            planHealth = normalizePlanHealthLabels(strategicPlan.memo.planHealth),
             thesis = strategicPlan.memo.thesis?.trim().takeUnless { it.isNullOrEmpty() },
             pastSummary = strategicPlan.memo.pastSummary?.trim().takeUnless { it.isNullOrEmpty() },
             currentSituation = strategicPlan.memo.currentSituation?.trim().takeUnless { it.isNullOrEmpty() },
@@ -265,6 +296,7 @@ object AgentMemoryManager {
             ),
             campaign = buildCampaignMemory(memory.campaign, strategicPlan.memo, observation, empireObservation, turn),
             empirePlan = buildEmpirePlan(memory.empirePlan, strategicPlan.memo, turn),
+            planHealth = buildPlanHealth(memory.planHealth, memory.lastStrategistMemo, strategicPlan.memo, turn),
             recentChanges = buildNoteList("recent_change", "change", strategicPlan.memo.recentChanges, turn, recentChangeHorizonTurns, maxRecentChanges),
             lessons = buildNoteList("lesson", "lesson", strategicPlan.memo.lessons, turn, turn + 200, maxLessons),
             lastStrategistMemo = memo,
@@ -286,6 +318,13 @@ object AgentMemoryManager {
         if (!hasStrategistMemo(memo)) return requested
         val primaryThreat = empireObservation.victoryThreats.firstOrNull()
         val requestedReason = requested?.reason?.trim().orEmpty()
+        val planHealth = memory.planHealth
+        if (planHealth.pivotRecommended || planHealth.status.equals("contradicted", ignoreCase = true)) {
+            return AgentStrategistRefreshRequest(
+                urgency = "emergency",
+                reason = requestedReason.ifBlank { buildPlanHealthRefreshReason(planHealth) },
+            )
+        }
         if (observation.empireSummary.isAtWar && !looksWarAware(memory)) {
             return AgentStrategistRefreshRequest(
                 urgency = "emergency",
@@ -308,6 +347,13 @@ object AgentMemoryManager {
             )
         }
         return null
+    }
+
+    private fun buildPlanHealthRefreshReason(planHealth: AgentPlanHealthMemory): String {
+        return planHealth.pivotReason?.takeIf { it.isNotBlank() }
+            ?: planHealth.contradictions.firstOrNull()
+            ?: planHealth.opportunityCosts.firstOrNull()
+            ?: "The current plan-health signals say the active campaign thread has gone stale and should be refreshed."
     }
 
     private fun looksWarAware(memory: AgentMemory): Boolean {
@@ -334,9 +380,11 @@ object AgentMemoryManager {
             rivals = mergeRivalNotebooks(memory.rivals, observation, empireObservation, turn),
             campaign = pruneCampaign(memory.campaign, empireObservation, turn),
             empirePlan = pruneEmpirePlan(memory.empirePlan, turn),
+            planHealth = prunePlanHealth(memory.planHealth, turn),
             recentChanges = pruneNotes(memory.recentChanges, turn, maxRecentChanges),
             lessons = ArrayList(memory.lessons.takeLast(maxLessons).map { it.copy() }),
             lastStrategistMemo = memory.lastStrategistMemo.copy(
+                planHealth = memory.lastStrategistMemo.planHealth.copy(),
                 reviewCityNames = ArrayList(memory.lastStrategistMemo.reviewCityNames),
             ),
             tacticianTurnLog = pruneTacticianTurnLog(memory.tacticianTurnLog, turn),
@@ -344,6 +392,237 @@ object AgentMemoryManager {
             unitAssignments = ArrayList(memory.unitAssignments.map { it.copy() }),
             recentFailures = ArrayList(memory.recentFailures.map { it.copy() }),
         )
+    }
+
+    private data class PlanHealthSnapshot(
+        val cityCount: Int,
+        val cityNames: List<String>,
+        val militaryUnitCount: Int,
+        val isAtWar: Boolean,
+        val contactComplete: Boolean,
+        val gold: Int,
+        val happiness: Int,
+        val visibleRivalCities: Int,
+        val visibleRivalUnits: Int,
+    )
+
+    private fun buildPlanHealthSnapshot(
+        observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+    ): PlanHealthSnapshot {
+        return PlanHealthSnapshot(
+            cityCount = observation.empireSummary.cityCount,
+            cityNames = observation.cities.map { it.name }.sorted(),
+            militaryUnitCount = observation.empireSummary.militaryUnitCount,
+            isAtWar = observation.empireSummary.isAtWar,
+            contactComplete = empireObservation.gameContext.contactComplete,
+            gold = observation.empireSummary.gold,
+            happiness = observation.empireSummary.happiness,
+            visibleRivalCities = observation.visibleThreatsAndTargets.count { it.kind == "city" && it.civName != observation.civName },
+            visibleRivalUnits = observation.visibleThreatsAndTargets.count { it.kind == "unit" && it.civName != observation.civName },
+        )
+    }
+
+    private fun buildPlanHealthSnapshot(
+        civInfo: Civilization,
+        startingObservation: AgentObservation,
+    ): PlanHealthSnapshot {
+        return PlanHealthSnapshot(
+            cityCount = civInfo.cities.size,
+            cityNames = civInfo.cities.map { it.name }.sorted(),
+            militaryUnitCount = civInfo.units.getCivUnits().count { it.isMilitary() },
+            isAtWar = civInfo.isAtWar(),
+            contactComplete = civInfo.getKnownCivs().any { !it.isBarbarian && !it.isCityState },
+            gold = civInfo.gold,
+            happiness = civInfo.getHappiness(),
+            visibleRivalCities = startingObservation.visibleThreatsAndTargets.count { it.kind == "city" && it.civName != startingObservation.civName },
+            visibleRivalUnits = startingObservation.visibleThreatsAndTargets.count { it.kind == "unit" && it.civName != startingObservation.civName },
+        )
+    }
+
+    private fun reconcilePlanHealth(
+        current: AgentPlanHealthMemory,
+        memo: AgentStrategistMemoMemory,
+        snapshot: PlanHealthSnapshot,
+        turn: Int,
+        latestMemoValidity: String?,
+    ): AgentPlanHealthMemory {
+        if (!hasStrategistMemo(memo)) return prunePlanHealth(current.copy(lastUpdatedTurn = turn), turn)
+
+        val labels = normalizePlanHealthLabels(memo.planHealth)
+        val objectiveCreatedTurn = current.objectiveCreatedTurn.takeIf { it > 0 }
+            ?: memo.createdTurn.takeIf { it > 0 }
+            ?: turn
+        val currentLastProgressTurn = current.lastMeaningfulProgressTurn.takeIf { it > 0 }
+            ?: objectiveCreatedTurn
+        val objectiveAgeTurns = (turn - objectiveCreatedTurn).coerceAtLeast(0)
+        val milestoneHorizonTurns = labels.milestoneHorizonTurns ?: defaultMilestoneHorizon(labels.objectiveKind)
+        val progressSignals = deriveProgressSignals(memo, labels, snapshot)
+        val contradictions = derivePlanContradictions(
+            memo = memo,
+            labels = labels,
+            snapshot = snapshot,
+            objectiveAgeTurns = objectiveAgeTurns,
+            milestoneHorizonTurns = milestoneHorizonTurns,
+            currentLastProgressTurn = currentLastProgressTurn,
+            turn = turn,
+        )
+        val opportunityCosts = derivePlanOpportunityCosts(
+            memo = memo,
+            labels = labels,
+            snapshot = snapshot,
+            objectiveAgeTurns = objectiveAgeTurns,
+            milestoneHorizonTurns = milestoneHorizonTurns,
+        )
+        val normalizedMemoValidity = normalizeMemoValidity(latestMemoValidity)
+        val madeMeaningfulProgress = progressSignals.isNotEmpty()
+        val lastMeaningfulProgressTurn = if (madeMeaningfulProgress) turn else currentLastProgressTurn
+        val turnsSinceMeaningfulProgress = (turn - lastMeaningfulProgressTurn).coerceAtLeast(0)
+        val status = when {
+            normalizedMemoValidity == "contradicted" || contradictions.size >= 2 -> "contradicted"
+            normalizedMemoValidity == "strained" || contradictions.isNotEmpty() || opportunityCosts.isNotEmpty() -> "strained"
+            else -> "healthy"
+        }
+        val pivotRecommended = when {
+            normalizedMemoValidity == "contradicted" -> true
+            contradictions.size >= 2 -> true
+            contradictions.isNotEmpty() && objectiveAgeTurns >= milestoneHorizonTurns + 2 -> true
+            contradictions.isNotEmpty() && turnsSinceMeaningfulProgress >= milestoneHorizonTurns + 1 -> true
+            opportunityCosts.size >= 2 && turnsSinceMeaningfulProgress >= milestoneHorizonTurns -> true
+            else -> false
+        }
+        val pivotReason = when {
+            !pivotRecommended -> null
+            normalizedMemoValidity == "contradicted" -> "The latest tactician reflection says the old memo no longer matches reality."
+            contradictions.isNotEmpty() -> contradictions.first()
+            opportunityCosts.isNotEmpty() -> opportunityCosts.first()
+            else -> null
+        }
+
+        return prunePlanHealth(
+            AgentPlanHealthMemory(
+                objectiveKind = labels.objectiveKind,
+                nextMilestoneKind = labels.nextMilestoneKind,
+                nextMilestoneSummary = labels.nextMilestoneSummary,
+                milestoneHorizonTurns = milestoneHorizonTurns,
+                blockerKind = labels.blockerKind,
+                status = status,
+                objectiveCreatedTurn = objectiveCreatedTurn,
+                lastMeaningfulProgressTurn = lastMeaningfulProgressTurn,
+                contradictions = ArrayList(contradictions),
+                opportunityCosts = ArrayList(opportunityCosts),
+                pivotRecommended = pivotRecommended,
+                pivotReason = pivotReason,
+                lastUpdatedTurn = turn,
+            ),
+            turn,
+        )
+    }
+
+    private fun deriveProgressSignals(
+        memo: AgentStrategistMemoMemory,
+        labels: AgentPlanHealthLabels,
+        snapshot: PlanHealthSnapshot,
+    ): List<String> {
+        val signals = linkedSetOf<String>()
+        if (snapshot.cityCount > memo.reviewCityCount) signals += "city_count_increased"
+        if (snapshot.cityNames != memo.reviewCityNames.sorted()) signals += "city_roster_changed"
+        if (snapshot.isAtWar && !memo.reviewIsAtWar) signals += "war_started"
+        if (snapshot.contactComplete && !memo.reviewContactComplete) signals += "contact_complete"
+        if (snapshot.visibleRivalCities > memo.reviewVisibleRivalCities) signals += "new_rival_city_seen"
+        when (labels.nextMilestoneKind) {
+            "city_founded", "city_captured" -> if (snapshot.cityCount > memo.reviewCityCount) signals += labels.nextMilestoneKind
+            "second_city_founded" -> if (snapshot.cityCount >= 2) signals += labels.nextMilestoneKind
+            "war_declared" -> if (snapshot.isAtWar) signals += "war_declared"
+            "contact_made" -> if (snapshot.contactComplete) signals += "contact_made"
+        }
+        return signals.toList()
+    }
+
+    private fun derivePlanContradictions(
+        memo: AgentStrategistMemoMemory,
+        labels: AgentPlanHealthLabels,
+        snapshot: PlanHealthSnapshot,
+        objectiveAgeTurns: Int,
+        milestoneHorizonTurns: Int,
+        currentLastProgressTurn: Int,
+        turn: Int,
+    ): List<String> {
+        val contradictions = linkedSetOf<String>()
+        val milestoneDue = objectiveAgeTurns >= milestoneHorizonTurns
+        val turnsSinceMeaningfulProgress = (turn - currentLastProgressTurn).coerceAtLeast(0)
+        when (labels.nextMilestoneKind) {
+            "city_founded" -> if (milestoneDue && snapshot.cityCount <= memo.reviewCityCount) {
+                contradictions += "The plan expected a new city by now, but city count is still ${snapshot.cityCount}."
+            }
+            "second_city_founded" -> if (milestoneDue && snapshot.cityCount < 2) {
+                contradictions += "The plan expected a second city by now, but we are still on ${snapshot.cityCount} cities."
+            }
+            "war_declared" -> if (milestoneDue && !snapshot.isAtWar) {
+                contradictions += "The plan expected war to begin by now, but we are still at peace."
+            }
+            "contact_made" -> if (milestoneDue && !snapshot.contactComplete) {
+                contradictions += "The plan expected contact to be solved by now, but the rival is still not fully contacted."
+            }
+            "city_captured" -> if (milestoneDue && snapshot.cityCount <= memo.reviewCityCount) {
+                contradictions += "The plan expected territory to convert by now, but city count has not increased."
+            }
+        }
+        when (labels.objectiveKind) {
+            "expand", "settle_city", "found_city" -> if (turnsSinceMeaningfulProgress >= milestoneHorizonTurns + 1 && snapshot.cityCount <= memo.reviewCityCount) {
+                contradictions += "Expansion has stayed live without adding a city."
+            }
+            "declare_war", "capture_city", "capture_capital", "assault" -> if (
+                turnsSinceMeaningfulProgress >= milestoneHorizonTurns &&
+                !snapshot.isAtWar &&
+                snapshot.militaryUnitCount >= memo.reviewMilitaryUnitCount + 3
+            ) {
+                contradictions += "Military staging has grown, but the military objective still has not converted into war."
+            }
+        }
+        if (milestoneDue && snapshot.visibleRivalCities > memo.reviewVisibleRivalCities && snapshot.cityCount <= memo.reviewCityCount) {
+            contradictions += "The rival picture grew while our current plan made no concrete city progress."
+        }
+        return contradictions.toList()
+    }
+
+    private fun derivePlanOpportunityCosts(
+        memo: AgentStrategistMemoMemory,
+        labels: AgentPlanHealthLabels,
+        snapshot: PlanHealthSnapshot,
+        objectiveAgeTurns: Int,
+        milestoneHorizonTurns: Int,
+    ): List<String> {
+        val costs = linkedSetOf<String>()
+        val warLikeObjective = labels.objectiveKind in setOf("declare_war", "capture_city", "capture_capital", "assault")
+        if (!snapshot.isAtWar && snapshot.gold < 0 && snapshot.militaryUnitCount >= 6) {
+            costs += "The treasury is negative while an unused army still costs upkeep."
+        }
+        if (!snapshot.isAtWar && snapshot.cityCount <= memo.reviewCityCount && snapshot.militaryUnitCount >= maxOf(8, snapshot.cityCount * 4)) {
+            costs += "A large army is being maintained without corresponding expansion or war conversion."
+        }
+        if (snapshot.cityCount <= 1 && snapshot.militaryUnitCount >= 8) {
+            costs += "A one-city economy is carrying an oversized military package."
+        }
+        if (warLikeObjective && !snapshot.isAtWar && objectiveAgeTurns >= milestoneHorizonTurns) {
+            costs += "Waiting longer is letting a war-focused buildup consume tempo without pressure."
+        }
+        if (snapshot.happiness < 0) {
+            costs += "Unhappy empire conditions make a stalled plan more expensive every turn."
+        }
+        return costs.toList()
+    }
+
+    private fun defaultMilestoneHorizon(objectiveKind: String?): Int {
+        return when (objectiveKind) {
+            "contact", "expand", "settle_city", "found_city" -> 4
+            "declare_war", "capture_city", "capture_capital", "assault" -> 5
+            else -> 5
+        }
+    }
+
+    private fun normalizeMemoValidity(raw: String?): String? {
+        return raw?.trim()?.lowercase()?.takeUnless { it.isEmpty() }
     }
 
     private fun pruneTacticianTurnLog(
@@ -361,6 +640,7 @@ object AgentMemoryManager {
                         stillBlocked = ArrayList(entry.stillBlocked),
                         obsolete = ArrayList(entry.obsolete),
                         carryForward = ArrayList(entry.carryForward),
+                        memoValidity = entry.memoValidity,
                     )
                 }
         )
@@ -378,6 +658,7 @@ object AgentMemoryManager {
                     stillBlocked = ArrayList(existingEntry.stillBlocked),
                     obsolete = ArrayList(existingEntry.obsolete),
                     carryForward = ArrayList(existingEntry.carryForward),
+                    memoValidity = existingEntry.memoValidity,
                 )
             }
         )
@@ -472,21 +753,29 @@ object AgentMemoryManager {
         val turn = civInfo.gameInfo.turns
         val whatChanged = buildWhatChangedNotes(civInfo, observation, empireObservation, plan, report)
         val stillBlocked = summarizeCurrentBlockers(civInfo, observation, empireObservation, startingMemory)
+        val reflection = plan?.tacticianReflection
+        val reflectionSummary = reflection?.summary?.trim().takeUnless { it.isNullOrEmpty() }
         val planNotes = plan?.notes?.trim().takeUnless { it.isNullOrEmpty() }
         val summary = when {
             usedLegacyFallback -> fallbackReason ?: "Legacy fallback handled the turn after the tactical plan broke."
             intentionalNoOp -> "The tactician intentionally held actions this turn."
+            reflectionSummary != null -> reflectionSummary.take(220)
             planNotes != null -> planNotes.take(220)
             report != null -> "Executed ${report.executedActions} tactical actions with ${report.rejectedActions} rejected."
             else -> "Turn completed without a recorded tactical delta."
         }
+        val mergedWhatChanged = mergeTurnLogBullets(whatChanged, reflection?.whatChanged, 4)
+        val mergedCompleted = mergeTurnLogBullets(completed, reflection?.completed, 4)
+        val mergedStillBlocked = mergeTurnLogBullets(stillBlocked, reflection?.stillBlocked, 3)
+        val mergedObsolete = mergeTurnLogBullets(obsolete, reflection?.obsolete, 3)
+        val mergedCarryForward = mergeTurnLogBullets(carryForward, reflection?.carryForward, 4)
         if (
             summary.isBlank() &&
-            whatChanged.isEmpty() &&
-            completed.isEmpty() &&
-            obsolete.isEmpty() &&
-            stillBlocked.isEmpty() &&
-            carryForward.isEmpty()
+            mergedWhatChanged.isEmpty() &&
+            mergedCompleted.isEmpty() &&
+            mergedObsolete.isEmpty() &&
+            mergedStillBlocked.isEmpty() &&
+            mergedCarryForward.isEmpty()
         ) {
             return null
         }
@@ -496,12 +785,24 @@ object AgentMemoryManager {
             campaignStage = startingMemory.campaign.stage.takeIf { it.isNotBlank() },
             decisiveObjective = startingMemory.campaign.decisiveObjective,
             summary = summary,
-            whatChanged = ArrayList(whatChanged.take(4)),
-            completed = ArrayList(completed.take(4)),
-            stillBlocked = ArrayList(stillBlocked.take(3)),
-            obsolete = ArrayList(obsolete.take(3)),
-            carryForward = ArrayList(carryForward.take(4)),
+            whatChanged = ArrayList(mergedWhatChanged),
+            completed = ArrayList(mergedCompleted),
+            stillBlocked = ArrayList(mergedStillBlocked),
+            obsolete = ArrayList(mergedObsolete),
+            carryForward = ArrayList(mergedCarryForward),
+            memoValidity = reflection?.memoValidity?.trim()?.takeUnless { it.isNullOrEmpty() },
         )
+    }
+
+    private fun mergeTurnLogBullets(
+        derived: List<String>,
+        reflected: List<String>?,
+        maxItems: Int,
+    ): List<String> {
+        val merged = linkedSetOf<String>()
+        derived.mapNotNull { it.trim().takeIf(String::isNotEmpty) }.forEach(merged::add)
+        reflected.orEmpty().mapNotNull { it.trim().takeIf(String::isNotEmpty) }.forEach(merged::add)
+        return merged.take(maxItems)
     }
 
     private fun buildWhatChangedNotes(
@@ -624,6 +925,15 @@ object AgentMemoryManager {
     private fun pruneEmpirePlan(empirePlan: EmpirePlanMemory, turn: Int): EmpirePlanMemory {
         return empirePlan.copy(
             notes = pruneNotes(empirePlan.notes, turn, maxRecentChanges),
+        )
+    }
+
+    private fun prunePlanHealth(planHealth: AgentPlanHealthMemory, turn: Int): AgentPlanHealthMemory {
+        if (planHealth.isEmpty()) return AgentPlanHealthMemory()
+        return planHealth.copy(
+            contradictions = ArrayList(planHealth.contradictions.takeLast(4)),
+            opportunityCosts = ArrayList(planHealth.opportunityCosts.takeLast(4)),
+            lastUpdatedTurn = planHealth.lastUpdatedTurn.takeIf { it > 0 } ?: turn,
         )
     }
 
@@ -752,6 +1062,49 @@ object AgentMemoryManager {
             purchaseIntent = memo.purchaseIntent?.trim().takeUnless { it.isNullOrEmpty() } ?: current.purchaseIntent,
             notes = buildNoteList("empire_plan", "implication", memo.empirePlanNotes, turn, turn + 60, maxRecentChanges),
             lastUpdatedTurn = turn,
+        )
+    }
+
+    private fun buildPlanHealth(
+        current: AgentPlanHealthMemory,
+        previousMemo: AgentStrategistMemoMemory,
+        memo: AgentStrategistMemoDraft,
+        turn: Int,
+    ): AgentPlanHealthMemory {
+        val sameThread = isSameCampaignThread(previousMemo, memo)
+        val normalizedLabels = normalizePlanHealthLabels(memo.planHealth)
+        return AgentPlanHealthMemory(
+            objectiveKind = normalizedLabels.objectiveKind,
+            nextMilestoneKind = normalizedLabels.nextMilestoneKind,
+            nextMilestoneSummary = normalizedLabels.nextMilestoneSummary,
+            milestoneHorizonTurns = normalizedLabels.milestoneHorizonTurns,
+            blockerKind = normalizedLabels.blockerKind,
+            status = if (sameThread) current.status else "",
+            objectiveCreatedTurn = if (sameThread) {
+                current.objectiveCreatedTurn.takeIf { it > 0 } ?: previousMemo.createdTurn.takeIf { it > 0 } ?: turn
+            } else {
+                turn
+            },
+            lastMeaningfulProgressTurn = if (sameThread) {
+                current.lastMeaningfulProgressTurn.takeIf { it > 0 } ?: turn
+            } else {
+                turn
+            },
+            contradictions = if (sameThread) ArrayList(current.contradictions.takeLast(4)) else arrayListOf(),
+            opportunityCosts = if (sameThread) ArrayList(current.opportunityCosts.takeLast(4)) else arrayListOf(),
+            pivotRecommended = if (sameThread) current.pivotRecommended else false,
+            pivotReason = if (sameThread) current.pivotReason else null,
+            lastUpdatedTurn = turn,
+        )
+    }
+
+    private fun normalizePlanHealthLabels(labels: AgentPlanHealthLabels): AgentPlanHealthLabels {
+        return AgentPlanHealthLabels(
+            objectiveKind = labels.objectiveKind?.trim()?.takeUnless { it.isEmpty() },
+            nextMilestoneKind = labels.nextMilestoneKind?.trim()?.takeUnless { it.isEmpty() },
+            nextMilestoneSummary = labels.nextMilestoneSummary?.trim()?.takeUnless { it.isEmpty() },
+            milestoneHorizonTurns = labels.milestoneHorizonTurns?.coerceIn(1, 12),
+            blockerKind = labels.blockerKind?.trim()?.takeUnless { it.isEmpty() },
         )
     }
 
@@ -1377,8 +1730,11 @@ object AgentMemoryManager {
         val currentStage = current.campaignStage.trim()
         val previousObjective = previous.decisiveObjective?.trim().orEmpty()
         val currentObjective = current.decisiveObjective.trim()
+        val previousObjectiveKind = previous.planHealth.objectiveKind?.trim().orEmpty()
+        val currentObjectiveKind = current.planHealth.objectiveKind?.trim().orEmpty()
         return previousStage.isNotBlank() &&
             previousStage == currentStage &&
-            previousObjective == currentObjective
+            previousObjective == currentObjective &&
+            previousObjectiveKind == currentObjectiveKind
     }
 }

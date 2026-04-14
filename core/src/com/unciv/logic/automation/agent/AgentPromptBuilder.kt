@@ -58,6 +58,15 @@ object AgentPromptBuilder {
               ],
               "handoffToLegacyAI": false,
               "strategistRefreshRequest": {"urgency":"emergency","reason":"optional"},
+              "tacticianReflection": {
+                "summary": "optional",
+                "memoValidity": "healthy",
+                "whatChanged": ["optional"],
+                "completed": ["optional"],
+                "stillBlocked": ["optional"],
+                "obsolete": ["optional"],
+                "carryForward": ["optional"]
+              },
               "notes": "optional"
             }
             Rules:
@@ -80,9 +89,12 @@ object AgentPromptBuilder {
             - campaignContext is the factual rival/frontier packet for this turn. objectiveTarget is the resolved current target from that packet. If current visibility is incomplete but campaignContext still includes a last-known rival city or capital, use that to keep pressure moving in the right direction instead of resetting into broad blind scouting.
             - objectiveTheater is the surfaced battlefield around the current decisive objective. Treat it as the current operational map: those units and support cities are the ones that can materially affect the objective now, while the rest of the empire is compacted into reserves.
             - captureReadiness is the conversion read around the current objective. Use it to judge whether the current force package can actually take or hold the objective soon, especially whether healthy capture-capable melee are missing, worn down, or ready.
+            - planHealth is the script-managed health scaffold for the current plan thread. Treat it as factual continuity evidence about objective age, milestone labels, contradictions, opportunity costs, and pivot pressure.
+            - If planHealth says the current thread is strained or contradicted, stop spending this turn preserving the old setup just because it was once coherent. Either convert now from the current board, or take actions that make the pivot real on the board this turn.
             - Use decisiveObjective and conversionBlocker together: push actions that advance the objective directly, and spend tempo solving the blocker only when that really improves conversion.
             - Because this call is stateless, do not assume any hidden context beyond Memory JSON and Planner Brief JSON. If the strategist wants a major shift, make sure that shift is reflected in this turn's actual legal actions rather than letting stale local habits persist automatically.
             - If the strategist memo says "finish X" or "produce Y", verify from the current brief and tacticianTurnLog that X is still unfinished and Y is still the live intent. Do not keep following a completed instruction just because it still appears in older memo text.
+            - tacticianReflection is your short delta log for the next stateless call. Use it to report what changed, what completed, what is still blocked, what became obsolete, and whether the old memo still looks healthy, strained, or contradicted after this turn.
             - Do not let routine worker upkeep crowd out rival threats, important city tempo choices, or concrete frontline opportunities visible in the current state.
             - Use select_empire_option only with candidateId values from empireChoices. Never invent research, policy, diplomacy, gold, or bombardment commands outside those candidates.
             - Repeated diplomacy that does not materially improve the game state is low priority.
@@ -105,6 +117,7 @@ object AgentPromptBuilder {
             - When mustActNow is non-empty, do not spend the turn only on low-value scouting, fortify, or reposition actions unless the current brief shows immediate danger or another clearly stronger tactical opportunity.
             - If mustActNow includes a city that still needs a project choice, that choice usually deserves action before extra map-polishing moves.
             - If mustActNow includes a Settler that can found on its current tile and the strategist memo still wants that city, founding it usually outranks routine observation moves.
+            - If mustActNow says the current plan should pivot, do not spend the turn on “one more turn of staging” unless the current brief shows a concrete immediate payoff for that delay.
             - Only return an empty actions list when the surfaced actions are genuinely low-value or disruptive relative to the strategist memo and the current board state.
             - When preserve-progress instincts conflict with concrete frontline state, rival pressure, or better city tempo choices visible in the brief, trust the visible state and the strategist briefing over inertia.
             - If tacticianHandoff says to stop delaying for recon, upkeep, or passive infrastructure, believe it and act accordingly.
@@ -113,7 +126,11 @@ object AgentPromptBuilder {
             - When objectiveTheater is present, prefer using the surfaced objective-theater units and support cities before unrelated rear-area micro. Off-axis reserves matter mainly as reinforcements.
             - When captureReadiness says healthy capture units are thin or missing, treat melee buys, melee builds, and preserving existing capture units as higher priority than extra ranged chip or side-target cleanup.
             - If a safe civilian capture is available with a melee unit in the objective theater, prefer capturing that unit over merely killing it with ranged damage.
+            - If planHealth opportunity costs say an idle army or one-city economy is bleeding tempo, treat more passive military staging as suspicious unless it immediately improves conversion.
             - Use strategistRefreshRequest only for a real strategic emergency: the strategist memo assumptions are broken by war, a critical rival surge, a collapse in the current plan, or another major shift that should trigger an immediate strategist review.
+            - memoValidity should use a short label such as healthy, strained, or contradicted. Mark it as strained or contradicted when current reality clearly no longer matches the old memo's assumptions.
+            - If you intentionally hold actions, explain the concrete payoff and mark memoValidity as strained or contradicted when this is another turn of delay instead of real progress.
+            - Keep tacticianReflection sparse and concrete. Use short bullets, not essays, and only mention deltas that matter across turns.
             - Use only unit IDs, cities, action types, tiles, and constructions present in Planner Brief JSON.
             - Do not invent entities.
             - Prefer short, legal plans (0-25 commands).

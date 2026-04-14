@@ -9,8 +9,9 @@ object AgentStrategicGovernor {
         val gameContext = empireObservation.gameContext
         val primaryThreat = empireObservation.victoryThreats.firstOrNull()
         val memo = memory.lastStrategistMemo.takeIf { it.campaignStage.isNotBlank() }
-        val attentionFacts = buildAttentionFacts(observation, empireObservation)
-        val mustActNow = buildMustActNow(observation, empireObservation)
+        val planHealth = memory.planHealth.toObservation(observation.turn)
+        val attentionFacts = buildAttentionFacts(observation, empireObservation, planHealth)
+        val mustActNow = buildMustActNow(observation, empireObservation, planHealth)
         val campaignContext = buildCampaignContext(memory, observation, empireObservation)
         val cityHighlights = selectCityHighlights(observation, gameContext, campaignContext)
         val memoryContext = buildMemoryContext(memory, observation, empireObservation)
@@ -48,6 +49,7 @@ object AgentStrategicGovernor {
                 futurePlan = memo?.futurePlan,
                 tacticianHandoff = memo?.tacticianHandoff ?: memo?.futurePlan,
             ),
+            planHealth = planHealth,
             memoryContext = memoryContext,
             campaignContext = campaignContext,
             objectiveTheater = unitSurfacing.objectiveTheater,
@@ -125,6 +127,7 @@ object AgentStrategicGovernor {
                     stillBlocked = entry.stillBlocked,
                     obsolete = entry.obsolete,
                     carryForward = entry.carryForward,
+                    memoValidity = entry.memoValidity,
                 )
             },
         )
@@ -133,8 +136,25 @@ object AgentStrategicGovernor {
     private fun buildMustActNow(
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
+        planHealth: AgentPlanHealthObservation?,
     ): List<AgentPlannerMustActObservation> {
         val items = arrayListOf<AgentPlannerMustActObservation>()
+
+        if (planHealth?.pivotRecommended == true) {
+            items += AgentPlannerMustActObservation(
+                kind = "plan_pivot_required",
+                headline = "The current campaign thread is contradicted and should pivot",
+                detail = planHealth.pivotReason
+                    ?: planHealth.contradictions.firstOrNull()
+                    ?: "Current board truth no longer matches the old memo cleanly.",
+            )
+        } else if (planHealth != null && planHealth.status.equals("strained", ignoreCase = true) && planHealth.contradictions.isNotEmpty()) {
+            items += AgentPlannerMustActObservation(
+                kind = "plan_health_warning",
+                headline = "The current campaign thread is straining",
+                detail = planHealth.contradictions.take(2).joinToString(" "),
+            )
+        }
 
         val citiesNeedingChoice = observation.cities
             .filter { it.project?.status == "needs_choice" || it.project == null }
@@ -197,10 +217,50 @@ object AgentStrategicGovernor {
     private fun buildAttentionFacts(
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
+        planHealth: AgentPlanHealthObservation?,
     ): List<ObservationFact> {
         val facts = linkedMapOf<String, ObservationFact>()
         fun addFact(fact: ObservationFact) {
             facts.putIfAbsent("${fact.category}|${fact.headline}", fact)
+        }
+
+        planHealth?.let { livePlanHealth ->
+            if (!livePlanHealth.status.isNullOrBlank()) {
+                when {
+                    livePlanHealth.pivotRecommended -> addFact(
+                        ObservationFact(
+                            category = "plan",
+                            severity = "warning",
+                            headline = "Current campaign thread is contradicted",
+                            detail = livePlanHealth.pivotReason
+                                ?: livePlanHealth.contradictions.firstOrNull()
+                                ?: "Board truth is no longer lining up with the old memo.",
+                        )
+                    )
+                    livePlanHealth.status.equals("strained", ignoreCase = true) -> addFact(
+                        ObservationFact(
+                            category = "plan",
+                            severity = "warning",
+                            headline = "Current campaign thread is under strain",
+                            detail = livePlanHealth.contradictions.firstOrNull()
+                                ?: livePlanHealth.opportunityCosts.firstOrNull()
+                                ?: "Waiting or drift is starting to cost tempo.",
+                        )
+                    )
+                }
+                livePlanHealth.opportunityCosts
+                    .take(2)
+                    .forEach { cost ->
+                        addFact(
+                            ObservationFact(
+                                category = "plan",
+                                severity = "warning",
+                                headline = "Opportunity cost is rising",
+                                detail = cost,
+                            )
+                        )
+                    }
+            }
         }
 
         val threatenedCities = observation.cities

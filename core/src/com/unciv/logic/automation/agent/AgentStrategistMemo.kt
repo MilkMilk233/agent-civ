@@ -10,6 +10,7 @@ data class AgentStrategistMemoMemory(
     var campaignStage: String = "",
     var decisiveObjective: String? = null,
     var conversionBlocker: String? = null,
+    var planHealth: AgentPlanHealthLabels = AgentPlanHealthLabels(),
     var thesis: String? = null,
     var pastSummary: String? = null,
     var currentSituation: String? = null,
@@ -29,7 +30,7 @@ data class AgentStrategistMemoMemory(
     var lastReviewedTurn: Int = 0,
     var lastRefreshReason: String? = null,
 ) : IsPartOfGameInfoSerialization {
-    constructor() : this("", null, "", null, null, null, null, null, null, null, 0, 0, false, false, null, 0, 0, null, arrayListOf(), 0, 0, 0, null)
+    constructor() : this("", null, "", null, null, AgentPlanHealthLabels(), null, null, null, null, null, 0, 0, false, false, null, 0, 0, null, arrayListOf(), 0, 0, 0, null)
 }
 
 @Serializable
@@ -44,6 +45,7 @@ data class AgentStrategistMemoDraft(
     val campaignStage: String,
     val decisiveObjective: String,
     val conversionBlocker: String? = null,
+    val planHealth: AgentPlanHealthLabels = AgentPlanHealthLabels(),
     val thesis: String? = null,
     val pastSummary: String? = null,
     val currentSituation: String? = null,

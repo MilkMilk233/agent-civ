@@ -99,6 +99,7 @@ object AgentStrategistGovernor {
             currentResearch = empireObservation.currentResearch,
             currentResearchStatus = empireObservation.currentResearchStatus,
             lastStrategistMemo = lastStrategistMemo,
+            planHealth = memory.planHealth.toObservation(observation.turn),
             worldModel = memory.worldModel.takeIf {
                 !it.summary.isNullOrBlank() || it.notes.isNotEmpty() || it.anchors.isNotEmpty()
             },
@@ -135,6 +136,7 @@ object AgentStrategistGovernor {
             campaignStage = memo.campaignStage,
             decisiveObjective = memo.decisiveObjective,
             conversionBlocker = memo.conversionBlocker,
+            planHealth = memo.planHealth,
             thesis = memo.thesis,
             pastSummary = memo.pastSummary,
             currentSituation = memo.currentSituation,

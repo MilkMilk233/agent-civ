@@ -8,6 +8,7 @@ data class AgentActionPlan(
     val actions: List<AgentActionCommand> = emptyList(),
     val handoffToLegacyAI: Boolean = false,
     val strategistRefreshRequest: AgentStrategistRefreshRequest? = null,
+    val tacticianReflection: AgentTacticianReflection? = null,
     val notes: String? = null,
 )
 
