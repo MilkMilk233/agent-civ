@@ -3838,10 +3838,53 @@ function LiteralArtifactsSection({
 
 function CodeDisclosure({ title, content }: { title: string; content: string }) {
   if (!content) return null;
+  const formatted = useMemo(() => formatLiteralContent(title, content), [title, content]);
+  const [wrapped, setWrapped] = useState(true);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return undefined;
+    const timeout = window.setTimeout(() => setCopied(false), 1400);
+    return () => window.clearTimeout(timeout);
+  }, [copied]);
+
+  const handleCopy = async () => {
+    if (!navigator.clipboard) return;
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+
   return (
     <details className="code-disclosure">
       <summary>{title}</summary>
-      <pre>{content}</pre>
+      <div className="code-disclosure-toolbar">
+        <div className="code-disclosure-meta">
+          <span className="tag neutral">{formatted.formatLabel}</span>
+          <span className="tag neutral">{formatLiteralLineCount(formatted.display)}</span>
+          {formatted.isFormatted ? <span className="tag accent">formatted for readability</span> : null}
+        </div>
+        <div className="code-disclosure-actions">
+          <button
+            type="button"
+            className={`toggle-chip ${wrapped ? "selected" : ""}`}
+            onClick={() => setWrapped((value) => !value)}
+          >
+            {wrapped ? "Wrapped" : "Raw width"}
+          </button>
+          <button type="button" className="toggle-chip" onClick={handleCopy}>
+            {copied ? "Copied exact" : "Copy exact"}
+          </button>
+        </div>
+      </div>
+      <div className={`code-disclosure-body ${wrapped ? "wrapped" : "scrollable"}`}>
+        <pre>
+          <code>{formatted.display}</code>
+        </pre>
+      </div>
     </details>
   );
 }
@@ -3964,6 +4007,36 @@ function stringNumber(value: string | undefined): number | null {
 
 function numberValue(value: unknown): number | null {
   return typeof value === "number" ? value : null;
+}
+
+function formatLiteralContent(title: string, content: string): { display: string; formatLabel: string; isFormatted: boolean } {
+  const trimmed = content.trim();
+  const looksJson = title.toLowerCase().includes("json") || trimmed.startsWith("{") || trimmed.startsWith("[");
+  if (looksJson) {
+    try {
+      const parsed = JSON.parse(content) as unknown;
+      if (parsed !== null && typeof parsed === "object") {
+        return {
+          display: JSON.stringify(parsed, null, 2),
+          formatLabel: "JSON",
+          isFormatted: true,
+        };
+      }
+    } catch {
+      // Fall through to plain-text display when the payload is not valid JSON.
+    }
+  }
+
+  return {
+    display: content,
+    formatLabel: looksJson ? "Text" : "Prompt / text",
+    isFormatted: false,
+  };
+}
+
+function formatLiteralLineCount(content: string): string {
+  const lineCount = content.split("\n").length;
+  return `${formatNumber(lineCount)} ${lineCount === 1 ? "line" : "lines"}`;
 }
 
 function deriveTurnMetrics(turn: TurnRecord) {

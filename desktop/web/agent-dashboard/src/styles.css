@@ -914,10 +914,62 @@ pre {
   background: rgba(245, 249, 255, 0.96);
 }
 
-.code-disclosure pre {
-  border-radius: 0;
+.code-disclosure-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid rgba(122, 153, 194, 0.14);
+  background: linear-gradient(180deg, rgba(248, 251, 255, 0.96), rgba(243, 248, 255, 0.92));
+}
+
+.code-disclosure-meta,
+.code-disclosure-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.code-disclosure-actions button {
+  padding: 0.34rem 0.72rem;
+  box-shadow: none;
+  font-size: 0.82rem;
+}
+
+.code-disclosure-actions button:hover {
+  box-shadow: none;
+}
+
+.code-disclosure-body pre {
+  border-radius: 0 0 18px 18px;
   border: none;
   border-top: 1px solid rgba(122, 153, 194, 0.14);
+  margin: 0;
+  padding: 1rem 1.1rem;
+  max-height: 30rem;
+  line-height: 1.55;
+  tab-size: 2;
+}
+
+.code-disclosure-body pre code {
+  display: block;
+  min-width: max-content;
+}
+
+.code-disclosure-body.wrapped pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.code-disclosure-body.wrapped pre code {
+  min-width: 0;
+}
+
+.code-disclosure-body.scrollable pre {
+  white-space: pre;
 }
 
 .error-text {
