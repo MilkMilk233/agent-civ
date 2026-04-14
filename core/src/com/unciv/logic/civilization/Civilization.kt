@@ -336,7 +336,7 @@ class Civilization : IsPartOfGameInfoSerialization {
     //region pure functions
     @Readonly
     fun getDifficulty(): Difficulty {
-        if (isHuman()) return gameInfo.getDifficulty()
+        if (usesHumanDifficulty()) return gameInfo.getDifficulty()
         if (gameInfo.ruleset.difficulties.containsKey(gameInfo.getDifficulty().aiDifficultyLevel)) {
             return gameInfo.ruleset.difficulties[gameInfo.getDifficulty().aiDifficultyLevel]!!
         }
@@ -380,6 +380,7 @@ class Civilization : IsPartOfGameInfoSerialization {
 
     @Readonly fun isHuman() = playerType == PlayerType.Human
     @Readonly fun isAI() = playerType == PlayerType.AI || playerType == PlayerType.AI_AGENT
+    @Readonly fun usesHumanDifficulty() = playerType == PlayerType.Human || playerType == PlayerType.AI_AGENT
     @Readonly
     fun isAIOrAutoPlaying(): Boolean {
         if (isAI()) return true

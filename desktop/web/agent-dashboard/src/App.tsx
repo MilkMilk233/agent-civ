@@ -253,19 +253,63 @@ export default function App() {
           subtitle={mode === "live" ? "Current in-memory observability stream." : "Stored evaluations from disk."}
         >
           {mode === "live" ? (
-            <div className="summary-grid compact hero-summary-grid">
-              <SummaryStat label="Buffered events" value={formatNumber(snapshot?.totalBufferedEvents)} />
-              <SummaryStat label="Visible turns" value={formatNumber(turns.length)} />
-              <SummaryStat label="Last refresh" value={snapshot ? formatRelative(snapshot.generatedAtEpochMs) : "Not loaded"} />
-              <SummaryStat label="Current civ" value={selectedTurn?.civName || "None"} />
-            </div>
+            <>
+              <div className="summary-grid compact hero-summary-grid">
+                <SummaryStat label="Buffered events" value={formatNumber(snapshot?.totalBufferedEvents)} />
+                <SummaryStat label="Visible turns" value={formatNumber(turns.length)} />
+                <SummaryStat label="Last refresh" value={snapshot ? formatRelative(snapshot.generatedAtEpochMs) : "Not loaded"} />
+                <SummaryStat label="Current civ" value={selectedTurn?.civName || "None"} />
+              </div>
+
+              <div className="hero-embedded-panel">
+                <div className="button-row hero-actions">
+                  <button onClick={() => void loadSnapshot()}>Refresh snapshot now</button>
+                  <button onClick={() => setMode("replay")}>Open replay mode</button>
+                </div>
+                <div className="mini-note">
+                  Use replay mode when you want the full stored trace instead of the rolling in-memory window.
+                </div>
+              </div>
+            </>
           ) : (
-            <div className="summary-grid compact hero-summary-grid">
-              <SummaryStat label="Selected batch" value={selectedBatch?.name || selectedBatch?.batchId || "None"} />
-              <SummaryStat label="Selected match" value={selectedMatch?.label || selectedMatch?.matchId || "None"} />
-              <SummaryStat label="Winner" value={selectedMatch?.winnerCivName || selectedMatch?.winnerSide || "Unknown"} />
-              <SummaryStat label="Total turns" value={formatNumber(selectedMatch?.totalTurns)} />
-            </div>
+            <>
+              <div className="summary-grid compact hero-summary-grid">
+                <SummaryStat label="Selected batch" value={selectedBatch?.name || selectedBatch?.batchId || "None"} />
+                <SummaryStat label="Selected match" value={selectedMatch?.label || selectedMatch?.matchId || "None"} />
+                <SummaryStat label="Winner" value={selectedMatch?.winnerCivName || selectedMatch?.winnerSide || "Unknown"} />
+                <SummaryStat label="Total turns" value={formatNumber(selectedMatch?.totalTurns)} />
+              </div>
+
+              <div className="hero-embedded-panel">
+                <div className="field-grid hero-replay-grid">
+                  <label>
+                    Batch
+                    <select value={selectedBatchId} onChange={(event) => setSelectedBatchId(event.target.value)}>
+                      {batches.map((batch) => (
+                        <option key={batch.batchId} value={batch.batchId}>
+                          {batch.name || batch.batchId}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Match
+                    <select value={selectedMatchId} onChange={(event) => setSelectedMatchId(event.target.value)}>
+                      {matches.map((match) => (
+                        <option key={match.matchId} value={match.matchId}>
+                          {match.label || match.matchId}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                {selectedBatch ? (
+                  <div className="mini-note">
+                    {selectedBatch.baseRuleset} · {selectedBatch.mapSize} {selectedBatch.mapType} · max {selectedBatch.maxTurns} turns
+                  </div>
+                ) : null}
+              </div>
+            </>
           )}
           {error ? <p className="error-text">{error}</p> : null}
         </Card>
@@ -279,48 +323,6 @@ export default function App() {
 
       <section className="workspace-grid">
         <aside className="control-rail">
-          {mode === "replay" ? (
-            <Card title="Replay picker" subtitle="Choose a batch and match, then inspect turns on the right.">
-              <div className="form-stack">
-                <label>
-                  Batch
-                  <select value={selectedBatchId} onChange={(event) => setSelectedBatchId(event.target.value)}>
-                    {batches.map((batch) => (
-                      <option key={batch.batchId} value={batch.batchId}>
-                        {batch.name || batch.batchId}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Match
-                  <select value={selectedMatchId} onChange={(event) => setSelectedMatchId(event.target.value)}>
-                    {matches.map((match) => (
-                      <option key={match.matchId} value={match.matchId}>
-                        {match.label || match.matchId}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {selectedBatch ? (
-                  <div className="mini-note">
-                    {selectedBatch.baseRuleset} · {selectedBatch.mapSize} {selectedBatch.mapType} · max {selectedBatch.maxTurns} turns
-                  </div>
-                ) : null}
-              </div>
-            </Card>
-          ) : (
-            <Card title="Live feed" subtitle="Auto-refreshes every 5 seconds while you stay on the Live tab.">
-              <div className="button-row">
-                <button onClick={() => void loadSnapshot()}>Refresh snapshot now</button>
-                <button onClick={() => setMode("replay")}>Open replay mode</button>
-              </div>
-              <div className="mini-note">
-                Use replay mode when you want the full stored trace instead of the rolling in-memory window.
-              </div>
-            </Card>
-          )}
-
           <Card title="Turn watchlist" subtitle={`${turns.length} turn snapshots loaded`}>
             <div className="watchlist-list">
               {turns.map((turn) => (
@@ -740,12 +742,13 @@ function ScoreTimelineCard({
   }
 
   const xRange = Math.max(1, timeline.maxTurn - timeline.minTurn);
-  const yRange = Math.max(1, timeline.maxValue - timeline.minValue);
+  const yAxis = buildNiceNumericAxis(timeline.minValue, timeline.maxValue, 5);
+  const yRange = Math.max(1, yAxis.max - yAxis.min);
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
   const xForTurn = (turn: number) => padding.left + ((turn - timeline.minTurn) / xRange) * plotWidth;
-  const yForScore = (value: number) => padding.top + plotHeight - ((value - timeline.minValue) / yRange) * plotHeight;
-  const yTicks = buildNumericTicks(timeline.minValue, timeline.maxValue, 4);
+  const yForScore = (value: number) => padding.top + plotHeight - ((value - yAxis.min) / yRange) * plotHeight;
+  const yTicks = yAxis.ticks;
   const xTicks = buildIntegerTicks(timeline.minTurn, timeline.maxTurn, 5);
 
   return (
@@ -779,7 +782,7 @@ function ScoreTimelineCard({
               <g key={`y-${tick}`}>
                 <line x1={padding.left} x2={width - padding.right} y1={y} y2={y} className="score-chart-grid-line" />
                 <text x={padding.left - 10} y={y + 4} textAnchor="end" className="score-chart-axis-label">
-                  {formatNumber(tick)}
+                  {formatAxisValue(tick)}
                 </text>
               </g>
             );
@@ -2554,9 +2557,73 @@ function buildLinePath(
     .join(" ");
 }
 
-function buildNumericTicks(min: number, max: number, steps: number) {
-  if (min === max) return [min];
-  return Array.from({ length: steps + 1 }, (_, index) => Math.round(min + ((max - min) * index) / steps));
+function buildNiceNumericAxis(min: number, max: number, maxTickCount: number) {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+    return { min: 0, max: 1, ticks: [0, 1] };
+  }
+
+  if (min === max) {
+    if (min === 0) return { min: 0, max: 1, ticks: [0, 1] };
+    const constantMin = min > 0 ? 0 : min;
+    const spacing = niceNumber(Math.abs(min) / Math.max(1, maxTickCount - 1), true) || 1;
+    const constantMax = min > 0 ? Math.ceil(min / spacing) * spacing : constantMin + spacing * 2;
+    const ticks = [];
+    for (let value = constantMin; value <= constantMax + spacing / 2; value += spacing) {
+      ticks.push(roundAxisValue(value));
+    }
+    return { min: constantMin, max: constantMax, ticks };
+  }
+
+  const preferZeroFloor = min >= 0;
+  const preferZeroCeiling = max <= 0;
+  const boundedMin = preferZeroFloor ? 0 : min;
+  const boundedMax = preferZeroCeiling ? 0 : max;
+  const roughRange = Math.max(Math.abs(boundedMax - boundedMin), Number.EPSILON);
+  const spacing = niceNumber(roughRange / Math.max(1, maxTickCount - 1), true);
+  const axisMin = preferZeroFloor ? 0 : Math.floor(boundedMin / spacing) * spacing;
+  const axisMax = preferZeroCeiling ? 0 : Math.ceil(boundedMax / spacing) * spacing;
+  const ticks = [];
+
+  for (let value = axisMin; value <= axisMax + spacing / 2; value += spacing) {
+    ticks.push(roundAxisValue(value));
+  }
+
+  return {
+    min: roundAxisValue(axisMin),
+    max: roundAxisValue(axisMax <= axisMin ? axisMin + spacing : axisMax),
+    ticks,
+  };
+}
+
+function niceNumber(value: number, round: boolean) {
+  if (value <= 0 || !Number.isFinite(value)) return 1;
+  const exponent = Math.floor(Math.log10(value));
+  const fraction = value / 10 ** exponent;
+  let niceFraction = 1;
+
+  if (round) {
+    if (fraction < 1.5) niceFraction = 1;
+    else if (fraction < 3) niceFraction = 2;
+    else if (fraction < 7) niceFraction = 5;
+    else niceFraction = 10;
+  } else {
+    if (fraction <= 1) niceFraction = 1;
+    else if (fraction <= 2) niceFraction = 2;
+    else if (fraction <= 5) niceFraction = 5;
+    else niceFraction = 10;
+  }
+
+  return niceFraction * 10 ** exponent;
+}
+
+function roundAxisValue(value: number) {
+  if (Math.abs(value) >= 1) return Math.round(value * 1000) / 1000;
+  return Math.round(value * 1000000) / 1000000;
+}
+
+function formatAxisValue(value: number) {
+  if (Number.isInteger(value)) return formatNumber(value);
+  return value.toFixed(Math.abs(value) >= 10 ? 1 : 2).replace(/\.?0+$/, "");
 }
 
 function buildIntegerTicks(min: number, max: number, steps: number) {

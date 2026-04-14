@@ -25,7 +25,7 @@ class BaseUnitCost(val baseUnit: BaseUnit) {
 
         productionCost *= if (civInfo.isCityState)
             1.5f
-        else if (civInfo.isHuman())
+        else if (civInfo.usesHumanDifficulty())
             civInfo.getDifficulty().unitCostModifier
         else
             civInfo.gameInfo.getDifficulty().aiUnitCostModifier

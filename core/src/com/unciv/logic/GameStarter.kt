@@ -180,7 +180,7 @@ object GameStarter {
             for (tech in ruleset.technologies.values.filter { it.hasUnique(UniqueType.StartingTech) })
                 civInfo.addTechSilently(tech.name)
 
-            if (!civInfo.isHuman())
+            if (!civInfo.usesHumanDifficulty())
                 for (tech in gameInfo.getDifficulty().aiFreeTechs)
                     civInfo.addTechSilently(tech)
 
@@ -459,7 +459,7 @@ object GameStarter {
 
         // Add extra units granted by difficulty
         startingUnits.addAll(when {
-            civ.isHuman() -> gameInfo.getDifficulty().playerBonusStartingUnits
+            civ.usesHumanDifficulty() -> gameInfo.getDifficulty().playerBonusStartingUnits
             civ.isMajorCiv() -> gameInfo.getDifficulty().aiMajorCivBonusStartingUnits
             else -> gameInfo.getDifficulty().aiCityStateBonusStartingUnits
         })

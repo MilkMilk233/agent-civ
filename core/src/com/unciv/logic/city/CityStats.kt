@@ -335,7 +335,7 @@ class CityStats(val city: City) {
     private fun getBuildingMaintenanceCosts(): Float {
         // Same here - will have a different UI display.
         var buildingsMaintenance = city.cityConstructions.getMaintenanceCosts() // this is AFTER the bonus calculation!
-        if (!city.civ.isHuman()) {
+        if (!city.civ.usesHumanDifficulty()) {
             buildingsMaintenance *= city.civ.gameInfo.getDifficulty().aiBuildingMaintenanceModifier
         }
 
@@ -383,7 +383,7 @@ class CityStats(val city: City) {
         // I don't know enough about the original whether they do something similar or not and can't be bothered to find where
         // in the source code this calculation takes place, but it would surprise me if they also did this double multiplication thing. ~xlenstra
         var unhappinessModifier = civInfo.getDifficulty().unhappinessModifier
-        if (!civInfo.isHuman())
+        if (!civInfo.usesHumanDifficulty())
             unhappinessModifier *= civInfo.gameInfo.getDifficulty().aiUnhappinessModifier
 
         var unhappinessFromCity = -3f // -3 happiness per city

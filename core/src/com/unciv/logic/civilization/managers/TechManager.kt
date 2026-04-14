@@ -105,7 +105,7 @@ class TechManager : IsPartOfGameInfoSerialization {
     @Readonly
     fun costOfTech(techName: String): Int {
         var techCost = getRuleset().technologies[techName]!!.cost.toFloat()
-        if (civInfo.isHuman())
+        if (civInfo.usesHumanDifficulty())
             techCost *= civInfo.getDifficulty().researchCostModifier
         techCost *= civInfo.gameInfo.speed.scienceCostModifier
         techCost /= getScienceModifier(techName)

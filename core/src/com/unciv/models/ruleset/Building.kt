@@ -140,7 +140,7 @@ class Building : RulesetStatsObject(), INonPerpetualConstruction {
 
         if (civInfo.isCityState)
             productionCost *= 1.5f
-        else if (civInfo.isHuman()) {
+        else if (civInfo.usesHumanDifficulty()) {
             if (!isWonder)
                 productionCost *= civInfo.getDifficulty().buildingCostModifier
         } else {
