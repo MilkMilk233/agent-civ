@@ -139,6 +139,7 @@ object AgentStrategistPromptBuilder {
             - Do not rely on tacticianHandoff to carry essential guidance. The live tactician packet now depends on decisionFrame and controlLanes first, so put the real expectations there.
             - controlLanes should usually be the most declarative part of the memo: describe what is sufficient, what should be preferred if surfaced, what should stop, and what posture should hold during this phase.
             - When a visible target or frontier axis already exists, describe both production posture and movement posture. Say what cities should build next, but also say whether already-built forces should keep screening, gather on the axis, march forward, hold a claim, or stop drifting elsewhere.
+            - When a city assault is becoming real, be explicit about the basic battlefield jobs a good tactician should maintain: a staging line before war, an assault ring once war begins, damaged units cycling out to recover, and a healthy melee capture unit being preserved instead of traded away.
             - Do not let existing units disappear from the strategic story once production becomes the bottleneck. If the current campaign depends on pressure against a visible objective, currentSituation, futurePlan, and controlLanes should make the intended posture of existing forces understandable in plain teammate language.
             - refreshRequest tells you why this strategist call happened. Respect it as the phase boundary that just fired rather than retelling the previous memo from habit.
             - campaignStage is required. Use a short natural stage label such as scouting, expansion, staging, assault, rebuild, or consolidation.
@@ -149,6 +150,7 @@ object AgentStrategistPromptBuilder {
             - Only fill the lanes that genuinely matter in this phase. Omit irrelevant lanes instead of writing boilerplate.
             - buildControl should say the city-production posture in teammate language: what is already enough, what should stop, and what production should come next.
             - unitControl should say how already-built forces should posture relative to the current axis: screen, escort, gather, march, hold, or stop drifting.
+            - When the current campaign points at a real city target, unitControl can also name the intended operational roles in plain language: stage outside the border before war, keep one healthy melee as the captor, let damaged frontline units recover and rejoin, and keep the second line marching forward as replacements.
             - workerControl should say whether worker tempo matters now, whether civilians should be deferred, protected, or actively improving.
             - purchaseControl should say what gold is being reserved for or what spending posture should dominate the next few turns.
             - techControl and policyControl should only be used when the current phase really cares about them. Keep them short.

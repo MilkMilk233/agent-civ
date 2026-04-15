@@ -14,6 +14,13 @@ function latestEventOfType(events: ObservabilityEvent[], type: string): Observab
   return undefined;
 }
 
+function parseStrategistMemoFromResponse(event: ObservabilityEvent | undefined): unknown | null {
+  if (!event) return null;
+  const raw = parseJsonValue<Record<string, unknown>>(event.details?.rawResponse);
+  const memo = raw && typeof raw === "object" ? raw.memo : null;
+  return memo ?? null;
+}
+
 function summarizeStatus(
   turnSummary: TurnSummary | undefined,
   events: ObservabilityEvent[],
@@ -82,11 +89,13 @@ export function deriveTurns(events: ObservabilityEvent[], turnSummaries: TurnSum
       const turnStart = latestEventOfType(group, "turn_start");
       const planParsed = latestEventOfType(group, "llm_plan_parsed");
       const strategistRequest = latestEventOfType(group, "strategist_llm_request");
+      const strategistResponse = latestEventOfType(group, "strategist_llm_response");
       const planApplied = latestEventOfType(group, "plan_applied");
       const validationFailed = latestEventOfType(group, "plan_validation_failed");
       const details = turnStart?.details ?? {};
       const summary = summariesByKey.get(key);
       const status = summarizeStatus(summary, group);
+      const strategistMemoFromResponse = parseStrategistMemoFromResponse(strategistResponse);
 
       return {
         key,
@@ -101,7 +110,7 @@ export function deriveTurns(events: ObservabilityEvent[], turnSummaries: TurnSum
         memory: parseJsonValue(details.memoryJson),
         plannerBrief: parseJsonValue(details.plannerBriefJson),
         strategistBrief: parseJsonValue(strategistRequest?.details?.strategistBriefJson),
-        strategistMemo: parseJsonValue(details.strategistMemoJson),
+        strategistMemo: strategistMemoFromResponse ?? parseJsonValue(details.strategistMemoJson),
         parsedPlan: parseJsonValue(planParsed?.details?.parsedPlan),
         outcomeDomainSummary: parseJsonValue(planApplied?.details?.outcomeDomainSummaryJson),
         validationFailures: parseJsonValue(validationFailed?.details?.validationFailuresJson),

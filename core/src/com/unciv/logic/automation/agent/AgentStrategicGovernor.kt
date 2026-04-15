@@ -847,7 +847,7 @@ object AgentStrategicGovernor {
             "scout" -> if (gameContext.contactComplete) if (warLikeContext) -10 else 5 else 40
             else -> 30
         }
-        if (!gameContext.contactComplete && unit.hasMovement && unit.unitOptionCandidates.any { it.candidateId.startsWith("unitexplore:") }) {
+        if (!gameContext.contactComplete && unit.hasMovement && unit.unitActions.any { it == "Explore" || it == "StopExploration" }) {
             score += if (unit.role == "scout") 70 else 40
         }
         if (unit.unitOptionCandidates.any { it.candidateId.startsWith("unitattack:") }) score += 40

@@ -2786,6 +2786,14 @@ function StrategistUnitSnapshotsSection({
                   <MiniMetric label="Nearest rival capital" value={nullableNumberText(unit.distanceToNearestRivalCapital)} />
                 </div>
 
+                {progress ? (
+                  <div className="tag-list compact">
+                    <span className="tag neutral">{humanizeKey(stringValue(progress.role) || "assignment")}</span>
+                    <span className="tag neutral">{humanizeKey(stringValue(progress.status) || "unknown")}</span>
+                    <span className="tag neutral">Switch {humanizeKey(stringValue(progress.switchCost) || "unknown")}</span>
+                  </div>
+                ) : null}
+
                 {progress ? <p className="card-paragraph">{stringValue(progress.progressNote)}</p> : null}
 
                 {signals.length ? (
@@ -3554,6 +3562,14 @@ function UnitHighlightsSection({ title, units }: { title: string; units: Record<
                   <MiniMetric label="Range" value={nullableNumberText(unit.range)} />
                   <MiniMetric label="Nearby hostiles" value={formatNumber(numberValue(unit.nearbyHostileUnits))} />
                 </div>
+
+                {progress ? (
+                  <div className="tag-list compact">
+                    <span className="tag neutral">{humanizeKey(stringValue(progress.role) || "assignment")}</span>
+                    <span className="tag neutral">{humanizeKey(stringValue(progress.status) || "unknown")}</span>
+                    <span className="tag neutral">Switch {humanizeKey(stringValue(progress.switchCost) || "unknown")}</span>
+                  </div>
+                ) : null}
 
                 {progress ? <p className="card-paragraph">{stringValue(progress.progressNote)}</p> : null}
 

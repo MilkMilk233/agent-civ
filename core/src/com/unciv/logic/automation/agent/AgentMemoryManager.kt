@@ -2027,6 +2027,56 @@ object AgentMemoryManager {
                 lastProgressTurn = turn,
                 staleAfterTurn = turn + unitAssignmentHorizonTurns,
             )
+            "unitstage" -> UnitAssignmentMemory(
+                unitId = parsed.unitId,
+                unitName = unit?.name ?: "",
+                role = "stage_outside_border",
+                targetX = parsed.targetX,
+                targetY = parsed.targetY,
+                detail = observation?.detail ?: "Prewar staging assignment",
+                lastProgressTurn = turn,
+                staleAfterTurn = turn + unitAssignmentHorizonTurns,
+            )
+            "unitreinforce" -> UnitAssignmentMemory(
+                unitId = parsed.unitId,
+                unitName = unit?.name ?: "",
+                role = "reinforce_assault",
+                targetX = parsed.targetX,
+                targetY = parsed.targetY,
+                detail = observation?.detail ?: "Frontline reinforcement assignment",
+                lastProgressTurn = turn,
+                staleAfterTurn = turn + unitAssignmentHorizonTurns,
+            )
+            "unitassault" -> UnitAssignmentMemory(
+                unitId = parsed.unitId,
+                unitName = unit?.name ?: "",
+                role = "assault_city_ring",
+                targetX = parsed.targetX,
+                targetY = parsed.targetY,
+                detail = observation?.detail ?: "City assault ring assignment",
+                lastProgressTurn = turn,
+                staleAfterTurn = turn + unitAssignmentHorizonTurns,
+            )
+            "unitrecoverrejoin" -> UnitAssignmentMemory(
+                unitId = parsed.unitId,
+                unitName = unit?.name ?: "",
+                role = "recover_then_rejoin",
+                targetX = parsed.targetX,
+                targetY = parsed.targetY,
+                detail = observation?.detail ?: "Recover and rejoin assignment",
+                lastProgressTurn = turn,
+                staleAfterTurn = turn + unitAssignmentHorizonTurns,
+            )
+            "unitcaptorpreserve" -> UnitAssignmentMemory(
+                unitId = parsed.unitId,
+                unitName = unit?.name ?: "",
+                role = "preserve_capture_unit",
+                targetX = parsed.targetX,
+                targetY = parsed.targetY,
+                detail = observation?.detail ?: "Capture reserve assignment",
+                lastProgressTurn = turn,
+                staleAfterTurn = turn + unitAssignmentHorizonTurns,
+            )
             "unitspecial" -> classifyAssignment(unit, parsed.actionType, unit?.x, unit?.y, turn)
                 .copy(unitId = parsed.unitId, unitName = unit?.name ?: "")
             else -> return null
@@ -2094,6 +2144,16 @@ object AgentMemoryManager {
                 )
             }
             "unitworkerreposition" -> {
+                if (parts.size != 3) return null
+                val target = parseCoords(parts[2]) ?: return null
+                ParsedUnitOption(
+                    kind = parts[0],
+                    unitId = unitId,
+                    targetX = target.first,
+                    targetY = target.second,
+                )
+            }
+            "unitstage", "unitreinforce", "unitassault", "unitrecoverrejoin", "unitcaptorpreserve" -> {
                 if (parts.size != 3) return null
                 val target = parseCoords(parts[2]) ?: return null
                 ParsedUnitOption(

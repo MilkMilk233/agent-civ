@@ -23,7 +23,6 @@ object AgentUnitOptionBuilder {
     private const val maxAttackCandidatesPerUnit = 3
     private const val maxSettlerCandidatesPerUnit = 2
     private const val maxWorkerCandidatesPerUnit = 3
-    private const val maxExploreCandidatesPerUnit = 2
     private const val maxDirectActionCandidatesPerUnit = 3
 
     internal fun build(civInfo: Civilization, memory: AgentMemory): AgentUnitOptionContext {
@@ -38,11 +37,11 @@ object AgentUnitOptionBuilder {
                 candidates[candidate.observation.candidateId] = candidate
                 observations += candidate.observation
             }
-            buildSettlerCandidates(unit).forEach { candidate ->
+            buildOperationalCandidates(unit, civInfo, attackContext).forEach { candidate ->
                 candidates[candidate.observation.candidateId] = candidate
                 observations += candidate.observation
             }
-            buildExplorationCandidates(unit, availableActions).forEach { candidate ->
+            buildSettlerCandidates(unit).forEach { candidate ->
                 candidates[candidate.observation.candidateId] = candidate
                 observations += candidate.observation
             }
@@ -64,72 +63,6 @@ object AgentUnitOptionBuilder {
             candidates = candidates,
             observationsByUnitId = observationsByUnitId,
         )
-    }
-
-    private fun buildExplorationCandidates(
-        unit: MapUnit,
-        availableActions: List<UnitAction>,
-    ): List<AgentUnitRuntimeCandidate> {
-        if (!unit.hasMovement()) return emptyList()
-        if (availableActions.none { it.type == UnitActionType.Explore || it.type == UnitActionType.StopExploration }) return emptyList()
-        val unitVisibilityRange = unit.getVisibilityRange()
-
-        val reachableFrontierTiles = unit.movement.getDistanceToTiles().keys
-            .asSequence()
-            .filter { isGoodTileToExplore(unit, it, unitVisibilityRange) }
-            .sortedByDescending { scoreExploreTile(unit, it, unitVisibilityRange) }
-            .take(maxExploreCandidatesPerUnit)
-            .toList()
-
-        val fartherFrontierTiles = if (reachableFrontierTiles.size < maxExploreCandidatesPerUnit) {
-            unit.getTile().getTilesInDistance(5)
-                .filter { isGoodTileToExplore(unit, it, unitVisibilityRange) }
-                .sortedByDescending { scoreExploreTile(unit, it, unitVisibilityRange) }
-                .take(maxExploreCandidatesPerUnit - reachableFrontierTiles.size)
-                .toList()
-        } else {
-            emptyList()
-        }
-
-        return (reachableFrontierTiles + fartherFrontierTiles)
-            .distinctBy { it.position }
-            .take(maxExploreCandidatesPerUnit)
-            .map { targetTile ->
-                val revealScore = targetTile.getTilesAtDistance(unitVisibilityRange).count { tile -> !tile.isExplored(unit.civ) }
-                val candidateId = "unitexplore:${unit.id}:${targetTile.position.x},${targetTile.position.y}"
-                AgentUnitRuntimeCandidate(
-                    observation = UnitOptionCandidateObservation(
-                        candidateId = candidateId,
-                        category = "explore",
-                        title = "${unit.name} #${unit.id} move to frontier",
-                        detail = "Move toward (${targetTile.position.x}, ${targetTile.position.y}) to reveal about $revealScore unseen tiles.",
-                    ),
-                    validate = { currentCiv ->
-                        val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id }
-                            ?: return@AgentUnitRuntimeCandidate "Unit option rejected: unit missing"
-                        val liveTarget = currentCiv.gameInfo.tileMap[HexCoord(targetTile.position.x, targetTile.position.y)]
-                        if (!liveUnit.hasMovement()) return@AgentUnitRuntimeCandidate "Unit option rejected: unit has no movement left"
-                        if (liveUnit.getTile() == liveTarget) {
-                            return@AgentUnitRuntimeCandidate "Unit option rejected: frontier move would not change position"
-                        }
-                        if (!liveUnit.movement.canMoveTo(liveTarget)) {
-                            return@AgentUnitRuntimeCandidate "Unit option rejected: frontier tile is no longer enterable"
-                        }
-                        if (!liveUnit.movement.canReach(liveTarget) && liveUnit.movement.getShortestPath(liveTarget).isEmpty()) {
-                            return@AgentUnitRuntimeCandidate "Unit option rejected: frontier move is no longer attractive or reachable"
-                        }
-                        null
-                    },
-                    execute = { currentCiv ->
-                        val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id } ?: return@AgentUnitRuntimeCandidate false
-                        val liveTarget = currentCiv.gameInfo.tileMap[HexCoord(targetTile.position.x, targetTile.position.y)]
-                        val beforePosition = liveUnit.getTile().position
-                        liveUnit.movement.headTowards(liveTarget)
-                        liveUnit.getTile().position != beforePosition
-                    },
-                    successMessage = "${unit.name} moved to explore the frontier",
-                )
-            }
     }
 
     private fun buildAttackCandidates(
@@ -197,6 +130,209 @@ object AgentUnitOptionBuilder {
                     successMessage = "${unit.name} attacked ${defender.getName()}",
                 )
             }
+    }
+
+    private fun buildOperationalCandidates(
+        unit: MapUnit,
+        civInfo: Civilization,
+        attackContext: AttackConversionContext,
+    ): List<AgentUnitRuntimeCandidate> {
+        if (!unit.hasMovement() || !isOperationalCombatUnit(unit)) return emptyList()
+        val objective = attackContext.objective ?: return emptyList()
+        val objectiveTile = civInfo.gameInfo.tileMap[HexCoord(objective.x, objective.y)]
+        val objectiveOwner = objectiveTile.getOwner()
+        if (objectiveOwner == civInfo) return emptyList()
+
+        val candidates = arrayListOf<AgentUnitRuntimeCandidate>()
+        val currentDistance = axialDistance(unit.getTile().position.x, unit.getTile().position.y, objective.x, objective.y)
+        val wartimeObjective = objectiveOwner != null && civInfo.isAtWarWith(objectiveOwner)
+        if (objectiveOwner != null && !civInfo.isAtWarWith(objectiveOwner)) {
+            buildStageOutsideBorderCandidate(unit, objective)?.let(candidates::add)
+        }
+        if (civInfo.isAtWar() || attackContext.objectivePressure) {
+            buildReinforceAssaultCandidate(unit, objective)?.let(candidates::add)
+        }
+        if (wartimeObjective && currentDistance <= 5) {
+            if (unit.health < 80) {
+                buildRecoverThenRejoinCandidate(unit, objective)?.let(candidates::add)
+            } else {
+                buildAssaultCityRingCandidate(unit, objective)?.let(candidates::add)
+                if (unit.baseUnit.isMelee() && unit.health >= 70) {
+                    buildPreserveCaptureUnitCandidate(unit, objective)?.let(candidates::add)
+                }
+            }
+        }
+        return candidates
+    }
+
+    private fun buildStageOutsideBorderCandidate(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+    ): AgentUnitRuntimeCandidate? {
+        val candidateId = "unitstage:${unit.id}:${objective.x},${objective.y}"
+        val objectiveLabel = objective.cityName ?: "target city"
+        return AgentUnitRuntimeCandidate(
+            observation = UnitOptionCandidateObservation(
+                candidateId = candidateId,
+                category = "operation",
+                title = "${unit.name} #${unit.id} stage outside $objectiveLabel",
+                detail = "Move toward a safe staging tile outside $objectiveLabel so the army can wait near the border before war.",
+            ),
+            validate = { currentCiv ->
+                val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id }
+                    ?: return@AgentUnitRuntimeCandidate "Unit option rejected: unit missing"
+                val destination = findStageOutsideBorderDestination(liveUnit, objective)
+                    ?: return@AgentUnitRuntimeCandidate "Unit option rejected: no safe prewar staging tile is reachable this turn"
+                if (liveUnit.getTile() == destination) {
+                    return@AgentUnitRuntimeCandidate "Unit option rejected: unit is already in a viable staging position"
+                }
+                null
+            },
+            execute = { currentCiv ->
+                val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id } ?: return@AgentUnitRuntimeCandidate false
+                val destination = findStageOutsideBorderDestination(liveUnit, objective) ?: return@AgentUnitRuntimeCandidate false
+                val beforePosition = liveUnit.getTile().position
+                liveUnit.movement.headTowards(destination)
+                liveUnit.getTile().position != beforePosition
+            },
+            successMessage = "${unit.name} moved toward a prewar staging tile",
+        )
+    }
+
+    private fun buildReinforceAssaultCandidate(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+    ): AgentUnitRuntimeCandidate? {
+        val candidateId = "unitreinforce:${unit.id}:${objective.x},${objective.y}"
+        val objectiveLabel = objective.cityName ?: "target city"
+        return AgentUnitRuntimeCandidate(
+            observation = UnitOptionCandidateObservation(
+                candidateId = candidateId,
+                category = "operation",
+                title = "${unit.name} #${unit.id} reinforce $objectiveLabel assault",
+                detail = "March toward $objectiveLabel to join the assault line and be ready to replace losses at the front.",
+            ),
+            validate = { currentCiv ->
+                val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id }
+                    ?: return@AgentUnitRuntimeCandidate "Unit option rejected: unit missing"
+                val destination = findReinforceAssaultDestination(liveUnit, objective)
+                    ?: return@AgentUnitRuntimeCandidate "Unit option rejected: no useful reinforcement step is reachable this turn"
+                if (liveUnit.getTile() == destination) {
+                    return@AgentUnitRuntimeCandidate "Unit option rejected: unit is already close enough to the target to reinforce directly"
+                }
+                null
+            },
+            execute = { currentCiv ->
+                val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id } ?: return@AgentUnitRuntimeCandidate false
+                val destination = findReinforceAssaultDestination(liveUnit, objective) ?: return@AgentUnitRuntimeCandidate false
+                val beforePosition = liveUnit.getTile().position
+                liveUnit.movement.headTowards(destination)
+                liveUnit.getTile().position != beforePosition
+            },
+            successMessage = "${unit.name} moved to reinforce the assault axis",
+        )
+    }
+
+    private fun buildAssaultCityRingCandidate(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+    ): AgentUnitRuntimeCandidate? {
+        val candidateId = "unitassault:${unit.id}:${objective.x},${objective.y}"
+        val objectiveLabel = objective.cityName ?: "target city"
+        return AgentUnitRuntimeCandidate(
+            observation = UnitOptionCandidateObservation(
+                candidateId = candidateId,
+                category = "operation",
+                title = "${unit.name} #${unit.id} assault $objectiveLabel ring",
+                detail = "Move into the active assault ring around $objectiveLabel so this unit can help surround or fire on the city.",
+            ),
+            validate = { currentCiv ->
+                val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id }
+                    ?: return@AgentUnitRuntimeCandidate "Unit option rejected: unit missing"
+                val destination = findAssaultCityRingDestination(liveUnit, objective)
+                    ?: return@AgentUnitRuntimeCandidate "Unit option rejected: no useful assault-ring step is reachable this turn"
+                if (liveUnit.getTile() == destination) {
+                    return@AgentUnitRuntimeCandidate "Unit option rejected: unit is already in a viable assault position"
+                }
+                null
+            },
+            execute = { currentCiv ->
+                val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id } ?: return@AgentUnitRuntimeCandidate false
+                val destination = findAssaultCityRingDestination(liveUnit, objective) ?: return@AgentUnitRuntimeCandidate false
+                val beforePosition = liveUnit.getTile().position
+                liveUnit.movement.headTowards(destination)
+                liveUnit.getTile().position != beforePosition
+            },
+            successMessage = "${unit.name} moved into the assault ring",
+        )
+    }
+
+    private fun buildRecoverThenRejoinCandidate(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+    ): AgentUnitRuntimeCandidate? {
+        val candidateId = "unitrecoverrejoin:${unit.id}:${objective.x},${objective.y}"
+        val objectiveLabel = objective.cityName ?: "target city"
+        return AgentUnitRuntimeCandidate(
+            observation = UnitOptionCandidateObservation(
+                candidateId = candidateId,
+                category = "operation",
+                title = "${unit.name} #${unit.id} recover then rejoin $objectiveLabel",
+                detail = "Pull back to a safer tile near $objectiveLabel, heal, and stay close enough to rejoin the assault once healthy.",
+            ),
+            validate = { currentCiv ->
+                val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id }
+                    ?: return@AgentUnitRuntimeCandidate "Unit option rejected: unit missing"
+                val destination = findRecoverThenRejoinDestination(liveUnit, objective)
+                    ?: return@AgentUnitRuntimeCandidate "Unit option rejected: no useful recovery step is reachable this turn"
+                if (liveUnit.getTile() == destination) {
+                    return@AgentUnitRuntimeCandidate "Unit option rejected: unit is already on a viable recovery tile"
+                }
+                null
+            },
+            execute = { currentCiv ->
+                val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id } ?: return@AgentUnitRuntimeCandidate false
+                val destination = findRecoverThenRejoinDestination(liveUnit, objective) ?: return@AgentUnitRuntimeCandidate false
+                val beforePosition = liveUnit.getTile().position
+                liveUnit.movement.headTowards(destination)
+                liveUnit.getTile().position != beforePosition
+            },
+            successMessage = "${unit.name} fell back to recover near the assault axis",
+        )
+    }
+
+    private fun buildPreserveCaptureUnitCandidate(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+    ): AgentUnitRuntimeCandidate? {
+        val candidateId = "unitcaptorpreserve:${unit.id}:${objective.x},${objective.y}"
+        val objectiveLabel = objective.cityName ?: "target city"
+        return AgentUnitRuntimeCandidate(
+            observation = UnitOptionCandidateObservation(
+                candidateId = candidateId,
+                category = "operation",
+                title = "${unit.name} #${unit.id} preserve as $objectiveLabel captor",
+                detail = "Keep this melee unit healthy and close enough to capture $objectiveLabel once the assault opens a safe city-take window.",
+            ),
+            validate = { currentCiv ->
+                val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id }
+                    ?: return@AgentUnitRuntimeCandidate "Unit option rejected: unit missing"
+                val destination = findPreserveCaptureDestination(liveUnit, objective)
+                    ?: return@AgentUnitRuntimeCandidate "Unit option rejected: no useful capture-ready tile is reachable this turn"
+                if (liveUnit.getTile() == destination) {
+                    return@AgentUnitRuntimeCandidate "Unit option rejected: unit is already in a viable capture-ready position"
+                }
+                null
+            },
+            execute = { currentCiv ->
+                val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id } ?: return@AgentUnitRuntimeCandidate false
+                val destination = findPreserveCaptureDestination(liveUnit, objective) ?: return@AgentUnitRuntimeCandidate false
+                val beforePosition = liveUnit.getTile().position
+                liveUnit.movement.headTowards(destination)
+                liveUnit.getTile().position != beforePosition
+            },
+            successMessage = "${unit.name} moved into a capture-ready reserve slot",
+        )
     }
 
     private fun buildSettlerCandidates(unit: MapUnit): List<AgentUnitRuntimeCandidate> {
@@ -308,7 +444,7 @@ object AgentUnitOptionBuilder {
                     observation = UnitOptionCandidateObservation(
                         candidateId = candidateId,
                         category = directActionCategory(action.type),
-                        title = "${unit.name} #${unit.id} ${action.title}",
+                        title = "${unit.name} #${unit.id} ${agentFacingActionTitle(action)}",
                         detail = describeDirectAction(unit, action),
                     ),
                     validate = { currentCiv ->
@@ -393,21 +529,6 @@ object AgentUnitOptionBuilder {
             .take(maxWorkerCandidatesPerUnit)
     }
 
-    private fun isGoodTileToExplore(unit: MapUnit, tile: Tile, unitVisibilityRange: Int): Boolean {
-        return (tile.getOwner() == null || !tile.getOwner()!!.isCityState) &&
-            tile.getTilesInDistance(unitVisibilityRange).any { !unit.civ.hasExplored(it) } &&
-            (!unit.civ.isCityState || tile.neighbors.any { it.getOwner() == unit.civ }) &&
-            unit.getDamageFromTerrain(tile) <= 0 &&
-            unit.civ.threatManager.getDistanceToClosestEnemyUnit(tile, 3) > 3 &&
-            unit.movement.canMoveTo(tile) &&
-            unit.movement.canReach(tile)
-    }
-
-    private fun scoreExploreTile(unit: MapUnit, tile: Tile, unitVisibilityRange: Int): Int {
-        val unseenTiles = tile.getTilesAtDistance(unitVisibilityRange).count { !it.isExplored(unit.civ) }
-        return tile.tileHeight * 5 + unseenTiles * 10 - unit.getTile().aerialDistanceTo(tile)
-    }
-
     private fun buildCurrentWorkerCandidate(
         unit: MapUnit,
         job: AgentWorkerJobPlanner.WorkerJob,
@@ -461,6 +582,189 @@ object AgentUnitOptionBuilder {
             },
             successMessage = "${unit.name} executed ${workerAction.title}",
         )
+    }
+
+    private fun findStageOutsideBorderDestination(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+    ): Tile? {
+        val objectiveTile = unit.civ.gameInfo.tileMap[HexCoord(objective.x, objective.y)]
+        val objectiveOwner = objectiveTile.getOwner()
+        return unit.movement.getDistanceToTiles().keys
+            .asSequence()
+            .filter { tile -> tile != unit.getTile() }
+            .filter { tile -> unit.getDamageFromTerrain(tile) <= 0 }
+            .filter { tile -> unit.civ.threatManager.getDistanceToClosestEnemyUnit(tile, 3) > 2 }
+            .filter { tile -> !tile.isCityCenter() }
+            .filter { tile ->
+                objectiveOwner == null || tile.getOwner() != objectiveOwner
+            }
+            .filter { tile ->
+                val distance = axialDistance(tile.position.x, tile.position.y, objective.x, objective.y)
+                distance in 2..4
+            }
+            .maxByOrNull { tile ->
+                var score = 0
+                val distance = axialDistance(tile.position.x, tile.position.y, objective.x, objective.y)
+                score += when (distance) {
+                    2 -> 90
+                    3 -> 75
+                    4 -> 55
+                    else -> 0
+                }
+                if (tile.getOwner() == unit.civ) score += 20
+                if (tile.getOwner() == null) score += 10
+                score += tile.tileHeight * 3
+                score -= unit.getTile().aerialDistanceTo(tile)
+                score
+            }
+    }
+
+    private fun findReinforceAssaultDestination(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+    ): Tile? {
+        val currentDistance = axialDistance(unit.getTile().position.x, unit.getTile().position.y, objective.x, objective.y)
+        val desiredRange = if (unit.baseUnit.isRanged()) 2..3 else 1..2
+        if (currentDistance in desiredRange) return null
+        return unit.movement.getDistanceToTiles().keys
+            .asSequence()
+            .filter { tile -> tile != unit.getTile() }
+            .filter { tile -> unit.getDamageFromTerrain(tile) <= 0 }
+            .filter { tile -> unit.civ.threatManager.getDistanceToClosestEnemyUnit(tile, 3) > 1 || currentDistance <= 4 }
+            .filter { tile -> !tile.isCityCenter() || (tile.position.x == objective.x && tile.position.y == objective.y) }
+            .maxByOrNull { tile ->
+                val distance = axialDistance(tile.position.x, tile.position.y, objective.x, objective.y)
+                var score = 100 - distance * 18
+                if (distance in desiredRange) score += 60
+                if (unit.baseUnit.isRanged() && distance == 1) score -= 60
+                if (!unit.baseUnit.isRanged() && distance == 0) score -= 120
+                if (tile.getOwner() == unit.civ) score += 8
+                if (tile.getOwner() == null) score += 4
+                score += tile.tileHeight * 2
+                score
+            }
+    }
+
+    private fun findAssaultCityRingDestination(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+    ): Tile? {
+        val objectiveTile = unit.civ.gameInfo.tileMap[HexCoord(objective.x, objective.y)]
+        val targetCity = objectiveTile.getCity()
+        val currentDistance = axialDistance(unit.getTile().position.x, unit.getTile().position.y, objective.x, objective.y)
+        val preferSecondRingForMelee = targetCity != null &&
+            (unit.health < 85 || targetCity.health > targetCity.getMaxHealth() / 2)
+        val desiredRange = when {
+            unit.baseUnit.isRanged() -> 2..3
+            preferSecondRingForMelee -> 2..2
+            else -> 1..2
+        }
+        if (currentDistance in desiredRange) return null
+        val exactTiles = unit.movement.getDistanceToTiles().keys
+            .asSequence()
+            .filter { tile -> tile != unit.getTile() }
+            .filter { tile -> !tile.isCityCenter() }
+            .filter { tile -> unit.getDamageFromTerrain(tile) <= 0 }
+            .filter { tile ->
+                val distance = axialDistance(tile.position.x, tile.position.y, objective.x, objective.y)
+                distance in desiredRange
+            }
+            .toList()
+        val fallbackTiles = if (exactTiles.isEmpty()) {
+            unit.movement.getDistanceToTiles().keys
+                .asSequence()
+                .filter { tile -> tile != unit.getTile() }
+                .filter { tile -> !tile.isCityCenter() }
+                .filter { tile -> unit.getDamageFromTerrain(tile) <= 0 }
+                .filter { tile ->
+                    axialDistance(tile.position.x, tile.position.y, objective.x, objective.y) < currentDistance
+                }
+                .toList()
+        } else {
+            emptyList()
+        }
+        return (exactTiles + fallbackTiles)
+            .asSequence()
+            .maxByOrNull { tile ->
+                val distance = axialDistance(tile.position.x, tile.position.y, objective.x, objective.y)
+                var score = 100 - distance * 12
+                if (distance in desiredRange) score += 70
+                if (unit.baseUnit.isRanged() && distance == 2) score += 40
+                if (unit.baseUnit.isRanged() && distance == 1) score -= 80
+                if (unit.baseUnit.isMelee() && !preferSecondRingForMelee && distance == 1) score += 35
+                if (unit.baseUnit.isMelee() && preferSecondRingForMelee && distance == 2) score += 30
+                if (tile.getOwner() == unit.civ) score += 8
+                if (tile.getOwner() == null) score += 4
+                score += tile.tileHeight * if (unit.baseUnit.isRanged()) 3 else 1
+                score
+            }
+    }
+
+    private fun findRecoverThenRejoinDestination(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+    ): Tile? {
+        val currentDistance = axialDistance(unit.getTile().position.x, unit.getTile().position.y, objective.x, objective.y)
+        return unit.movement.getDistanceToTiles().keys
+            .asSequence()
+            .filter { tile -> tile != unit.getTile() }
+            .filter { tile -> !tile.isCityCenter() }
+            .filter { tile -> unit.getDamageFromTerrain(tile) <= 0 }
+            .filter { tile ->
+                val distance = axialDistance(tile.position.x, tile.position.y, objective.x, objective.y)
+                distance in 3..5 && distance >= currentDistance
+            }
+            .filter { tile ->
+                unit.civ.threatManager.getDistanceToClosestEnemyUnit(tile, 3) > 2 || tile.getOwner() == unit.civ
+            }
+            .maxByOrNull { tile ->
+                val distance = axialDistance(tile.position.x, tile.position.y, objective.x, objective.y)
+                var score = 100
+                score += if (distance == 3) 40 else if (distance == 4) 25 else 10
+                if (tile.getOwner() == unit.civ) score += 22
+                if (tile.getOwner() == null) score += 10
+                score += unit.civ.threatManager.getDistanceToClosestEnemyUnit(tile, 4) * 6
+                score += tile.tileHeight * 2
+                score
+            }
+    }
+
+    private fun findPreserveCaptureDestination(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+    ): Tile? {
+        if (!unit.baseUnit.isMelee()) return null
+        val objectiveTile = unit.civ.gameInfo.tileMap[HexCoord(objective.x, objective.y)]
+        val targetCity = objectiveTile.getCity() ?: return null
+        val currentDistance = axialDistance(unit.getTile().position.x, unit.getTile().position.y, objective.x, objective.y)
+        val cityWeak = targetCity.health <= targetCity.getMaxHealth() / 3
+        val desiredRange = if (cityWeak && unit.health >= 85) 1..2 else 2..3
+        if (currentDistance in desiredRange) return null
+        return unit.movement.getDistanceToTiles().keys
+            .asSequence()
+            .filter { tile -> tile != unit.getTile() }
+            .filter { tile -> !tile.isCityCenter() }
+            .filter { tile -> unit.getDamageFromTerrain(tile) <= 0 }
+            .filter { tile ->
+                val distance = axialDistance(tile.position.x, tile.position.y, objective.x, objective.y)
+                distance in desiredRange
+            }
+            .maxByOrNull { tile ->
+                val distance = axialDistance(tile.position.x, tile.position.y, objective.x, objective.y)
+                var score = 100
+                score += when {
+                    cityWeak && distance == 1 -> 50
+                    !cityWeak && distance == 2 -> 55
+                    distance == 2 -> 40
+                    else -> 15
+                }
+                if (tile.getOwner() == unit.civ) score += 16
+                if (tile.getOwner() == null) score += 8
+                score += unit.civ.threatManager.getDistanceToClosestEnemyUnit(tile, 4) * 4
+                score += tile.tileHeight
+                score
+            }
     }
 
     private fun buildRepairCandidate(
@@ -610,6 +914,13 @@ object AgentUnitOptionBuilder {
         return score
     }
 
+    private fun isOperationalCombatUnit(unit: MapUnit): Boolean {
+        if (!unit.isMilitary()) return false
+        if (unit.baseUnit.movesLikeAirUnits || unit.baseUnit.isWaterUnit) return false
+        if (unit.name == "Scout") return false
+        return unit.baseUnit.isMelee() || unit.baseUnit.isRanged()
+    }
+
     private fun findAttackableTile(
         unit: MapUnit,
         fromX: Int,
@@ -738,6 +1049,7 @@ object AgentUnitOptionBuilder {
         return actionType in setOf(
             UnitActionType.Upgrade,
             UnitActionType.Pillage,
+            UnitActionType.Explore,
             UnitActionType.StopExploration,
             UnitActionType.HurryResearch,
             UnitActionType.HurryPolicy,
@@ -757,6 +1069,7 @@ object AgentUnitOptionBuilder {
         return when (actionType) {
             UnitActionType.Upgrade -> "upgrade"
             UnitActionType.Pillage -> "combat"
+            UnitActionType.Explore,
             UnitActionType.StopExploration -> "explore"
             UnitActionType.HurryResearch,
             UnitActionType.HurryPolicy,
@@ -774,6 +1087,7 @@ object AgentUnitOptionBuilder {
         return when (action.type) {
             UnitActionType.Upgrade -> "Spend gold to upgrade this unit immediately if the upgrade is available."
             UnitActionType.Pillage -> "Pillage the current tile for immediate war tempo, healing, or disruption."
+            UnitActionType.Explore -> "Enable automated exploration. The unit will keep scouting on its own, heal if needed, and stop only when exploration is exhausted or you cancel it."
             UnitActionType.StopExploration -> "Stop automated exploration and return the unit to direct control."
             UnitActionType.HurryResearch -> "Consume this great person for an immediate science burst."
             UnitActionType.HurryPolicy -> "Consume this great person for an immediate culture burst."
@@ -790,6 +1104,14 @@ object AgentUnitOptionBuilder {
         }
     }
 
+    private fun agentFacingActionTitle(action: UnitAction): String {
+        return when (action.type) {
+            UnitActionType.Explore -> "start auto-explore"
+            UnitActionType.StopExploration -> "stop auto-explore"
+            else -> action.title
+        }
+    }
+
     private fun scoreDirectAction(unit: MapUnit, action: UnitAction): Int {
         var score = when (action.type) {
             UnitActionType.HurryResearch -> 120
@@ -801,6 +1123,7 @@ object AgentUnitOptionBuilder {
             UnitActionType.TriggerUnique -> 90
             UnitActionType.Upgrade -> 85
             UnitActionType.Pillage -> 75
+            UnitActionType.Explore -> if (unit.name == "Scout") 72 else 52
             UnitActionType.StopExploration -> 45
             UnitActionType.FortifyUntilHealed,
             UnitActionType.SleepUntilHealed -> 40
@@ -815,6 +1138,7 @@ object AgentUnitOptionBuilder {
 
     private fun isActionNowCurrentState(unit: MapUnit, actionType: UnitActionType): Boolean {
         return when (actionType) {
+            UnitActionType.Explore -> unit.isExploring()
             UnitActionType.StopExploration -> !unit.isExploring()
             UnitActionType.Fortify -> unit.isFortified() && !unit.isActionUntilHealed()
             UnitActionType.FortifyUntilHealed -> unit.isFortifyingUntilHealed()

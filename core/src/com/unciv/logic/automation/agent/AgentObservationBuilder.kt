@@ -1056,10 +1056,7 @@ object AgentObservationBuilder {
         unitOptionCandidates: List<UnitOptionCandidateObservation>,
     ): UnitAssignmentProgressObservation? {
         val assignment = findUnitAssignment(memory, unit.id) ?: return null
-        val onTarget = assignment.targetX != null &&
-            assignment.targetY != null &&
-            unit.getTile().position.x == assignment.targetX &&
-            unit.getTile().position.y == assignment.targetY
+        val onTarget = isAssignmentOnTarget(unit, assignment)
         val matchingCandidate = unitOptionCandidates.any { candidateMatchesAssignment(it.candidateId, assignment) }
         val readyToFinish = unitOptionCandidates.any { candidate ->
             candidate.candidateId.startsWith("unitworkerimprove:${unit.id}:${assignment.targetX},${assignment.targetY}:") ||
@@ -1072,15 +1069,19 @@ object AgentObservationBuilder {
             matchingCandidate -> "moving_to_target"
             else -> "assignment_at_risk"
         }
-        val progressNote = when (status) {
-            "ready_to_finish" -> "This unit is already in position to finish its carried assignment."
-            "on_target" -> "This unit is on the assigned target tile; prefer finishing the current job over switching away."
-            "moving_to_target" -> "This unit is already committed to a carried assignment and still has a grounded route toward it."
-            else -> "This unit had a carried assignment, but the current turn no longer surfaces a matching grounded option."
-        }
+        val progressNote = assignmentProgressNote(status, assignment)
         val switchCost = when {
             assignment.role in setOf("improve_tile", "settle_city_site") && status != "assignment_at_risk" -> "high"
-            assignment.role in setOf("attack_target", "heal_and_hold", "hold_position") -> "medium"
+            assignment.role in setOf(
+                "attack_target",
+                "heal_and_hold",
+                "hold_position",
+                "stage_outside_border",
+                "reinforce_assault",
+                "assault_city_ring",
+                "recover_then_rejoin",
+                "preserve_capture_unit",
+            ) -> "medium"
             else -> "low"
         }
         return UnitAssignmentProgressObservation(
@@ -1099,12 +1100,89 @@ object AgentObservationBuilder {
             candidateId.startsWith("unitworkerimprove:${assignment.unitId}:${assignment.targetX},${assignment.targetY}:") -> true
             candidateId == "unitworkerreposition:${assignment.unitId}:${assignment.targetX},${assignment.targetY}" -> true
             candidateId == "unitsettle:${assignment.unitId}:${assignment.targetX},${assignment.targetY}" -> true
+            candidateId == "unitstage:${assignment.unitId}:${assignment.targetX},${assignment.targetY}" -> true
+            candidateId == "unitreinforce:${assignment.unitId}:${assignment.targetX},${assignment.targetY}" -> true
+            candidateId == "unitassault:${assignment.unitId}:${assignment.targetX},${assignment.targetY}" -> true
+            candidateId == "unitrecoverrejoin:${assignment.unitId}:${assignment.targetX},${assignment.targetY}" -> true
+            candidateId == "unitcaptorpreserve:${assignment.unitId}:${assignment.targetX},${assignment.targetY}" -> true
             candidateId.startsWith("unitattack:${assignment.unitId}:") &&
                 assignment.targetX != null &&
                 assignment.targetY != null &&
                 candidateId.endsWith(":${assignment.targetX},${assignment.targetY}") -> true
             candidateId.startsWith("unitspecial:${assignment.unitId}:") -> assignment.targetX == null && assignment.targetY == null
             else -> false
+        }
+    }
+
+    private fun isAssignmentOnTarget(
+        unit: MapUnit,
+        assignment: UnitAssignmentMemory,
+    ): Boolean {
+        val targetX = assignment.targetX ?: return false
+        val targetY = assignment.targetY ?: return false
+        return when (assignment.role) {
+            "stage_outside_border" -> {
+                val targetTile = unit.civ.gameInfo.tileMap[com.unciv.logic.map.HexCoord(targetX, targetY)]
+                val targetOwner = targetTile.getOwner()
+                val distance = axialDistance(unit.getTile().position.x, unit.getTile().position.y, targetX, targetY)
+                distance in 2..4 && (targetOwner == null || unit.getTile().getOwner() != targetOwner)
+            }
+            "reinforce_assault" -> {
+                val distance = axialDistance(unit.getTile().position.x, unit.getTile().position.y, targetX, targetY)
+                distance <= 4
+            }
+            "assault_city_ring" -> {
+                val distance = axialDistance(unit.getTile().position.x, unit.getTile().position.y, targetX, targetY)
+                if (unit.baseUnit.isRanged()) distance in 2..3 else distance in 1..2
+            }
+            "recover_then_rejoin" -> {
+                val distance = axialDistance(unit.getTile().position.x, unit.getTile().position.y, targetX, targetY)
+                distance in 3..5 && unit.civ.threatManager.getDistanceToClosestEnemyUnit(unit.getTile(), 3) > 2
+            }
+            "preserve_capture_unit" -> {
+                val distance = axialDistance(unit.getTile().position.x, unit.getTile().position.y, targetX, targetY)
+                unit.baseUnit.isMelee() && unit.health >= 70 && distance in 1..3
+            }
+            else -> unit.getTile().position.x == targetX && unit.getTile().position.y == targetY
+        }
+    }
+
+    private fun assignmentProgressNote(
+        status: String,
+        assignment: UnitAssignmentMemory,
+    ): String {
+        return when (assignment.role) {
+            "stage_outside_border" -> when (status) {
+                "on_target" -> "This unit is already staged outside the target border and should hold that prewar slot unless a stronger tactical reason appears."
+                "moving_to_target" -> "This unit is marching toward a prewar staging slot outside the target border."
+                else -> "This unit was supposed to stage outside the target border, but the current turn no longer shows a clean matching route."
+            }
+            "reinforce_assault" -> when (status) {
+                "on_target" -> "This unit is already close enough to reinforce the active assault line."
+                "moving_to_target" -> "This unit is already committed to reinforcing the assault axis."
+                else -> "This unit was supposed to reinforce the assault, but the current turn no longer shows a clean matching route."
+            }
+            "assault_city_ring" -> when (status) {
+                "on_target" -> "This unit is already in the active assault ring and should keep pressure on the target city."
+                "moving_to_target" -> "This unit is moving into the assault ring around the target city."
+                else -> "This unit was supposed to join the assault ring, but the current turn no longer shows a clean matching route."
+            }
+            "recover_then_rejoin" -> when (status) {
+                "on_target" -> "This unit is already on a safer recovery tile and should heal before rejoining the assault."
+                "moving_to_target" -> "This unit is falling back to a recovery tile that still keeps it near the assault axis."
+                else -> "This unit was supposed to recover near the target, but the current turn no longer shows a clean matching route."
+            }
+            "preserve_capture_unit" -> when (status) {
+                "on_target" -> "This unit is already being preserved as a healthy capture reserve near the city."
+                "moving_to_target" -> "This unit is moving into a capture-ready reserve slot near the city."
+                else -> "This unit was supposed to stay healthy and near the city as the capture reserve, but the current turn no longer shows a clean matching route."
+            }
+            else -> when (status) {
+                "ready_to_finish" -> "This unit is already in position to finish its carried assignment."
+                "on_target" -> "This unit is on the assigned target tile; prefer finishing the current job over switching away."
+                "moving_to_target" -> "This unit is already committed to a carried assignment and still has a grounded route toward it."
+                else -> "This unit had a carried assignment, but the current turn no longer surfaces a matching grounded option."
+            }
         }
     }
 

@@ -305,7 +305,7 @@ object AgentStrategistGovernor {
             "scout" -> 40
             else -> 30
         }
-        if (!contactComplete && unit.hasMovement && unit.unitOptionCandidates.any { it.candidateId.startsWith("unitexplore:") }) {
+        if (!contactComplete && unit.hasMovement && unit.unitActions.any { it == "Explore" || it == "StopExploration" }) {
             score += if (unit.role == "scout") 80 else 45
         }
         if (unit.nearbyHostileUnits > 0 || unit.nearbyHostileCities > 0) score += 40
