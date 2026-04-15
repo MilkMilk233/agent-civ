@@ -121,6 +121,12 @@ object AgentStrategistPromptBuilder {
             - Treat Strategist Brief JSON as a factual state packet, not a script-written strategic interpretation.
             - Think like a strong human strategist: identify what just changed, what the real bottleneck is, and what the tactician should optimize for next. Do not turn the memo into a long step-by-step playbook.
             - If the current line has consumed many turns without city growth, war conversion, or other concrete progress, say so plainly and pivot. Do not euphemize a stale plan as "still preparing" forever.
+            - Make the memo cover the whole phase, not just the milestone headline. If the current checkpoint is "make contact" or "found the second city", explain what production and posture should be used before that checkpoint is reached, what is already enough, and what would count as drift.
+            - When a phase has a natural sufficiency point, say it plainly. For example, if one Scout is enough or two Scouts are the upper end of justified recon, write that in teammate language so the tactician understands what should stop and what should come next.
+            - If the current phase should end with a production pivot, say what that pivot is. For example: after the recon package is sufficient, Berlin should stop adding recon and convert into Settler or military pressure unless the brief shows a concrete reason not to.
+            - Do not hide these expectations inside generic prose. Use thesis, currentSituation, futurePlan, and tacticianHandoff to make the expected pre-milestone behavior clear enough that a fresh tactician can avoid repeating low-value choices.
+            - When a visible target or frontier axis already exists, describe both production posture and movement posture. Say what cities should build next, but also say whether already-built forces should keep screening, gather on the axis, march forward, hold a claim, or stop drifting elsewhere.
+            - Do not let existing units disappear from the strategic story once production becomes the bottleneck. If the current campaign depends on pressure against a visible objective, futurePlan and tacticianHandoff should make the intended posture of existing forces understandable in plain teammate language.
             - refreshRequest tells you why this strategist call happened. Respect it as the phase boundary that just fired rather than retelling the previous memo from habit.
             - campaignStage is required. Use a short natural stage label such as scouting, expansion, staging, assault, rebuild, or consolidation.
             - decisiveObjective is required. Name the next objective that most directly converts the current position into progress. Keep it concrete and game-specific.
@@ -131,6 +137,7 @@ object AgentStrategistPromptBuilder {
             - If a rival city or capital is visible and the same checkpoint already slipped once, be very skeptical of another relaxed staging memo.
             - targetFrame, whyNow, nextCheckpoint, and expiryCondition should be short natural-language lines, not schema jargon or tactical scripts.
             - If war timing is the real strategic question, own that here. Say whether the empire is still staging briefly, should launch now, or should pivot away from the current line instead of hiding that judgment inside softer prose fields.
+            - In opener and expansion phases, be explicit about recon sufficiency versus recon drift. If more scouting is no longer worth another city build slot, say so plainly.
             - reviewContract is the strategist-authored refresh contract for this memo. It tells the engine when this report should be reconsidered.
             - reviewContract.maxAgeTurns is only a safety backstop. Use it to say how long the memo can survive if no explicit trigger fires. Usually 6-10 is enough; do not use a tiny value unless the position is genuinely volatile.
             - reviewContract.triggers should be a short list of near-future, script-verifiable phase boundaries. Good kinds are milestone_reached, deadline_missed, assumption_broken, and contract_broken.
@@ -148,7 +155,7 @@ object AgentStrategistPromptBuilder {
             - pastSummary should briefly bring the tactician up to speed on what changed recently and what background context still matters. Keep it to 1-2 sentences.
             - currentSituation should briefly explain what is true now, what the empire's real bottleneck or tension is, and what the tactician should understand about the present board. Keep it to 1-3 sentences.
             - futurePlan should briefly explain what the empire should try to accomplish over the next few turns and what should not delay that. Keep it to 1-3 sentences.
-            - tacticianHandoff should be a direct 1-2 sentence handoff to the tactician about what should dominate this turn and the next few turns. If the empire should stop drifting, start marching, declare war now, or ignore a tempting distraction, say that plainly here.
+            - tacticianHandoff should be a direct 1-2 sentence handoff to the tactician about what should dominate this turn and the next few turns. If the empire should stop drifting, start marching, gather on the objective axis, declare war now, or ignore a tempting distraction, say that plainly here.
             - worldModelSummary should capture the map-level idea that matters in this game, not generic doctrine. worldModelNotes should be short bullets about meaningful map or information inferences.
             - campaignTitle, campaignSummary, reinforcementPlan, and campaignDoNotDo should describe the current operation in natural human language. This is the main shared intent between you and the tactician.
             - empirePlanSummary and purchaseIntent should explain what our cities and gold are for over the next few turns. Keep empirePlanNotes short and only include things with cross-turn value.
