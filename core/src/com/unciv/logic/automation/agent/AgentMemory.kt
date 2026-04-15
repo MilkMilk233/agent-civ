@@ -16,6 +16,7 @@ data class AgentMemory(
     var cityIntents: ArrayList<CityIntentMemory> = arrayListOf(),
     var unitAssignments: ArrayList<UnitAssignmentMemory> = arrayListOf(),
     var recentFailures: ArrayList<RecentFailureMemory> = arrayListOf(),
+    var strategistTriggerLedger: ArrayList<StrategistTriggerLedgerEntry> = arrayListOf(),
 ) : IsPartOfGameInfoSerialization {
     constructor() : this(
         WorldModelMemory(),
@@ -25,6 +26,7 @@ data class AgentMemory(
         arrayListOf(),
         arrayListOf(),
         AgentStrategistMemoMemory(),
+        arrayListOf(),
         arrayListOf(),
         arrayListOf(),
         arrayListOf(),
@@ -78,6 +80,7 @@ data class AgentMemory(
         cityIntents = ArrayList(cityIntents.map { it.copy(reasons = ArrayList(it.reasons)) }),
         unitAssignments = ArrayList(unitAssignments.map { it.copy() }),
         recentFailures = ArrayList(recentFailures.map { it.copy() }),
+        strategistTriggerLedger = ArrayList(strategistTriggerLedger.map { it.copy() }),
     )
 }
 
@@ -205,4 +208,16 @@ data class RecentFailureMemory(
     var actionType: String? = null,
 ) : IsPartOfGameInfoSerialization {
     constructor() : this(0, "", "", null, null, null, null)
+}
+
+@Serializable
+data class StrategistTriggerLedgerEntry(
+    var source: String = "",
+    var memoReviewedTurn: Int = 0,
+    var triggerKind: String = "",
+    var triggerMetric: String = "",
+    var triggerWithinTurns: Int? = null,
+    var firedTurn: Int = 0,
+) : IsPartOfGameInfoSerialization {
+    constructor() : this("", 0, "", "", null, 0)
 }

@@ -14,6 +14,7 @@ object AgentMemoryManager {
     private const val maxRecentChanges = 10
     private const val maxLessons = 8
     private const val maxTacticianTurnLogEntries = 8
+    private const val maxStrategistTriggerLedgerEntries = 16
 
     private val json = Json {
         prettyPrint = false
@@ -65,6 +66,7 @@ object AgentMemoryManager {
                     .takeLast(maxRecentFailures)
                 .map { it.copy() }
             ),
+            strategistTriggerLedger = pruneStrategistTriggerLedger(existing.strategistTriggerLedger, turn),
         )
         val prepared = basePrepared.copy(
             campaignControl = reconcileCampaignControl(
@@ -310,6 +312,12 @@ object AgentMemoryManager {
             cityIntents = ArrayList(memory.cityIntents.map { it.copy(reasons = ArrayList(it.reasons)) }),
             unitAssignments = ArrayList(memory.unitAssignments.map { it.copy() }),
             recentFailures = ArrayList(memory.recentFailures.map { it.copy() }),
+            strategistTriggerLedger = recordStrategistTriggerLedger(
+                existing = memory.strategistTriggerLedger,
+                previousMemo = memory.lastStrategistMemo,
+                refreshRequest = refreshRequest,
+                turn = turn,
+            ),
         )
         return updated
     }
@@ -368,6 +376,7 @@ object AgentMemoryManager {
         val memo = memory.lastStrategistMemo
         val reviewContract = memo.reviewContract.takeUnless { it.isEmpty() } ?: return null
         for (trigger in reviewContract.triggers.take(4)) {
+            if (hasConsumedStrategistReviewTrigger(memory, memo, trigger)) continue
             val refreshReason = evaluateStrategistReviewTrigger(trigger, memo, memory, observation, empireObservation) ?: continue
             return AgentStrategistRefreshRequest(
                 urgency = "contract",
@@ -1019,6 +1028,71 @@ object AgentMemoryManager {
 
     private fun normalizeMemoValidity(raw: String?): String? {
         return raw?.trim()?.lowercase()?.takeUnless { it.isEmpty() }
+    }
+
+    private fun pruneStrategistTriggerLedger(
+        entries: List<StrategistTriggerLedgerEntry>,
+        turn: Int,
+    ): ArrayList<StrategistTriggerLedgerEntry> {
+        return ArrayList(
+            entries
+                .filter { it.firedTurn <= turn }
+                .takeLast(maxStrategistTriggerLedgerEntries)
+                .map { it.copy() }
+        )
+    }
+
+    private fun recordStrategistTriggerLedger(
+        existing: List<StrategistTriggerLedgerEntry>,
+        previousMemo: AgentStrategistMemoMemory,
+        refreshRequest: AgentStrategistRefreshRequest,
+        turn: Int,
+    ): ArrayList<StrategistTriggerLedgerEntry> {
+        val ledger = pruneStrategistTriggerLedger(existing, turn)
+        if (refreshRequest.source != "review_contract" || !hasStrategistMemo(previousMemo)) {
+            return ledger
+        }
+        val triggerKind = refreshRequest.triggerKind?.trim()?.lowercase()?.takeUnless { it.isEmpty() } ?: return ledger
+        val triggerMetric = normalizeStrategistReviewMetric(refreshRequest.triggerMetric) ?: return ledger
+        val memoReviewedTurn = previousMemo.lastReviewedTurn
+        val triggerWithinTurns = refreshRequest.triggerWithinTurns?.coerceAtLeast(1)
+        val alreadyRecorded = ledger.any { entry ->
+            entry.source == "review_contract" &&
+                entry.memoReviewedTurn == memoReviewedTurn &&
+                entry.triggerKind == triggerKind &&
+                entry.triggerMetric == triggerMetric &&
+                entry.triggerWithinTurns == triggerWithinTurns
+        }
+        if (!alreadyRecorded) {
+            ledger += StrategistTriggerLedgerEntry(
+                source = "review_contract",
+                memoReviewedTurn = memoReviewedTurn,
+                triggerKind = triggerKind,
+                triggerMetric = triggerMetric,
+                triggerWithinTurns = triggerWithinTurns,
+                firedTurn = turn,
+            )
+        }
+        return ArrayList(ledger.takeLast(maxStrategistTriggerLedgerEntries))
+    }
+
+    private fun hasConsumedStrategistReviewTrigger(
+        memory: AgentMemory,
+        memo: AgentStrategistMemoMemory,
+        trigger: AgentStrategistReviewTrigger,
+    ): Boolean {
+        if (!hasStrategistMemo(memo)) return false
+        val normalizedMetric = normalizeStrategistReviewMetric(trigger.metric) ?: return false
+        val triggerKind = trigger.kind.trim().lowercase().takeUnless { it.isEmpty() } ?: return false
+        val memoReviewedTurn = memo.lastReviewedTurn
+        val triggerWithinTurns = trigger.withinTurns?.coerceAtLeast(1)
+        return memory.strategistTriggerLedger.any { entry ->
+            entry.source == "review_contract" &&
+                entry.memoReviewedTurn == memoReviewedTurn &&
+                entry.triggerKind == triggerKind &&
+                entry.triggerMetric == normalizedMetric &&
+                entry.triggerWithinTurns == triggerWithinTurns
+        }
     }
 
     private fun pruneTacticianTurnLog(

@@ -81,6 +81,7 @@ object AgentCityOptionBuilder {
 
         return if (needsExplicitChoice) {
             choices
+                .sortedWith(compareByDescending<RankedConstructionChoice> { it.score }.thenBy { it.name })
         } else {
             choices
                 .sortedWith(compareByDescending<RankedConstructionChoice> { it.score }.thenBy { it.name })
@@ -105,9 +106,10 @@ object AgentCityOptionBuilder {
         } else {
             maxConstructionCandidatesPerCity + 1
         }
-        return rankConstructionChoices(city, choiceLimit, city.civ.agentMemory)
+        val rankedChoices = rankConstructionChoices(city, choiceLimit, city.civ.agentMemory)
             .filter { needsExplicitChoice || it.name != currentName }
-            .take(maxConstructionCandidatesPerCity)
+        val surfacedChoices = if (needsExplicitChoice) rankedChoices else rankedChoices.take(maxConstructionCandidatesPerCity)
+        return surfacedChoices
             .map { choice ->
                 val candidateId = "citybuild:${city.location.x},${city.location.y}:${choice.name}"
                 val construction = city.cityConstructions.getConstruction(choice.name)
