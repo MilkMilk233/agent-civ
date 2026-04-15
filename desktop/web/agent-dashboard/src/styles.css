@@ -152,6 +152,25 @@ pre {
   align-items: flex-start;
 }
 
+.turn-card-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+}
+
+.turn-card-flag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 999px;
+  background: rgba(29, 124, 242, 0.12);
+  border: 1px solid rgba(29, 124, 242, 0.2);
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
 .topbar-actions {
   align-items: center;
   gap: 1rem;

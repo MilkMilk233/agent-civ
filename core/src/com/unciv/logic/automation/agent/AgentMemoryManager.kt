@@ -11,12 +11,9 @@ object AgentMemoryManager {
     private const val cityIntentHorizonTurns = 5
     private const val unitAssignmentHorizonTurns = 4
     private const val recentChangeHorizonTurns = 12
-    private const val sightingHorizonTurns = 12
     private const val maxRecentChanges = 10
     private const val maxLessons = 8
     private const val maxTacticianTurnLogEntries = 8
-    private const val maxRivalNotes = 10
-    private const val maxRivalAnchors = 12
 
     private val json = Json {
         prettyPrint = false
@@ -37,17 +34,14 @@ object AgentMemoryManager {
         val existing = civInfo.agentMemory.clone()
 
         val basePrepared = existing.copy(
-            worldModel = pruneWorldModel(existing.worldModel, turn),
-            rivals = mergeRivalNotebooks(existing.rivals, observation, empireObservation, turn),
+            worldModel = refreshWorldModelAnchors(pruneWorldModel(existing.worldModel, turn), observation, turn),
             campaign = pruneCampaign(existing.campaign, empireObservation, turn),
             empirePlan = pruneEmpirePlan(existing.empirePlan, turn),
-            planHealth = prunePlanHealth(existing.planHealth, turn),
             campaignControl = pruneCampaignControl(existing.campaignControl, turn),
             recentChanges = pruneNotes(existing.recentChanges, turn, maxRecentChanges),
             lessons = ArrayList(existing.lessons.takeLast(maxLessons).map { it.copy() }),
             lastStrategistMemo = existing.lastStrategistMemo.copy(
                 decisionFrame = existing.lastStrategistMemo.decisionFrame.copy(),
-                planHealth = existing.lastStrategistMemo.planHealth.copy(),
                 campaignControl = existing.lastStrategistMemo.campaignControl.copy(),
                 reviewCityNames = ArrayList(existing.lastStrategistMemo.reviewCityNames),
             ),
@@ -69,20 +63,10 @@ object AgentMemoryManager {
                 .map { it.copy() }
             ),
         )
-        val reconciledPlanHealth = reconcilePlanHealth(
-            current = basePrepared.planHealth,
-            memo = basePrepared.lastStrategistMemo,
-            snapshot = buildPlanHealthSnapshot(observation, empireObservation),
-            turn = turn,
-            latestMemoValidity = basePrepared.tacticianTurnLog.lastOrNull()?.memoValidity,
-            latestActionSurfaceMismatch = basePrepared.tacticianTurnLog.lastOrNull()?.actionSurfaceMismatch ?: emptyList(),
-        )
         val prepared = basePrepared.copy(
-            planHealth = reconciledPlanHealth,
             campaignControl = reconcileCampaignControl(
                 current = basePrepared.campaignControl,
                 memo = basePrepared.lastStrategistMemo,
-                planHealth = reconciledPlanHealth,
                 snapshot = buildCampaignControlSnapshot(observation, empireObservation, basePrepared.lastStrategistMemo),
                 turn = turn,
                 latestCommitmentLevel = basePrepared.tacticianTurnLog.lastOrNull()?.commitmentLevel,
@@ -159,20 +143,10 @@ object AgentMemoryManager {
                 unitAssignments = intentReconciliation.unitAssignments,
                 recentFailures = recentFailures,
             )
-            val reconciledPlanHealth = reconcilePlanHealth(
-                current = updated.planHealth,
-                memo = updated.lastStrategistMemo,
-                snapshot = buildPlanHealthSnapshot(civInfo, observation),
-                turn = turn,
-                latestMemoValidity = updated.tacticianTurnLog.lastOrNull()?.memoValidity,
-                latestActionSurfaceMismatch = updated.tacticianTurnLog.lastOrNull()?.actionSurfaceMismatch ?: emptyList(),
-            )
             val reconciled = updated.copy(
-                planHealth = reconciledPlanHealth,
                 campaignControl = reconcileCampaignControl(
                     current = updated.campaignControl,
                     memo = updated.lastStrategistMemo,
-                    planHealth = reconciledPlanHealth,
                     snapshot = buildCampaignControlSnapshot(civInfo, observation, empireObservation, updated.lastStrategistMemo),
                     turn = turn,
                     latestCommitmentLevel = updated.tacticianTurnLog.lastOrNull()?.commitmentLevel,
@@ -225,20 +199,10 @@ object AgentMemoryManager {
             ),
             recentFailures = recentFailures,
         )
-        val reconciledPlanHealth = reconcilePlanHealth(
-            current = updated.planHealth,
-            memo = updated.lastStrategistMemo,
-            snapshot = buildPlanHealthSnapshot(civInfo, observation),
-            turn = turn,
-            latestMemoValidity = updated.tacticianTurnLog.lastOrNull()?.memoValidity,
-            latestActionSurfaceMismatch = updated.tacticianTurnLog.lastOrNull()?.actionSurfaceMismatch ?: emptyList(),
-        )
         val reconciled = updated.copy(
-            planHealth = reconciledPlanHealth,
             campaignControl = reconcileCampaignControl(
                 current = updated.campaignControl,
                 memo = updated.lastStrategistMemo,
-                planHealth = reconciledPlanHealth,
                 snapshot = buildCampaignControlSnapshot(civInfo, observation, empireObservation, updated.lastStrategistMemo),
                 turn = turn,
                 latestCommitmentLevel = updated.tacticianTurnLog.lastOrNull()?.commitmentLevel,
@@ -261,13 +225,18 @@ object AgentMemoryManager {
             return AgentStrategistRefreshRequest(
                 urgency = "initial",
                 reason = "No strategist memo exists yet. Build the first game notebook and high-level handoff for this match.",
+                source = "initial",
             )
         }
-        tacticalRefreshIfEmergency(memory, observation, empireObservation, requested = null)?.let { return it }
-        if (memo.reviewAfterTurn > 0 && turn >= memo.reviewAfterTurn) {
+        hardRefreshIfEmergency(memory, observation, empireObservation, requested = null)?.let { return it }
+        evaluateStrategistReviewContract(memory, observation, empireObservation)?.let { return it }
+        val reviewAnchorTurn = strategistReviewAnchorTurn(memo, turn)
+        val maxAgeTurns = memo.reviewContract.maxAgeTurns.coerceAtLeast(0)
+        if (maxAgeTurns > 0 && turn - reviewAnchorTurn >= maxAgeTurns) {
             return AgentStrategistRefreshRequest(
                 urgency = "scheduled",
-                reason = "Scheduled strategist review: refresh the game notebook and next few-turn handoff from the current board state.",
+                reason = "The strategist review contract hit its max age backstop and should be refreshed from the current board state.",
+                source = "max_age",
             )
         }
         return null
@@ -279,7 +248,8 @@ object AgentMemoryManager {
         empireObservation: AgentEmpireObservation,
         requested: AgentStrategistRefreshRequest,
     ): AgentStrategistRefreshRequest? {
-        return tacticalRefreshIfEmergency(memory, observation, empireObservation, requested)
+        if (!requested.urgency.equals("emergency", ignoreCase = true)) return null
+        return hardRefreshIfEmergency(memory, observation, empireObservation, requested)
     }
 
     fun applyStrategicMemo(
@@ -291,11 +261,7 @@ object AgentMemoryManager {
     ): AgentMemory {
         val turn = observation.turn
         val gameContext = empireObservation.gameContext
-        val reviewInTurns = when {
-            gameContext.duelLike && gameContext.gameSpeed.equals("Quick", ignoreCase = true) ->
-                strategicPlan.memo.reviewInTurns.coerceIn(3, 6)
-            else -> strategicPlan.memo.reviewInTurns.coerceIn(4, 8)
-        }
+        val normalizedReviewContract = normalizeStrategistReviewContract(strategicPlan.memo.reviewContract, gameContext)
 
         val memo = AgentStrategistMemoMemory(
             gameArchetype = gameContext.archetype,
@@ -304,7 +270,7 @@ object AgentMemoryManager {
             decisiveObjective = strategicPlan.memo.decisiveObjective.trim().takeUnless { it.isEmpty() },
             conversionBlocker = strategicPlan.memo.conversionBlocker?.trim().takeUnless { it.isNullOrEmpty() },
             decisionFrame = normalizeStrategistDecisionFrame(strategicPlan.memo.decisionFrame),
-            planHealth = normalizePlanHealthLabels(strategicPlan.memo.planHealth),
+            reviewContract = normalizedReviewContract,
             campaignControl = normalizeCampaignControlLabels(strategicPlan.memo.campaignControl),
             thesis = strategicPlan.memo.thesis?.trim().takeUnless { it.isNullOrEmpty() },
             pastSummary = strategicPlan.memo.pastSummary?.trim().takeUnless { it.isNullOrEmpty() },
@@ -317,28 +283,27 @@ object AgentMemoryManager {
             reviewContactComplete = empireObservation.gameContext.contactComplete,
             reviewResearch = empireObservation.currentResearch,
             reviewVisibleRivalCities = observation.visibleThreatsAndTargets.count { it.kind == "city" && it.civName != observation.civName },
+            reviewVisibleRivalCapitals = observation.visibleThreatsAndTargets.count {
+                it.kind == "city" &&
+                    it.civName != observation.civName &&
+                    it.facts.any { fact -> fact.equals("Capital", ignoreCase = true) }
+            },
             reviewVisibleRivalUnits = observation.visibleThreatsAndTargets.count { it.kind == "unit" && it.civName != observation.civName },
             reviewPrimaryRivalCiv = extractPrimaryRivalCiv(memory, observation, empireObservation),
             reviewCityNames = ArrayList(observation.cities.map { it.name }.sorted()),
-            reviewAfterTurn = turn + reviewInTurns,
-            createdTurn = memory.lastStrategistMemo.createdTurn.takeIf {
-                it > 0 && isSameCampaignThread(memory.lastStrategistMemo, strategicPlan.memo)
-            }
-                ?: turn,
+            createdTurn = if (hasStrategistMemo(memory.lastStrategistMemo) && isSameCampaignThread(memory.lastStrategistMemo, strategicPlan.memo)) {
+                memory.lastStrategistMemo.createdTurn
+            } else {
+                turn
+            },
             lastReviewedTurn = turn,
             lastRefreshReason = refreshRequest.reason,
         )
 
         val updated = memory.copy(
-            worldModel = buildWorldModel(memory.worldModel, strategicPlan.memo, turn),
-            rivals = applyStrategistRivalUpdates(
-                current = mergeRivalNotebooks(memory.rivals, observation, empireObservation, turn),
-                drafts = strategicPlan.memo.rivals,
-                turn = turn,
-            ),
+            worldModel = refreshWorldModelAnchors(buildWorldModel(memory.worldModel, strategicPlan.memo, turn), observation, turn),
             campaign = buildCampaignMemory(memory.campaign, strategicPlan.memo, observation, empireObservation, turn),
             empirePlan = buildEmpirePlan(memory.empirePlan, strategicPlan.memo, turn),
-            planHealth = buildPlanHealth(memory.planHealth, memory.lastStrategistMemo, strategicPlan.memo, turn),
             campaignControl = buildCampaignControl(memory.campaignControl, memory.lastStrategistMemo, strategicPlan.memo, turn),
             recentChanges = buildNoteList("recent_change", "change", strategicPlan.memo.recentChanges, turn, recentChangeHorizonTurns, maxRecentChanges),
             lessons = buildNoteList("lesson", "lesson", strategicPlan.memo.lessons, turn, turn + 200, maxLessons),
@@ -351,7 +316,7 @@ object AgentMemoryManager {
         return updated
     }
 
-    private fun tacticalRefreshIfEmergency(
+    private fun hardRefreshIfEmergency(
         memory: AgentMemory,
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
@@ -361,31 +326,14 @@ object AgentMemoryManager {
         if (!hasStrategistMemo(memo)) return requested
         val primaryThreat = empireObservation.victoryThreats.firstOrNull()
         val requestedReason = requested?.reason?.trim().orEmpty()
-        val planHealth = memory.planHealth
-        if (planHealth.pivotRecommended || planHealth.status.equals("contradicted", ignoreCase = true)) {
-            return AgentStrategistRefreshRequest(
-                urgency = "emergency",
-                reason = requestedReason.ifBlank { buildPlanHealthRefreshReason(planHealth) },
-            )
-        }
-        val campaignControl = memory.campaignControl
-        val excessiveHoldingCosts = campaignControl.holdingCosts.size >= 2 &&
-            campaignControl.launchWindowOpen &&
-            !observation.empireSummary.isAtWar
-        if (
-            campaignControl.checkpointStatus.equals("missed", ignoreCase = true) ||
-            campaignControl.supplyHealth.equals("collapsing", ignoreCase = true) ||
-            excessiveHoldingCosts
-        ) {
-            return AgentStrategistRefreshRequest(
-                urgency = "emergency",
-                reason = requestedReason.ifBlank { buildCampaignControlRefreshReason(campaignControl) },
-            )
-        }
         if (observation.empireSummary.isAtWar && !looksWarAware(memory)) {
             return AgentStrategistRefreshRequest(
                 urgency = "emergency",
                 reason = requestedReason.ifBlank { "War or active hostilities broke the current campaign notebook and need a fresh strategist memo." },
+                source = requested?.source ?: "emergency",
+                triggerKind = requested?.triggerKind,
+                triggerMetric = requested?.triggerMetric,
+                triggerWithinTurns = requested?.triggerWithinTurns,
             )
         }
         if (primaryThreat?.threatLevel == "critical" &&
@@ -395,37 +343,176 @@ object AgentMemoryManager {
             return AgentStrategistRefreshRequest(
                 urgency = "emergency",
                 reason = requestedReason.ifBlank { "${primaryThreat.civName} is now the critical rival, so the strategist notebook should be refreshed immediately." },
+                source = requested?.source ?: "emergency",
+                triggerKind = requested?.triggerKind,
+                triggerMetric = requested?.triggerMetric,
+                triggerWithinTurns = requested?.triggerWithinTurns,
             )
         }
         if (requested != null && requested.urgency.equals("emergency", ignoreCase = true)) {
             return AgentStrategistRefreshRequest(
                 urgency = "emergency",
                 reason = requestedReason.ifBlank { "The tactician reported a strategic break in the current notebook." },
+                source = requested.source ?: "emergency",
+                triggerKind = requested.triggerKind,
+                triggerMetric = requested.triggerMetric,
+                triggerWithinTurns = requested.triggerWithinTurns,
             )
         }
         return null
     }
 
-    private fun buildPlanHealthRefreshReason(planHealth: AgentPlanHealthMemory): String {
-        return planHealth.pivotReason?.takeIf { it.isNotBlank() }
-            ?: planHealth.contradictions.firstOrNull()
-            ?: planHealth.opportunityCosts.firstOrNull()
-            ?: "The current plan-health signals say the active campaign thread has gone stale and should be refreshed."
+    private fun evaluateStrategistReviewContract(
+        memory: AgentMemory,
+        observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+    ): AgentStrategistRefreshRequest? {
+        val memo = memory.lastStrategistMemo
+        val reviewContract = memo.reviewContract.takeUnless { it.isEmpty() } ?: return null
+        for (trigger in reviewContract.triggers.take(4)) {
+            val refreshReason = evaluateStrategistReviewTrigger(trigger, memo, memory, observation, empireObservation) ?: continue
+            return AgentStrategistRefreshRequest(
+                urgency = "contract",
+                reason = refreshReason,
+                source = "review_contract",
+                triggerKind = trigger.kind,
+                triggerMetric = normalizeStrategistReviewMetric(trigger.metric),
+                triggerWithinTurns = trigger.withinTurns,
+            )
+        }
+        return null
     }
 
-    private fun buildCampaignControlRefreshReason(campaignControl: AgentCampaignControlMemory): String {
-        return campaignControl.pivotTriggers.firstOrNull()
-            ?: campaignControl.holdingCosts.firstOrNull()
-            ?: when {
-                campaignControl.checkpointStatus.equals("missed", ignoreCase = true) ->
-                    "The campaign missed its checkpoint and should be reconsidered immediately."
-                campaignControl.supplyHealth.equals("collapsing", ignoreCase = true) ->
-                    "Campaign supply is collapsing and needs a fresh strategist decision."
-                campaignControl.launchWindowOpen ->
-                    "A launch window appears open, but the campaign is still stalling."
-                else ->
-                    "The campaign-control signals say the current line is no longer healthy."
+    private fun evaluateStrategistReviewTrigger(
+        trigger: AgentStrategistReviewTrigger,
+        memo: AgentStrategistMemoMemory,
+        memory: AgentMemory,
+        observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+    ): String? {
+        val reviewAnchorTurn = strategistReviewAnchorTurn(memo, observation.turn)
+        val turnsSinceReview = (observation.turn - reviewAnchorTurn).coerceAtLeast(0)
+        val currentState = currentReviewMetricState(memo, memory, observation, empireObservation, trigger.metric)
+        return when (trigger.kind) {
+            "milestone_reached" -> if (currentState) {
+                trigger.summary?.takeIf { it.isNotBlank() }
+                    ?: defaultReviewTriggerReason(trigger.kind, trigger.metric)
+            } else {
+                null
             }
+            "deadline_missed" -> {
+                val withinTurns = trigger.withinTurns?.coerceAtLeast(1) ?: return null
+                if (turnsSinceReview >= withinTurns && !currentState) {
+                    trigger.summary?.takeIf { it.isNotBlank() }
+                        ?: "The strategist review deadline for ${humanizeReviewMetric(trigger.metric)} was missed and the memo should be rewritten."
+                } else {
+                    null
+                }
+            }
+            "assumption_broken", "contract_broken" -> if (currentState) {
+                trigger.summary?.takeIf { it.isNotBlank() }
+                    ?: defaultReviewTriggerReason(trigger.kind, trigger.metric)
+            } else {
+                null
+            }
+            else -> null
+        }
+    }
+
+    private fun currentReviewMetricState(
+        memo: AgentStrategistMemoMemory,
+        memory: AgentMemory,
+        observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+        metric: String,
+    ): Boolean {
+        val normalizedMetric = normalizeStrategistReviewMetric(metric) ?: return false
+        val currentVisibleRivalCities = observation.visibleThreatsAndTargets.count { it.kind == "city" && it.civName != observation.civName }
+        val currentVisibleRivalCapitals = observation.visibleThreatsAndTargets.count {
+            it.kind == "city" &&
+                it.civName != observation.civName &&
+                it.facts.any { fact -> fact.equals("Capital", ignoreCase = true) }
+        }
+        val latestMismatch = memory.tacticianTurnLog
+            .lastOrNull { entry ->
+                entry.basedOnStrategistTurn == memo.lastReviewedTurn &&
+                    entry.actionSurfaceMismatch.isNotEmpty()
+            }
+            ?.actionSurfaceMismatch
+            .orEmpty()
+        return when (normalizedMetric) {
+            "contact_made" -> empireObservation.gameContext.contactComplete
+            "city_founded", "city_captured", "city_count_increased", "capture_capital" ->
+                observation.empireSummary.cityCount > memo.reviewCityCount
+            "second_city_founded" -> observation.empireSummary.cityCount >= 2
+            "war_declared", "war_started_unexpectedly" -> observation.empireSummary.isAtWar
+            "rival_city_visible" -> currentVisibleRivalCities > memo.reviewVisibleRivalCities
+            "rival_capital_visible" -> currentVisibleRivalCapitals > memo.reviewVisibleRivalCapitals
+            "primary_rival_changed" -> {
+                val currentPrimaryRival = extractPrimaryRivalCiv(memory, observation, empireObservation)
+                currentPrimaryRival != null &&
+                    memo.reviewPrimaryRivalCiv != null &&
+                    currentPrimaryRival != memo.reviewPrimaryRivalCiv
+            }
+            "target_site_contested" -> {
+                val checkpointKind = memory.campaignControl.nextCheckpointKind ?: memo.campaignControl.nextCheckpointKind
+                val mode = memory.lastStrategistMemo.decisionFrame.decisionMode ?: memo.decisionFrame.decisionMode ?: memo.campaignStage
+                val expansionLike = isExpansionObjective(checkpointKind) || campaignModeFamily(mode) == "expand"
+                expansionLike &&
+                    currentVisibleRivalCities > memo.reviewVisibleRivalCities &&
+                    observation.empireSummary.cityCount <= memo.reviewCityCount
+            }
+            "action_surface_mismatch" -> latestMismatch.isNotEmpty()
+            "supply_collapsing" -> memory.campaignControl.supplyHealth.equals("collapsing", ignoreCase = true)
+            else -> false
+        }
+    }
+
+    private fun defaultReviewTriggerReason(kind: String, metric: String): String {
+        val humanMetric = humanizeReviewMetric(metric)
+        return when (kind) {
+            "milestone_reached" -> "The strategist milestone was reached: $humanMetric."
+            "assumption_broken" -> "A strategist assumption broke: $humanMetric."
+            "contract_broken" -> "The strategist contract no longer matches execution reality: $humanMetric."
+            else -> "The strategist review trigger fired: $humanMetric."
+        }
+    }
+
+    private fun humanizeReviewMetric(metric: String): String {
+        return (normalizeStrategistReviewMetric(metric) ?: metric)
+            .trim()
+            .replace('_', ' ')
+            .ifBlank { "the current phase boundary" }
+    }
+
+    private fun normalizeStrategistReviewMetric(metric: String?): String? {
+        val normalized = metric
+            ?.trim()
+            ?.lowercase()
+            ?.replace(' ', '_')
+            ?.takeUnless { it.isEmpty() }
+            ?: return null
+        return when (normalized) {
+            "capital_founded", "found_capital", "first_city_founded" -> "city_founded"
+            "capital_captured", "capital_taken" -> "capture_capital"
+            "war_started" -> "war_declared"
+            "enemy_city_visible", "city_visible" -> "rival_city_visible"
+            "enemy_capital_visible", "capital_visible" -> "rival_capital_visible"
+            "site_contested", "target_site_claimed", "settle_site_contested" -> "target_site_contested"
+            else -> normalized
+        }
+    }
+
+    private fun strategistReviewAnchorTurn(
+        memo: AgentStrategistMemoMemory,
+        fallbackTurn: Int,
+    ): Int {
+        if (!hasStrategistMemo(memo)) return fallbackTurn
+        return when {
+            memo.lastReviewedTurn > 0 -> memo.lastReviewedTurn
+            memo.createdTurn > 0 -> memo.createdTurn
+            else -> 0
+        }
     }
 
     private fun looksWarAware(memory: AgentMemory): Boolean {
@@ -448,16 +535,13 @@ object AgentMemoryManager {
         turn: Int,
     ): AgentMemory {
         return memory.copy(
-            worldModel = pruneWorldModel(memory.worldModel, turn),
-            rivals = mergeRivalNotebooks(memory.rivals, observation, empireObservation, turn),
+            worldModel = refreshWorldModelAnchors(pruneWorldModel(memory.worldModel, turn), observation, turn),
             campaign = pruneCampaign(memory.campaign, empireObservation, turn),
             empirePlan = pruneEmpirePlan(memory.empirePlan, turn),
-            planHealth = prunePlanHealth(memory.planHealth, turn),
             campaignControl = pruneCampaignControl(memory.campaignControl, turn),
             recentChanges = pruneNotes(memory.recentChanges, turn, maxRecentChanges),
             lessons = ArrayList(memory.lessons.takeLast(maxLessons).map { it.copy() }),
             lastStrategistMemo = memory.lastStrategistMemo.copy(
-                planHealth = memory.lastStrategistMemo.planHealth.copy(),
                 campaignControl = memory.lastStrategistMemo.campaignControl.copy(),
                 reviewCityNames = ArrayList(memory.lastStrategistMemo.reviewCityNames),
             ),
@@ -467,18 +551,6 @@ object AgentMemoryManager {
             recentFailures = ArrayList(memory.recentFailures.map { it.copy() }),
         )
     }
-
-    private data class PlanHealthSnapshot(
-        val cityCount: Int,
-        val cityNames: List<String>,
-        val militaryUnitCount: Int,
-        val isAtWar: Boolean,
-        val contactComplete: Boolean,
-        val gold: Int,
-        val happiness: Int,
-        val visibleRivalCities: Int,
-        val visibleRivalUnits: Int,
-    )
 
     private data class CampaignControlSnapshot(
         val cityCount: Int,
@@ -505,40 +577,6 @@ object AgentMemoryManager {
     private val campaignCombatRoles = setOf("melee", "ranged", "siege", "mounted", "armored", "naval_melee", "naval_ranged")
     private val campaignCaptureRoles = setOf("melee", "mounted", "armored", "naval_melee")
     private val campaignRangedRoles = setOf("ranged", "siege", "naval_ranged")
-
-    private fun buildPlanHealthSnapshot(
-        observation: AgentObservation,
-        empireObservation: AgentEmpireObservation,
-    ): PlanHealthSnapshot {
-        return PlanHealthSnapshot(
-            cityCount = observation.empireSummary.cityCount,
-            cityNames = observation.cities.map { it.name }.sorted(),
-            militaryUnitCount = observation.empireSummary.militaryUnitCount,
-            isAtWar = observation.empireSummary.isAtWar,
-            contactComplete = empireObservation.gameContext.contactComplete,
-            gold = observation.empireSummary.gold,
-            happiness = observation.empireSummary.happiness,
-            visibleRivalCities = observation.visibleThreatsAndTargets.count { it.kind == "city" && it.civName != observation.civName },
-            visibleRivalUnits = observation.visibleThreatsAndTargets.count { it.kind == "unit" && it.civName != observation.civName },
-        )
-    }
-
-    private fun buildPlanHealthSnapshot(
-        civInfo: Civilization,
-        startingObservation: AgentObservation,
-    ): PlanHealthSnapshot {
-        return PlanHealthSnapshot(
-            cityCount = civInfo.cities.size,
-            cityNames = civInfo.cities.map { it.name }.sorted(),
-            militaryUnitCount = civInfo.units.getCivUnits().count { it.isMilitary() },
-            isAtWar = civInfo.isAtWar(),
-            contactComplete = civInfo.getKnownCivs().any { !it.isBarbarian && !it.isCityState },
-            gold = civInfo.gold,
-            happiness = civInfo.getHappiness(),
-            visibleRivalCities = startingObservation.visibleThreatsAndTargets.count { it.kind == "city" && it.civName != startingObservation.civName },
-            visibleRivalUnits = startingObservation.visibleThreatsAndTargets.count { it.kind == "unit" && it.civName != startingObservation.civName },
-        )
-    }
 
     private fun buildCampaignControlSnapshot(
         observation: AgentObservation,
@@ -642,91 +680,9 @@ object AgentMemoryManager {
         )
     }
 
-    private fun reconcilePlanHealth(
-        current: AgentPlanHealthMemory,
-        memo: AgentStrategistMemoMemory,
-        snapshot: PlanHealthSnapshot,
-        turn: Int,
-        latestMemoValidity: String?,
-        latestActionSurfaceMismatch: List<String>,
-    ): AgentPlanHealthMemory {
-        if (!hasStrategistMemo(memo)) return prunePlanHealth(current.copy(lastUpdatedTurn = turn), turn)
-
-        val labels = normalizePlanHealthLabels(memo.planHealth)
-        val objectiveCreatedTurn = current.objectiveCreatedTurn.takeIf { it > 0 }
-            ?: memo.createdTurn.takeIf { it > 0 }
-            ?: turn
-        val currentLastProgressTurn = current.lastMeaningfulProgressTurn.takeIf { it > 0 }
-            ?: objectiveCreatedTurn
-        val objectiveAgeTurns = (turn - objectiveCreatedTurn).coerceAtLeast(0)
-        val milestoneHorizonTurns = labels.milestoneHorizonTurns ?: defaultMilestoneHorizon(labels.objectiveKind)
-        val progressSignals = deriveProgressSignals(memo, labels, snapshot)
-        val contradictions = derivePlanContradictions(
-            memo = memo,
-            labels = labels,
-            snapshot = snapshot,
-            objectiveAgeTurns = objectiveAgeTurns,
-            milestoneHorizonTurns = milestoneHorizonTurns,
-            currentLastProgressTurn = currentLastProgressTurn,
-            turn = turn,
-            latestActionSurfaceMismatch = latestActionSurfaceMismatch,
-        )
-        val opportunityCosts = derivePlanOpportunityCosts(
-            memo = memo,
-            labels = labels,
-            snapshot = snapshot,
-            objectiveAgeTurns = objectiveAgeTurns,
-            milestoneHorizonTurns = milestoneHorizonTurns,
-        )
-        val normalizedMemoValidity = normalizeMemoValidity(latestMemoValidity)
-        val madeMeaningfulProgress = progressSignals.isNotEmpty()
-        val lastMeaningfulProgressTurn = if (madeMeaningfulProgress) turn else currentLastProgressTurn
-        val turnsSinceMeaningfulProgress = (turn - lastMeaningfulProgressTurn).coerceAtLeast(0)
-        val status = when {
-            normalizedMemoValidity == "contradicted" || contradictions.size >= 2 -> "contradicted"
-            normalizedMemoValidity == "strained" || contradictions.isNotEmpty() || opportunityCosts.isNotEmpty() || latestActionSurfaceMismatch.isNotEmpty() -> "strained"
-            else -> "healthy"
-        }
-        val pivotRecommended = when {
-            normalizedMemoValidity == "contradicted" -> true
-            contradictions.size >= 2 -> true
-            contradictions.isNotEmpty() && objectiveAgeTurns >= milestoneHorizonTurns + 2 -> true
-            contradictions.isNotEmpty() && turnsSinceMeaningfulProgress >= milestoneHorizonTurns + 1 -> true
-            opportunityCosts.size >= 2 && turnsSinceMeaningfulProgress >= milestoneHorizonTurns -> true
-            else -> false
-        }
-        val pivotReason = when {
-            !pivotRecommended -> null
-            normalizedMemoValidity == "contradicted" -> "The latest tactician reflection says the old memo no longer matches reality."
-            contradictions.isNotEmpty() -> contradictions.first()
-            opportunityCosts.isNotEmpty() -> opportunityCosts.first()
-            else -> null
-        }
-
-        return prunePlanHealth(
-            AgentPlanHealthMemory(
-                objectiveKind = labels.objectiveKind,
-                nextMilestoneKind = labels.nextMilestoneKind,
-                nextMilestoneSummary = labels.nextMilestoneSummary,
-                milestoneHorizonTurns = milestoneHorizonTurns,
-                blockerKind = labels.blockerKind,
-                status = status,
-                objectiveCreatedTurn = objectiveCreatedTurn,
-                lastMeaningfulProgressTurn = lastMeaningfulProgressTurn,
-                contradictions = ArrayList(contradictions),
-                opportunityCosts = ArrayList(opportunityCosts),
-                pivotRecommended = pivotRecommended,
-                pivotReason = pivotReason,
-                lastUpdatedTurn = turn,
-            ),
-            turn,
-        )
-    }
-
     private fun reconcileCampaignControl(
         current: AgentCampaignControlMemory,
         memo: AgentStrategistMemoMemory,
-        planHealth: AgentPlanHealthMemory,
         snapshot: CampaignControlSnapshot,
         turn: Int,
         latestCommitmentLevel: String?,
@@ -736,18 +692,17 @@ object AgentMemoryManager {
         if (!hasStrategistMemo(memo)) return pruneCampaignControl(current.copy(lastUpdatedTurn = turn), turn)
 
         val labels = normalizeCampaignControlLabels(memo.campaignControl)
-        val objectiveKind = planHealth.objectiveKind ?: planHealth.nextMilestoneKind
-        val checkpointKind = labels.nextCheckpointKind ?: planHealth.nextMilestoneKind ?: objectiveKind
+        val objectiveKind = deriveCampaignObjectiveKind(memo, labels, current)
+        val checkpointKind = labels.nextCheckpointKind ?: current.nextCheckpointKind ?: objectiveKind
         val checkpointSummary = labels.nextCheckpointSummary
-            ?: planHealth.nextMilestoneSummary
+            ?: memo.decisionFrame.nextCheckpoint
             ?: memo.decisiveObjective
             ?: memo.futurePlan
+            ?: current.nextCheckpointSummary
         val checkpointHorizonTurns = labels.checkpointHorizonTurns
-            ?: planHealth.milestoneHorizonTurns
+            ?: current.checkpointHorizonTurns
             ?: defaultCampaignCheckpointHorizon(checkpointKind)
-        val commitmentStartedTurn = current.commitmentStartedTurn.takeIf { it > 0 }
-            ?: memo.createdTurn.takeIf { it > 0 }
-            ?: turn
+        val commitmentStartedTurn = if (!current.isEmpty()) current.commitmentStartedTurn else if (hasStrategistMemo(memo)) memo.createdTurn else turn
         val commitmentAgeTurns = (turn - commitmentStartedTurn).coerceAtLeast(0)
         val battleReadiness = deriveBattleReadiness(
             latestLabel = latestBattleReadiness,
@@ -770,7 +725,6 @@ object AgentMemoryManager {
             latestLabel = latestCommitmentLevel,
             memoLabel = labels.commitmentLevel,
             objectiveKind = objectiveKind,
-            planHealth = planHealth,
             launchWindowOpen = launchWindowOpen,
             snapshot = snapshot,
             commitmentAgeTurns = commitmentAgeTurns,
@@ -789,7 +743,6 @@ object AgentMemoryManager {
             else -> "building"
         }
         val holdingCosts = deriveCampaignHoldingCosts(
-            planHealth = planHealth,
             objectiveKind = objectiveKind,
             snapshot = snapshot,
             battleReadiness = battleReadiness,
@@ -800,7 +753,6 @@ object AgentMemoryManager {
             checkpointHorizonTurns = checkpointHorizonTurns,
         )
         val pivotTriggers = deriveCampaignPivotTriggers(
-            planHealth = planHealth,
             objectiveKind = objectiveKind,
             snapshot = snapshot,
             battleReadiness = battleReadiness,
@@ -843,17 +795,15 @@ object AgentMemoryManager {
         latestLabel: String?,
         memoLabel: String?,
         objectiveKind: String?,
-        planHealth: AgentPlanHealthMemory,
         launchWindowOpen: Boolean,
         snapshot: CampaignControlSnapshot,
         commitmentAgeTurns: Int,
     ): String {
         normalizeControlLabel(latestLabel)?.let { return it }
         normalizeControlLabel(memoLabel)?.let { return it }
-        if (planHealth.pivotRecommended || planHealth.status.equals("contradicted", ignoreCase = true)) return "pivoting"
         if (snapshot.isAtWar) return "committed"
         if (launchWindowOpen && commitmentAgeTurns >= 1) return "committed"
-        if (!objectiveKind.isNullOrBlank()) return "building"
+        if (isExpansionObjective(objectiveKind) || isWarLikeObjective(objectiveKind)) return "building"
         return "probing"
     }
 
@@ -928,7 +878,6 @@ object AgentMemoryManager {
     }
 
     private fun deriveCampaignHoldingCosts(
-        planHealth: AgentPlanHealthMemory,
         objectiveKind: String?,
         snapshot: CampaignControlSnapshot,
         battleReadiness: String,
@@ -939,7 +888,6 @@ object AgentMemoryManager {
         checkpointHorizonTurns: Int,
     ): List<String> {
         val costs = linkedSetOf<String>()
-        planHealth.opportunityCosts.forEach(costs::add)
         if (isExpansionObjective(objectiveKind) && snapshot.settlersReady > 0 && checkpointStatus != "completed") {
             costs += "A ready Settler is waiting while the next city is still unresolved."
         }
@@ -959,7 +907,6 @@ object AgentMemoryManager {
     }
 
     private fun deriveCampaignPivotTriggers(
-        planHealth: AgentPlanHealthMemory,
         objectiveKind: String?,
         snapshot: CampaignControlSnapshot,
         battleReadiness: String,
@@ -970,7 +917,6 @@ object AgentMemoryManager {
         checkpointHorizonTurns: Int,
     ): List<String> {
         val triggers = linkedSetOf<String>()
-        planHealth.contradictions.forEach(triggers::add)
         if (checkpointStatus == "missed") {
             triggers += "The campaign missed its checkpoint and should either convert now or be rewritten."
         }
@@ -1059,112 +1005,17 @@ object AgentMemoryManager {
         return objectiveKind in setOf("expand", "settle_city", "found_city", "second_city_founded")
     }
 
-    private fun deriveProgressSignals(
+    private fun deriveCampaignObjectiveKind(
         memo: AgentStrategistMemoMemory,
-        labels: AgentPlanHealthLabels,
-        snapshot: PlanHealthSnapshot,
-    ): List<String> {
-        val signals = linkedSetOf<String>()
-        if (snapshot.cityCount > memo.reviewCityCount) signals += "city_count_increased"
-        if (snapshot.cityNames != memo.reviewCityNames.sorted()) signals += "city_roster_changed"
-        if (snapshot.isAtWar && !memo.reviewIsAtWar) signals += "war_started"
-        if (snapshot.contactComplete && !memo.reviewContactComplete) signals += "contact_complete"
-        if (snapshot.visibleRivalCities > memo.reviewVisibleRivalCities) signals += "new_rival_city_seen"
-        when (labels.nextMilestoneKind) {
-            "city_founded", "city_captured" -> if (snapshot.cityCount > memo.reviewCityCount) signals += labels.nextMilestoneKind
-            "second_city_founded" -> if (snapshot.cityCount >= 2) signals += labels.nextMilestoneKind
-            "war_declared" -> if (snapshot.isAtWar) signals += "war_declared"
-            "contact_made" -> if (snapshot.contactComplete) signals += "contact_made"
-        }
-        return signals.toList()
-    }
-
-    private fun derivePlanContradictions(
-        memo: AgentStrategistMemoMemory,
-        labels: AgentPlanHealthLabels,
-        snapshot: PlanHealthSnapshot,
-        objectiveAgeTurns: Int,
-        milestoneHorizonTurns: Int,
-        currentLastProgressTurn: Int,
-        turn: Int,
-        latestActionSurfaceMismatch: List<String>,
-    ): List<String> {
-        val contradictions = linkedSetOf<String>()
-        val milestoneDue = objectiveAgeTurns >= milestoneHorizonTurns
-        val turnsSinceMeaningfulProgress = (turn - currentLastProgressTurn).coerceAtLeast(0)
-        when (labels.nextMilestoneKind) {
-            "city_founded" -> if (milestoneDue && snapshot.cityCount <= memo.reviewCityCount) {
-                contradictions += "The plan expected a new city by now, but city count is still ${snapshot.cityCount}."
-            }
-            "second_city_founded" -> if (milestoneDue && snapshot.cityCount < 2) {
-                contradictions += "The plan expected a second city by now, but we are still on ${snapshot.cityCount} cities."
-            }
-            "war_declared" -> if (milestoneDue && !snapshot.isAtWar) {
-                contradictions += "The plan expected war to begin by now, but we are still at peace."
-            }
-            "contact_made" -> if (milestoneDue && !snapshot.contactComplete) {
-                contradictions += "The plan expected contact to be solved by now, but the rival is still not fully contacted."
-            }
-            "city_captured" -> if (milestoneDue && snapshot.cityCount <= memo.reviewCityCount) {
-                contradictions += "The plan expected territory to convert by now, but city count has not increased."
-            }
-        }
-        when (labels.objectiveKind) {
-            "expand", "settle_city", "found_city" -> if (turnsSinceMeaningfulProgress >= milestoneHorizonTurns + 1 && snapshot.cityCount <= memo.reviewCityCount) {
-                contradictions += "Expansion has stayed live without adding a city."
-            }
-            "declare_war", "capture_city", "capture_capital", "assault" -> if (
-                turnsSinceMeaningfulProgress >= milestoneHorizonTurns &&
-                !snapshot.isAtWar &&
-                snapshot.militaryUnitCount >= memo.reviewMilitaryUnitCount + 3
-            ) {
-                contradictions += "Military staging has grown, but the military objective still has not converted into war."
-            }
-        }
-        if (milestoneDue && snapshot.visibleRivalCities > memo.reviewVisibleRivalCities && snapshot.cityCount <= memo.reviewCityCount) {
-            contradictions += "The rival picture grew while our current plan made no concrete city progress."
-        }
-        latestActionSurfaceMismatch
-            .mapNotNull { it.trim().takeIf(String::isNotEmpty) }
-            .take(2)
-            .forEach { mismatch ->
-                contradictions += "The tactician could not cleanly serve the strategist frame: $mismatch"
-            }
-        return contradictions.toList()
-    }
-
-    private fun derivePlanOpportunityCosts(
-        memo: AgentStrategistMemoMemory,
-        labels: AgentPlanHealthLabels,
-        snapshot: PlanHealthSnapshot,
-        objectiveAgeTurns: Int,
-        milestoneHorizonTurns: Int,
-    ): List<String> {
-        val costs = linkedSetOf<String>()
-        val warLikeObjective = labels.objectiveKind in setOf("declare_war", "capture_city", "capture_capital", "assault")
-        if (!snapshot.isAtWar && snapshot.gold < 0 && snapshot.militaryUnitCount >= 6) {
-            costs += "The treasury is negative while an unused army still costs upkeep."
-        }
-        if (!snapshot.isAtWar && snapshot.cityCount <= memo.reviewCityCount && snapshot.militaryUnitCount >= maxOf(8, snapshot.cityCount * 4)) {
-            costs += "A large army is being maintained without corresponding expansion or war conversion."
-        }
-        if (snapshot.cityCount <= 1 && snapshot.militaryUnitCount >= 8) {
-            costs += "A one-city economy is carrying an oversized military package."
-        }
-        if (warLikeObjective && !snapshot.isAtWar && objectiveAgeTurns >= milestoneHorizonTurns) {
-            costs += "Waiting longer is letting a war-focused buildup consume tempo without pressure."
-        }
-        if (snapshot.happiness < 0) {
-            costs += "Unhappy empire conditions make a stalled plan more expensive every turn."
-        }
-        return costs.toList()
-    }
-
-    private fun defaultMilestoneHorizon(objectiveKind: String?): Int {
-        return when (objectiveKind) {
-            "contact", "expand", "settle_city", "found_city" -> 4
-            "declare_war", "capture_city", "capture_capital", "assault" -> 5
-            else -> 5
+        labels: AgentCampaignControlLabels,
+        current: AgentCampaignControlMemory,
+    ): String? {
+        labels.nextCheckpointKind?.let { return it }
+        current.nextCheckpointKind?.let { return it }
+        return when (campaignModeFamily(memo.decisionFrame.decisionMode ?: memo.campaignStage)) {
+            "expand" -> "found_city"
+            "war" -> "declare_war"
+            else -> null
         }
     }
 
@@ -1344,7 +1195,7 @@ object AgentMemoryManager {
         }
         return TacticianTurnLogEntry(
             turn = turn,
-            basedOnStrategistTurn = startingMemory.lastStrategistMemo.lastReviewedTurn.takeIf { it > 0 },
+            basedOnStrategistTurn = if (hasStrategistMemo(startingMemory.lastStrategistMemo)) startingMemory.lastStrategistMemo.lastReviewedTurn else null,
             campaignStage = startingMemory.campaign.stage.takeIf { it.isNotBlank() },
             decisiveObjective = startingMemory.campaign.decisiveObjective,
             summary = summary,
@@ -1495,15 +1346,6 @@ object AgentMemoryManager {
         )
     }
 
-    private fun prunePlanHealth(planHealth: AgentPlanHealthMemory, turn: Int): AgentPlanHealthMemory {
-        if (planHealth.isEmpty()) return AgentPlanHealthMemory()
-        return planHealth.copy(
-            contradictions = ArrayList(planHealth.contradictions.takeLast(4)),
-            opportunityCosts = ArrayList(planHealth.opportunityCosts.takeLast(4)),
-            lastUpdatedTurn = planHealth.lastUpdatedTurn.takeIf { it > 0 } ?: turn,
-        )
-    }
-
     private fun pruneCampaignControl(campaignControl: AgentCampaignControlMemory, turn: Int): AgentCampaignControlMemory {
         if (campaignControl.isEmpty()) return AgentCampaignControlMemory()
         return campaignControl.copy(
@@ -1513,77 +1355,31 @@ object AgentMemoryManager {
         )
     }
 
-    private fun mergeRivalNotebooks(
-        existing: List<RivalNotebookMemory>,
+    private fun refreshWorldModelAnchors(
+        worldModel: WorldModelMemory,
         observation: AgentObservation,
-        empireObservation: AgentEmpireObservation,
         turn: Int,
-    ): ArrayList<RivalNotebookMemory> {
-        val notebooks = linkedMapOf<String, RivalNotebookMemory>()
-        existing.forEach { rival ->
-            notebooks[rival.rivalCiv] = rival.copy(
-                notes = pruneNotes(rival.notes, turn, maxRivalNotes),
-                anchors = ArrayList(rival.anchors.map { it.copy() }),
-            )
-        }
-
-        val knownRivals = linkedSetOf<String>()
-        empireObservation.victoryThreats.mapTo(knownRivals) { it.civName }
+    ): WorldModelMemory {
+        val anchors = ArrayList(worldModel.anchors.map { it.copy() })
         observation.visibleThreatsAndTargets
-            .filter { it.civName != observation.civName }
-            .mapTo(knownRivals) { it.civName }
-
-        knownRivals.forEach { rivalCiv ->
-            notebooks.putIfAbsent(rivalCiv, RivalNotebookMemory(rivalCiv = rivalCiv, lastUpdatedTurn = turn))
-        }
-
-        observation.visibleThreatsAndTargets
-            .filter { it.civName != observation.civName }
+            .filter { it.kind == "city" && it.civName != observation.civName }
             .forEach { target ->
-                val notebook = notebooks.getOrPut(target.civName) { RivalNotebookMemory(rivalCiv = target.civName) }
-                notebook.lastUpdatedTurn = turn
-                if (target.kind == "city") {
-                    upsertAnchor(
-                        notebook.anchors,
-                        MemoryAnchor(
-                            kind = if (target.facts.any { it.equals("Capital", ignoreCase = true) }) "capital" else "city",
-                            label = target.name,
-                            civName = target.civName,
-                            x = target.x,
-                            y = target.y,
-                            firstSeenTurn = turn,
-                            lastConfirmedTurn = turn,
-                        )
+                upsertAnchor(
+                    anchors,
+                    MemoryAnchor(
+                        kind = if (target.facts.any { it.equals("Capital", ignoreCase = true) }) "capital" else "city",
+                        label = target.name,
+                        civName = target.civName,
+                        x = target.x,
+                        y = target.y,
+                        firstSeenTurn = turn,
+                        lastConfirmedTurn = turn,
                     )
-                } else if (target.kind == "unit") {
-                    upsertNote(
-                        notebook.notes,
-                        MemoryNote(
-                            topic = "rival",
-                            kind = "fact",
-                            text = "Saw ${target.name} near (${target.x}, ${target.y}).",
-                            civName = target.civName,
-                            x = target.x,
-                            y = target.y,
-                            confidence = "high",
-                            firstTurn = turn,
-                            lastUpdatedTurn = turn,
-                            staleAfterTurn = turn + sightingHorizonTurns,
-                        ),
-                        maxRivalNotes,
-                    )
-                }
+                )
             }
-
-        return ArrayList(
-            notebooks.values
-                .map { rival ->
-                    rival.copy(
-                        notes = ArrayList(rival.notes.takeLast(maxRivalNotes).map { it.copy() }),
-                        anchors = ArrayList(rival.anchors.sortedByDescending { it.lastConfirmedTurn }.take(maxRivalAnchors).map { it.copy() }),
-                    )
-                }
-                .sortedBy { it.rivalCiv }
+        return worldModel.copy(
+            anchors = ArrayList(anchors.sortedByDescending { it.lastConfirmedTurn }.take(12)),
+            lastUpdatedTurn = turn,
         )
     }
 
@@ -1619,8 +1415,7 @@ object AgentMemoryManager {
             conversionBlocker = memo.conversionBlocker?.trim().takeUnless { it.isNullOrEmpty() } ?: current.conversionBlocker,
             summary = memo.campaignSummary?.trim().takeUnless { it.isNullOrEmpty() } ?: current.summary,
             reinforcementPlan = memo.reinforcementPlan?.trim().takeUnless { it.isNullOrEmpty() } ?: current.reinforcementPlan,
-            primaryRivalCiv = memo.rivals.firstOrNull()?.rivalCiv
-                ?: current.primaryRivalCiv
+            primaryRivalCiv = current.primaryRivalCiv
                 ?: extractPrimaryRivalCiv(memory = null, observation = observation, empireObservation = empireObservation),
             doNotDo = ArrayList(memo.campaignDoNotDo.take(4)),
             notes = buildNoteList("campaign", "implication", derivedNotes, turn, turn + 60, maxRecentChanges),
@@ -1637,39 +1432,6 @@ object AgentMemoryManager {
             summary = memo.empirePlanSummary?.trim().takeUnless { it.isNullOrEmpty() } ?: current.summary,
             purchaseIntent = memo.purchaseIntent?.trim().takeUnless { it.isNullOrEmpty() } ?: current.purchaseIntent,
             notes = buildNoteList("empire_plan", "implication", memo.empirePlanNotes, turn, turn + 60, maxRecentChanges),
-            lastUpdatedTurn = turn,
-        )
-    }
-
-    private fun buildPlanHealth(
-        current: AgentPlanHealthMemory,
-        previousMemo: AgentStrategistMemoMemory,
-        memo: AgentStrategistMemoDraft,
-        turn: Int,
-    ): AgentPlanHealthMemory {
-        val sameThread = isSameCampaignThread(previousMemo, memo)
-        val normalizedLabels = normalizePlanHealthLabels(memo.planHealth)
-        return AgentPlanHealthMemory(
-            objectiveKind = normalizedLabels.objectiveKind,
-            nextMilestoneKind = normalizedLabels.nextMilestoneKind,
-            nextMilestoneSummary = normalizedLabels.nextMilestoneSummary,
-            milestoneHorizonTurns = normalizedLabels.milestoneHorizonTurns,
-            blockerKind = normalizedLabels.blockerKind,
-            status = if (sameThread) current.status else "",
-            objectiveCreatedTurn = if (sameThread) {
-                current.objectiveCreatedTurn.takeIf { it > 0 } ?: previousMemo.createdTurn.takeIf { it > 0 } ?: turn
-            } else {
-                turn
-            },
-            lastMeaningfulProgressTurn = if (sameThread) {
-                current.lastMeaningfulProgressTurn.takeIf { it > 0 } ?: turn
-            } else {
-                turn
-            },
-            contradictions = if (sameThread) ArrayList(current.contradictions.takeLast(4)) else arrayListOf(),
-            opportunityCosts = if (sameThread) ArrayList(current.opportunityCosts.takeLast(4)) else arrayListOf(),
-            pivotRecommended = if (sameThread) current.pivotRecommended else false,
-            pivotReason = if (sameThread) current.pivotReason else null,
             lastUpdatedTurn = turn,
         )
     }
@@ -1692,11 +1454,15 @@ object AgentMemoryManager {
             pivotTriggerKind = normalizedLabels.pivotTriggerKind,
             checkpointStatus = if (sameThread) current.checkpointStatus else "",
             commitmentStartedTurn = if (sameThread) {
-                current.commitmentStartedTurn.takeIf { it > 0 } ?: previousMemo.createdTurn.takeIf { it > 0 } ?: turn
+                if (!current.isEmpty()) current.commitmentStartedTurn else if (hasStrategistMemo(previousMemo)) previousMemo.createdTurn else turn
             } else {
                 turn
             },
-            lastCheckpointTurn = if (sameThread) current.lastCheckpointTurn.takeIf { it > 0 } ?: turn else turn,
+            lastCheckpointTurn = if (sameThread) {
+                if (!current.isEmpty()) current.lastCheckpointTurn else if (hasStrategistMemo(previousMemo)) previousMemo.createdTurn else turn
+            } else {
+                turn
+            },
             launchWindowOpen = if (sameThread) current.launchWindowOpen else false,
             holdingCosts = if (sameThread) ArrayList(current.holdingCosts.takeLast(4)) else arrayListOf(),
             pivotTriggers = if (sameThread) ArrayList(current.pivotTriggers.takeLast(4)) else arrayListOf(),
@@ -1704,13 +1470,30 @@ object AgentMemoryManager {
         )
     }
 
-    private fun normalizePlanHealthLabels(labels: AgentPlanHealthLabels): AgentPlanHealthLabels {
-        return AgentPlanHealthLabels(
-            objectiveKind = labels.objectiveKind?.trim()?.takeUnless { it.isEmpty() },
-            nextMilestoneKind = labels.nextMilestoneKind?.trim()?.takeUnless { it.isEmpty() },
-            nextMilestoneSummary = labels.nextMilestoneSummary?.trim()?.takeUnless { it.isEmpty() },
-            milestoneHorizonTurns = labels.milestoneHorizonTurns?.coerceIn(1, 12),
-            blockerKind = labels.blockerKind?.trim()?.takeUnless { it.isEmpty() },
+    private fun normalizeStrategistReviewContract(
+        contract: AgentStrategistReviewContract,
+        gameContext: AgentPublicGameContextObservation,
+    ): AgentStrategistReviewContract {
+        val maxAgeTurns = when {
+            gameContext.duelLike && gameContext.gameSpeed.equals("Quick", ignoreCase = true) ->
+                contract.maxAgeTurns.coerceIn(5, 10)
+            else -> contract.maxAgeTurns.coerceIn(6, 12)
+        }
+        val triggers = contract.triggers
+            .mapNotNull { trigger ->
+                val kind = trigger.kind.trim().lowercase().takeUnless { it.isEmpty() } ?: return@mapNotNull null
+                val metric = normalizeStrategistReviewMetric(trigger.metric) ?: return@mapNotNull null
+                AgentStrategistReviewTrigger(
+                    kind = kind,
+                    metric = metric,
+                    summary = trigger.summary?.trim()?.takeUnless { it.isEmpty() },
+                    withinTurns = trigger.withinTurns?.coerceIn(1, 12),
+                )
+            }
+            .take(4)
+        return AgentStrategistReviewContract(
+            maxAgeTurns = maxAgeTurns,
+            triggers = triggers,
         )
     }
 
@@ -1734,28 +1517,6 @@ object AgentMemoryManager {
             checkpointHorizonTurns = labels.checkpointHorizonTurns?.coerceIn(1, 12),
             pivotTriggerKind = labels.pivotTriggerKind?.trim()?.takeUnless { it.isEmpty() },
         )
-    }
-
-    private fun applyStrategistRivalUpdates(
-        current: List<RivalNotebookMemory>,
-        drafts: List<AgentStrategistRivalNotebookDraft>,
-        turn: Int,
-    ): ArrayList<RivalNotebookMemory> {
-        val byCiv = linkedMapOf<String, RivalNotebookMemory>()
-        current.forEach { byCiv[it.rivalCiv] = it.copy(
-            notes = ArrayList(it.notes.map { note -> note.copy() }),
-            anchors = ArrayList(it.anchors.map { anchor -> anchor.copy() }),
-        ) }
-        drafts.forEach { draft ->
-            val existing = byCiv[draft.rivalCiv] ?: RivalNotebookMemory(rivalCiv = draft.rivalCiv)
-            byCiv[draft.rivalCiv] = existing.copy(
-                summary = draft.summary?.trim().takeUnless { it.isNullOrEmpty() } ?: existing.summary,
-                notes = buildNoteList("rival", "inference", draft.notes, turn, turn + 60, maxRivalNotes),
-                anchors = ArrayList(existing.anchors.map { it.copy() }),
-                lastUpdatedTurn = turn,
-            )
-        }
-        return ArrayList(byCiv.values.sortedBy { it.rivalCiv })
     }
 
     private fun buildRecentFailures(
@@ -2356,14 +2117,7 @@ object AgentMemoryManager {
     ): Boolean {
         val previousObjective = previous.decisiveObjective?.trim().orEmpty()
         val currentObjective = current.decisiveObjective.trim()
-        val previousObjectiveKind = previous.planHealth.objectiveKind?.trim().orEmpty()
-        val currentObjectiveKind = current.planHealth.objectiveKind?.trim().orEmpty()
         if (!hasStrategistMemo(previous)) return false
-        if (
-            previousObjectiveKind.isNotBlank() &&
-            currentObjectiveKind.isNotBlank() &&
-            previousObjectiveKind != currentObjectiveKind
-        ) return false
 
         val previousTargetFrame = previous.decisionFrame.targetFrame
             ?: previous.decisiveObjective
@@ -2376,12 +2130,7 @@ object AgentMemoryManager {
         val currentModeFamily = campaignModeFamily(current.decisionFrame.decisionMode ?: current.campaignStage)
 
         return (targetFrameMatch || objectiveMatch) &&
-            (
-                previousObjectiveKind == currentObjectiveKind ||
-                    previousObjectiveKind.isBlank() ||
-                    currentObjectiveKind.isBlank() ||
-                    previousModeFamily == currentModeFamily
-                )
+            previousModeFamily == currentModeFamily
     }
 
     private fun describeSameCampaignAxis(previous: String?, current: String?): Boolean {

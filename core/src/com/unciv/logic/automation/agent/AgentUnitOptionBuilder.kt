@@ -688,13 +688,10 @@ object AgentUnitOptionBuilder {
                     else -> visibleCities.firstOrNull()
                 }
             }
-        val notebook = primaryRival?.let { rival ->
-            memory.rivals.firstOrNull { it.rivalCiv == rival }
-        } ?: memory.rivals.firstOrNull()
         val anchor = if (visibleObjective == null) {
-            notebook?.anchors
-                ?.filter { it.x != null && it.y != null }
-                ?.let { anchors ->
+            memory.worldModel.anchors
+                .filter { it.x != null && it.y != null && (primaryRival == null || it.civName == null || it.civName == primaryRival) }
+                .let { anchors ->
                     if (objectiveText.contains("capital")) {
                         anchors.maxByOrNull { anchorCandidate ->
                             (if (anchorCandidate.kind == "capital") 1000 else 0) + anchorCandidate.lastConfirmedTurn

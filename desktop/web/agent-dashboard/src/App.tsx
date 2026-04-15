@@ -333,7 +333,14 @@ export default function App() {
                 >
                   <div className="turn-card-top">
                     <strong>{turn.civName}</strong>
-                    <StatusPill tone={turn.statusTone}>{turn.statusLabel}</StatusPill>
+                    <div className="turn-card-badges">
+                      {hasStrategistInference(turn) ? (
+                        <span className="turn-card-flag" role="img" aria-label="Strategist inference ran" title="Strategist inference ran on this turn">
+                          📘
+                        </span>
+                      ) : null}
+                      <StatusPill tone={turn.statusTone}>{turn.statusLabel}</StatusPill>
+                    </div>
                   </div>
                   <div className="turn-card-meta">Turn {turn.turn} · {formatRelative(turn.latestEpochMs)}</div>
                   <p>{turn.synopsis}</p>
@@ -884,18 +891,14 @@ function TurnDetail({
   const hiddenThreats = Math.max(0, arrayLength(observation?.visibleThreatsAndTargets) - threatHighlights.length);
   const memoryRecord = asRecord(turn.memory);
   const worldModelMemory = asRecord(memoryRecord?.worldModel);
-  const rivalMemories = objectArray(memoryRecord?.rivals);
   const campaignMemory = asRecord(memoryRecord?.campaign);
   const empirePlanMemory = asRecord(memoryRecord?.empirePlan);
   const recentChangesMemory = objectArray(memoryRecord?.recentChanges);
   const lessonsMemory = objectArray(memoryRecord?.lessons);
   const tacticianTurnLogMemory = objectArray(memoryRecord?.tacticianTurnLog);
   const lastStrategistMemoMemory = asRecord(memoryRecord?.lastStrategistMemo);
-  const memoryPlanHealth = asRecord(memoryRecord?.planHealth);
   const memoryCampaignControl = asRecord(memoryRecord?.campaignControl);
-  const strategistPlanHealth = asRecord(strategistBrief?.planHealth);
   const strategistCampaignControl = asRecord(strategistBrief?.campaignControl);
-  const plannerPlanHealth = asRecord(plannerBrief?.planHealth);
   const plannerCampaignControl = asRecord(plannerBrief?.campaignControl);
   const worldModelNotes = objectArray(worldModelMemory?.notes);
   const worldModelAnchors = objectArray(worldModelMemory?.anchors);
@@ -1084,28 +1087,19 @@ function TurnDetail({
         id="section-memory"
         eyebrow="Memory"
         title="What's in the memory"
-        body="This is the shared notebook carried into the turn before any new strategist or tactical inference. It shows the durable world model, campaign notes, rival notes, and carried intents/failures."
+        body="This is the shared notebook carried into the turn before any new strategist or tactical inference. It shows the durable world model, campaign notes, campaign-control state, and carried intents/failures."
       >
         <div className="compact-card-grid">
           <Card className="full-span" title="Memory overview" subtitle="High-level shape of the notebook the agent brought into this turn.">
             <div className="summary-grid compact">
               <SummaryStat label="World notes" value={formatNumber(worldModelNotes.length)} note={`${formatNumber(worldModelAnchors.length)} anchors`} />
-              <SummaryStat label="Rival notebooks" value={formatNumber(rivalMemories.length)} />
               <SummaryStat label="Campaign notes" value={formatNumber(campaignNotes.length)} note={`${formatNumber(stringList(campaignMemory?.doNotDo).length)} cautions`} />
               <SummaryStat label="Empire notes" value={formatNumber(empirePlanNotes.length)} />
               <SummaryStat label="Recent changes" value={formatNumber(recentChangesMemory.length)} />
               <SummaryStat label="Lessons" value={formatNumber(lessonsMemory.length)} />
               <SummaryStat label="Tactician log" value={formatNumber(tacticianTurnLogMemory.length)} />
-              <SummaryStat
-                label="Plan contradictions"
-                value={formatNumber(stringList(memoryPlanHealth?.contradictions).length)}
-                note={stringValue(memoryPlanHealth?.status) || "no status"}
-              />
-              <SummaryStat
-                label="Opportunity costs"
-                value={formatNumber(stringList(memoryPlanHealth?.opportunityCosts).length)}
-                note={booleanText(memoryPlanHealth?.pivotRecommended)}
-              />
+              <SummaryStat label="Campaign holding costs" value={formatNumber(stringList(memoryCampaignControl?.holdingCosts).length)} />
+              <SummaryStat label="Campaign pivot triggers" value={formatNumber(stringList(memoryCampaignControl?.pivotTriggers).length)} />
               <SummaryStat label="City intents" value={formatNumber(cityIntentsMemory.length)} />
               <SummaryStat label="Unit assignments" value={formatNumber(unitAssignmentsMemory.length)} />
               <SummaryStat label="Recent failures" value={formatNumber(recentFailuresMemory.length)} />
@@ -1187,8 +1181,6 @@ function TurnDetail({
             )}
           </Card>
 
-          <RivalNotebookSection rivals={rivalMemories} />
-
           <MemoryNotesCard
             title="Recent changes"
             subtitle="What changed recently enough to still matter as context."
@@ -1202,13 +1194,6 @@ function TurnDetail({
             notes={lessonsMemory}
             emptyTitle="No lessons"
             emptyBody="No lessons or cautions were carried into this turn."
-          />
-          <PlanHealthCard
-            title="Plan health"
-            subtitle="Script-managed continuity state that tracks whether the active plan is still healthy, contradictory, or expensive to keep waiting on."
-            planHealth={memoryPlanHealth}
-            emptyTitle="No plan-health memory"
-            emptyBody="No typed plan-health state was carried into this turn."
           />
           <CampaignControlCard
             title="Campaign control"
@@ -1237,7 +1222,6 @@ function TurnDetail({
             <StrategistContextSection
               title="Strategist inputs"
               brief={strategistBrief}
-              planHealth={strategistPlanHealth}
               campaignControl={strategistCampaignControl}
               threats={strategistRivalThreats}
               campaignPicture={strategistCampaignPicture}
@@ -1264,7 +1248,7 @@ function TurnDetail({
                 <SummaryStat label="Stage" value={stringValue(strategistMemo.campaignStage)} />
                 <SummaryStat label="Objective" value={stringValue(strategistMemo.decisiveObjective)} />
                 <SummaryStat label="Strategist pass" value={strategistArtifacts ? "Ran this turn" : "Carried memo"} />
-                <SummaryStat label="Review turn" value={formatNumber(numberValue(strategistMemo.reviewAfterTurn))} />
+                <SummaryStat label="Max age" value={formatNumber(numberValue(asRecord(strategistMemo.reviewContract)?.maxAgeTurns))} />
                 <SummaryStat label="Created" value={memoCreatedTurn === null ? "Unknown" : `Turn ${formatNumber(memoCreatedTurn)}`} />
                 <SummaryStat label="Last reviewed" value={memoLastReviewedTurn === null ? "Unknown" : `Turn ${formatNumber(memoLastReviewedTurn)}`} />
               </div>
@@ -1281,7 +1265,7 @@ function TurnDetail({
                 </>
               ) : null}
               <DecisionFrameBlock frame={asRecord(strategistMemo.decisionFrame)} />
-              <PlanHealthLabelsBlock labels={asRecord(strategistMemo.planHealth)} />
+              <ReviewContractBlock contract={asRecord(strategistMemo.reviewContract)} />
               <CampaignControlLabelsBlock labels={asRecord(strategistMemo.campaignControl)} />
               {stringValue(strategistMemo.pastSummary) ? (
                 <>
@@ -1357,7 +1341,6 @@ function TurnDetail({
                       {stringValue(memoryContext.campaignSummary) ? <p className="card-paragraph">{stringValue(memoryContext.campaignSummary)}</p> : null}
                       {stringValue(memoryContext.decisiveObjective) ? <p className="card-paragraph"><strong>Objective:</strong> {stringValue(memoryContext.decisiveObjective)}</p> : null}
                       {stringValue(memoryContext.conversionBlocker) ? <p className="card-paragraph"><strong>Blocker:</strong> {stringValue(memoryContext.conversionBlocker)}</p> : null}
-                      {stringValue(memoryContext.mainRivalSummary) ? <p className="card-paragraph">{stringValue(memoryContext.mainRivalSummary)}</p> : null}
                     </div>
                   </>
                 ) : null}
@@ -1366,13 +1349,6 @@ function TurnDetail({
               <p className="muted-text">Planner brief missing from this turn.</p>
             )}
           </Card>
-          <PlanHealthCard
-            title="Plan health seen by tactician"
-            subtitle="The typed continuity and opportunity-cost signals surfaced into the tactical brief for this turn."
-            planHealth={plannerPlanHealth}
-            emptyTitle="No tactical plan health"
-            emptyBody="The tactical brief did not surface any plan-health observation on this turn."
-          />
           <CampaignControlCard
             title="Campaign control seen by tactician"
             subtitle="The typed campaign-control scaffold surfaced into the tactical brief for this turn."
@@ -1622,6 +1598,10 @@ function StatusPill({ children, tone }: { children: React.ReactNode; tone: "succ
   return <span className={`status-pill ${tone}`}>{children}</span>;
 }
 
+function hasStrategistInference(turn: TurnRecord): boolean {
+  return turn.events.some((event) => event.type === "strategist_llm_request");
+}
+
 function SectionLabel({ text }: { text: string }) {
   return <p className="section-label">{text}</p>;
 }
@@ -1652,30 +1632,6 @@ function EmptyCardState({
   );
 }
 
-function PlanHealthCard({
-  title,
-  subtitle,
-  planHealth,
-  emptyTitle,
-  emptyBody,
-}: {
-  title: string;
-  subtitle: string;
-  planHealth: Record<string, unknown> | null;
-  emptyTitle: string;
-  emptyBody: string;
-}) {
-  return (
-    <Card title={title} subtitle={subtitle}>
-      {planHealth && Object.keys(planHealth).length ? (
-        <PlanHealthBody planHealth={planHealth} />
-      ) : (
-        <EmptyCardState title={emptyTitle} body={emptyBody} />
-      )}
-    </Card>
-  );
-}
-
 function CampaignControlCard({
   title,
   subtitle,
@@ -1700,18 +1656,6 @@ function CampaignControlCard({
   );
 }
 
-function PlanHealthEmbeddedSection({ planHealth }: { planHealth: Record<string, unknown> | null }) {
-  if (!planHealth || !Object.keys(planHealth).length) return null;
-  return (
-    <>
-      <SectionLabel text="Plan health" />
-      <div className="structured-item">
-        <PlanHealthBody planHealth={planHealth} embedded />
-      </div>
-    </>
-  );
-}
-
 function CampaignControlEmbeddedSection({ campaignControl }: { campaignControl: Record<string, unknown> | null }) {
   if (!campaignControl || !Object.keys(campaignControl).length) return null;
   return (
@@ -1720,24 +1664,6 @@ function CampaignControlEmbeddedSection({ campaignControl }: { campaignControl: 
       <div className="structured-item">
         <CampaignControlBody campaignControl={campaignControl} embedded />
       </div>
-    </>
-  );
-}
-
-function PlanHealthLabelsBlock({ labels }: { labels: Record<string, unknown> | null }) {
-  if (!labels || !Object.keys(labels).length) return null;
-  const values = [
-    stringValue(labels.objectiveKind) ? `objective ${stringValue(labels.objectiveKind)}` : "",
-    stringValue(labels.nextMilestoneKind) ? `milestone ${stringValue(labels.nextMilestoneKind)}` : "",
-    stringValue(labels.blockerKind) ? `blocker ${stringValue(labels.blockerKind)}` : "",
-    numberValue(labels.milestoneHorizonTurns) !== null ? `horizon ${formatNumber(numberValue(labels.milestoneHorizonTurns))}` : "",
-  ].filter(Boolean);
-  if (!values.length && !stringValue(labels.nextMilestoneSummary)) return null;
-  return (
-    <>
-      <SectionLabel text="Typed plan labels" />
-      {values.length ? <TagList values={values} tone="accent" /> : null}
-      {stringValue(labels.nextMilestoneSummary) ? <p className="card-paragraph">{stringValue(labels.nextMilestoneSummary)}</p> : null}
     </>
   );
 }
@@ -1796,6 +1722,47 @@ function DecisionFrameBlock({ frame }: { frame: Record<string, unknown> | null }
             <p className="card-paragraph">{expiryCondition}</p>
           </>
         ) : null}
+      </div>
+    </>
+  );
+}
+
+function ReviewContractBlock({ contract }: { contract: Record<string, unknown> | null }) {
+  if (!contract || !Object.keys(contract).length) return null;
+  const maxAgeTurns = numberValue(contract.maxAgeTurns);
+  const triggers = objectArray(contract.triggers);
+  if (maxAgeTurns === null && !triggers.length) return null;
+  return (
+    <>
+      <SectionLabel text="Review contract" />
+      <div className="structured-item">
+        <div className="summary-grid compact">
+          <SummaryStat label="Max age" value={maxAgeTurns === null ? "—" : `${formatNumber(maxAgeTurns)} turns`} />
+          <SummaryStat label="Triggers" value={formatNumber(triggers.length)} />
+        </div>
+        {triggers.length ? (
+          <div className="stacked-list">
+            {triggers.map((trigger, index) => {
+              const kind = stringValue(trigger.kind);
+              const metric = stringValue(trigger.metric);
+              const summary = stringValue(trigger.summary);
+              const withinTurns = numberValue(trigger.withinTurns);
+              const tags = [
+                kind ? `kind ${kind}` : "",
+                metric ? `metric ${metric}` : "",
+                withinTurns === null ? "" : `within ${formatNumber(withinTurns)}`,
+              ].filter(Boolean);
+              return (
+                <div className="structured-item" key={`${kind}-${metric}-${index}`}>
+                  {tags.length ? <TagList values={tags} tone="accent" /> : null}
+                  {summary ? <p className="card-paragraph">{summary}</p> : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="card-paragraph">No strategist review triggers were recorded for this memo.</p>
+        )}
       </div>
     </>
   );
@@ -1914,59 +1881,6 @@ function DecisionFocusBody({ decisionFocus }: { decisionFocus: Record<string, un
       ) : null}
     </>
   );
-}
-
-function PlanHealthBody({
-  planHealth,
-  embedded = false,
-}: {
-  planHealth: Record<string, unknown>;
-  embedded?: boolean;
-}) {
-  const contradictions = stringList(planHealth.contradictions);
-  const opportunityCosts = stringList(planHealth.opportunityCosts);
-  const status = stringValue(planHealth.status);
-  const summary = (
-    <>
-      <div className="summary-grid compact">
-        <SummaryStat label="Status" value={status || "unknown"} note={stringValue(planHealth.pivotReason) || undefined} />
-        <SummaryStat label="Objective kind" value={stringValue(planHealth.objectiveKind) || "—"} />
-        <SummaryStat label="Milestone" value={stringValue(planHealth.nextMilestoneKind) || "—"} />
-        <SummaryStat label="Blocker kind" value={stringValue(planHealth.blockerKind) || "—"} />
-        <SummaryStat label="Objective age" value={nullableNumberText(planHealth.objectiveAgeTurns)} />
-        <SummaryStat label="Since progress" value={nullableNumberText(planHealth.turnsSinceMeaningfulProgress)} />
-        <SummaryStat label="Pivot recommended" value={booleanText(planHealth.pivotRecommended)} />
-        <SummaryStat label="Horizon" value={nullableNumberText(planHealth.milestoneHorizonTurns)} />
-      </div>
-      {stringValue(planHealth.nextMilestoneSummary) ? (
-        <>
-          <SectionLabel text="Next milestone summary" />
-          <p className="card-paragraph">{stringValue(planHealth.nextMilestoneSummary)}</p>
-        </>
-      ) : null}
-      {contradictions.length ? (
-        <>
-          <SectionLabel text="Contradictions" />
-          <TagList values={contradictions} tone="warning" />
-        </>
-      ) : null}
-      {opportunityCosts.length ? (
-        <>
-          <SectionLabel text="Opportunity costs" />
-          <TagList values={opportunityCosts} tone="warning" />
-        </>
-      ) : null}
-      {stringValue(planHealth.pivotReason) ? (
-        <>
-          <SectionLabel text="Pivot reason" />
-          <p className="card-paragraph">{stringValue(planHealth.pivotReason)}</p>
-        </>
-      ) : null}
-    </>
-  );
-
-  if (embedded) return summary;
-  return <>{summary}</>;
 }
 
 function CampaignControlBody({
@@ -2131,7 +2045,7 @@ function StrategistMemoMemorySection({ memo }: { memo: Record<string, unknown> |
             <SummaryStat label="Objective" value={stringValue(memo.decisiveObjective) || "—"} />
             <SummaryStat label="Created" value={formatNumber(numberValue(memo.createdTurn))} />
             <SummaryStat label="Last reviewed" value={formatNumber(numberValue(memo.lastReviewedTurn))} />
-            <SummaryStat label="Review after" value={formatNumber(numberValue(memo.reviewAfterTurn))} />
+            <SummaryStat label="Max age" value={formatNumber(numberValue(asRecord(memo.reviewContract)?.maxAgeTurns))} />
             <SummaryStat label="Refresh reason" value={stringValue(memo.lastRefreshReason) || "—"} />
           </div>
           {stringValue(memo.thesis) ? <p className="card-paragraph">{stringValue(memo.thesis)}</p> : null}
@@ -2142,6 +2056,7 @@ function StrategistMemoMemorySection({ memo }: { memo: Record<string, unknown> |
             </>
           ) : null}
           <DecisionFrameBlock frame={asRecord(memo.decisionFrame)} />
+          <ReviewContractBlock contract={asRecord(memo.reviewContract)} />
           {stringValue(memo.pastSummary) ? (
             <>
               <SectionLabel text="Past" />
@@ -2160,7 +2075,6 @@ function StrategistMemoMemorySection({ memo }: { memo: Record<string, unknown> |
               <p className="card-paragraph">{stringValue(memo.futurePlan)}</p>
             </>
           ) : null}
-          <PlanHealthLabelsBlock labels={asRecord(memo.planHealth)} />
           <CampaignControlLabelsBlock labels={asRecord(memo.campaignControl)} />
           {stringValue(memo.tacticianHandoff) ? (
             <>
@@ -2213,7 +2127,7 @@ function TacticianTurnLogSection({ entries }: { entries: Record<string, unknown>
                           <span className="tag neutral">{`memo ${formatNumber(numberValue(entry.basedOnStrategistTurn))}`}</span>
                         ) : null}
                         {stringValue(entry.memoValidity) ? (
-                          <span className={`tag ${tagToneFromPlanHealth(stringValue(entry.memoValidity))}`}>{stringValue(entry.memoValidity)}</span>
+                          <span className={`tag ${tagToneFromMemoValidity(stringValue(entry.memoValidity))}`}>{stringValue(entry.memoValidity)}</span>
                         ) : null}
                         {stringValue(entry.commitmentLevel) ? <span className="tag neutral">{`commit ${stringValue(entry.commitmentLevel)}`}</span> : null}
                         {stringValue(entry.battleReadiness) ? <span className="tag neutral">{`ready ${stringValue(entry.battleReadiness)}`}</span> : null}
@@ -2254,45 +2168,6 @@ function TacticianTurnLogGroup({
       <SectionLabel text={label} />
       <TagList values={values} tone={tone} />
     </>
-  );
-}
-
-function RivalNotebookSection({ rivals }: { rivals: Record<string, unknown>[] }) {
-  return (
-    <Card title="Rival notebooks" subtitle="Per-rival notes and anchors carried across turns.">
-      {rivals.length ? (
-        <div className="structured-list">
-          {rivals.map((rival, index) => {
-            const notes = objectArray(rival.notes);
-            const anchors = objectArray(rival.anchors);
-            return (
-              <article key={`${stringValue(rival.rivalCiv)}-${index}`} className="structured-item">
-                <div className="structured-item-header">
-                  <strong>{stringValue(rival.rivalCiv) || "Unknown rival"}</strong>
-                <div className="tag-list compact">
-                  <span className="tag neutral">{formatNumber(notes.length)} notes</span>
-                  <span className="tag neutral">{formatNumber(anchors.length)} anchors</span>
-                  <span className="tag neutral">updated {formatNumber(numberValue(rival.lastUpdatedTurn))}</span>
-                </div>
-              </div>
-              {stringValue(rival.summary) ? <p className="card-paragraph">{stringValue(rival.summary)}</p> : null}
-              {(notes.length || anchors.length) ? (
-                <details className="inline-disclosure">
-                  <summary>Open rival notes and anchors</summary>
-                  <div className="inline-disclosure-body">
-                    <MemoryNotesSection title="Rival notes" notes={notes} embedded />
-                    <MemoryAnchorsSection title="Rival anchors" anchors={anchors} />
-                  </div>
-                </details>
-              ) : null}
-            </article>
-          );
-        })}
-      </div>
-      ) : (
-        <EmptyCardState title="No rival notebooks" body="No rival-specific memory was stored for this turn." />
-      )}
-    </Card>
   );
 }
 
@@ -2465,14 +2340,12 @@ function ProgressSection({
 function StrategistContextSection({
   title,
   brief,
-  planHealth,
   campaignControl,
   threats,
   campaignPicture,
 }: {
   title: string;
   brief: Record<string, unknown> | null;
-  planHealth: Record<string, unknown> | null;
   campaignControl: Record<string, unknown> | null;
   threats: Record<string, unknown>[];
   campaignPicture: Record<string, unknown> | null;
@@ -2505,7 +2378,6 @@ function StrategistContextSection({
           <SectionLabel text="Enabled victories" />
           <TagList values={enabledVictories} tone="accent" />
 
-          <PlanHealthEmbeddedSection planHealth={planHealth} />
           <CampaignControlEmbeddedSection campaignControl={campaignControl} />
 
           {lastStrategistMemo ? (
@@ -2518,6 +2390,7 @@ function StrategistContextSection({
                   <SummaryStat label="Objective" value={stringValue(lastStrategistMemo.decisiveObjective)} />
                 </div>
                 <DecisionFrameBlock frame={asRecord(lastStrategistMemo.decisionFrame)} />
+                <ReviewContractBlock contract={asRecord(lastStrategistMemo.reviewContract)} />
                 {stringValue(lastStrategistMemo.conversionBlocker) ? (
                   <>
                     <SectionLabel text="Conversion blocker" />
@@ -2542,7 +2415,6 @@ function StrategistContextSection({
                     <p className="card-paragraph">{stringValue(lastStrategistMemo.futurePlan)}</p>
                   </>
                 ) : null}
-                <PlanHealthLabelsBlock labels={asRecord(lastStrategistMemo.planHealth)} />
                 <CampaignControlLabelsBlock labels={asRecord(lastStrategistMemo.campaignControl)} />
               </div>
             </>
@@ -4135,7 +4007,7 @@ function toneFromSeverity(severity: string): "success" | "warning" | "muted" {
   return "muted";
 }
 
-function tagToneFromPlanHealth(status: string): "neutral" | "accent" | "warning" {
+function tagToneFromMemoValidity(status: string): "neutral" | "accent" | "warning" {
   const normalized = status.toLowerCase();
   if (normalized === "healthy") return "accent";
   if (normalized === "strained" || normalized === "contradicted") return "warning";

@@ -600,12 +600,15 @@ object AgentObservationBuilder {
         visibleCities.firstOrNull()?.observation?.let { city ->
             return ObjectiveTheaterHint(city.civName, city.name, city.x, city.y)
         }
-        val primaryRival = memory.campaign.primaryRivalCiv ?: memory.rivals.firstOrNull()?.rivalCiv ?: return null
-        val notebook = memory.rivals.firstOrNull { it.rivalCiv == primaryRival } ?: return null
+        val primaryRival = memory.campaign.primaryRivalCiv ?: return null
         val preferredKinds = if ("capital" in loweredObjective) listOf("capital", "city") else listOf("city", "capital")
         val anchor = preferredKinds
             .asSequence()
-            .mapNotNull { kind -> notebook.anchors.filter { it.kind == kind }.maxByOrNull { it.lastConfirmedTurn } }
+            .mapNotNull { kind ->
+                memory.worldModel.anchors
+                    .filter { it.kind == kind && (it.civName == null || it.civName == primaryRival) }
+                    .maxByOrNull { it.lastConfirmedTurn }
+            }
             .firstOrNull()
             ?: return null
         val x = anchor.x ?: return null

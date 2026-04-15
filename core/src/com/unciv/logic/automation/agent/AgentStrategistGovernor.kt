@@ -99,12 +99,10 @@ object AgentStrategistGovernor {
             currentResearch = empireObservation.currentResearch,
             currentResearchStatus = empireObservation.currentResearchStatus,
             lastStrategistMemo = lastStrategistMemo,
-            planHealth = memory.planHealth.toObservation(observation.turn),
             campaignControl = memory.campaignControl.toObservation(observation.turn),
             worldModel = memory.worldModel.takeIf {
                 !it.summary.isNullOrBlank() || it.notes.isNotEmpty() || it.anchors.isNotEmpty()
             },
-            rivalNotebooks = memory.rivals.sortedBy { it.rivalCiv },
             campaign = memory.campaign.takeIf {
                 it.title.isNotBlank() ||
                     it.stage.isNotBlank() ||
@@ -138,7 +136,7 @@ object AgentStrategistGovernor {
             decisiveObjective = memo.decisiveObjective,
             conversionBlocker = memo.conversionBlocker,
             decisionFrame = memo.decisionFrame,
-            planHealth = memo.planHealth,
+            reviewContract = memo.reviewContract,
             campaignControl = memo.campaignControl,
             thesis = memo.thesis,
             pastSummary = memo.pastSummary,

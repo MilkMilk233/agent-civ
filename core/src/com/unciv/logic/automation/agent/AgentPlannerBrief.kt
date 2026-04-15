@@ -6,7 +6,6 @@ import kotlinx.serialization.Serializable
 data class AgentPlannerBrief(
     val gameContext: AgentPublicGameContextObservation,
     val strategy: AgentPlannerStrategyObservation,
-    val planHealth: AgentPlanHealthObservation? = null,
     val campaignControl: AgentCampaignControlObservation? = null,
     val decisionFocus: AgentPlannerDecisionFocusObservation? = null,
     val memoryContext: AgentPlannerMemoryContextObservation? = null,
@@ -91,8 +90,6 @@ data class AgentPlannerMemoryContextObservation(
     val worldModelSummary: String? = null,
     val worldModelNotes: List<String> = emptyList(),
     val mainRivalCiv: String? = null,
-    val mainRivalSummary: String? = null,
-    val mainRivalNotes: List<String> = emptyList(),
     val campaignTitle: String? = null,
     val campaignStage: String? = null,
     val decisiveObjective: String? = null,

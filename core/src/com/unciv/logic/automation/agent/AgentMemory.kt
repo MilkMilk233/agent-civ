@@ -6,10 +6,8 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class AgentMemory(
     var worldModel: WorldModelMemory = WorldModelMemory(),
-    var rivals: ArrayList<RivalNotebookMemory> = arrayListOf(),
     var campaign: CampaignMemory = CampaignMemory(),
     var empirePlan: EmpirePlanMemory = EmpirePlanMemory(),
-    var planHealth: AgentPlanHealthMemory = AgentPlanHealthMemory(),
     var campaignControl: AgentCampaignControlMemory = AgentCampaignControlMemory(),
     var recentChanges: ArrayList<MemoryNote> = arrayListOf(),
     var lessons: ArrayList<MemoryNote> = arrayListOf(),
@@ -21,10 +19,8 @@ data class AgentMemory(
 ) : IsPartOfGameInfoSerialization {
     constructor() : this(
         WorldModelMemory(),
-        arrayListOf(),
         CampaignMemory(),
         EmpirePlanMemory(),
-        AgentPlanHealthMemory(),
         AgentCampaignControlMemory(),
         arrayListOf(),
         arrayListOf(),
@@ -40,22 +36,12 @@ data class AgentMemory(
             notes = ArrayList(worldModel.notes.map { it.copy() }),
             anchors = ArrayList(worldModel.anchors.map { it.copy() }),
         ),
-        rivals = ArrayList(rivals.map { rival ->
-            rival.copy(
-                notes = ArrayList(rival.notes.map { it.copy() }),
-                anchors = ArrayList(rival.anchors.map { it.copy() }),
-            )
-        }),
         campaign = campaign.copy(
             doNotDo = ArrayList(campaign.doNotDo),
             notes = ArrayList(campaign.notes.map { it.copy() }),
         ),
         empirePlan = empirePlan.copy(
             notes = ArrayList(empirePlan.notes.map { it.copy() }),
-        ),
-        planHealth = planHealth.copy(
-            contradictions = ArrayList(planHealth.contradictions),
-            opportunityCosts = ArrayList(planHealth.opportunityCosts),
         ),
         campaignControl = campaignControl.copy(
             holdingCosts = ArrayList(campaignControl.holdingCosts),
@@ -65,7 +51,9 @@ data class AgentMemory(
         lessons = ArrayList(lessons.map { it.copy() }),
         lastStrategistMemo = lastStrategistMemo.copy(
             decisionFrame = lastStrategistMemo.decisionFrame.copy(),
-            planHealth = lastStrategistMemo.planHealth.copy(),
+            reviewContract = lastStrategistMemo.reviewContract.copy(
+                triggers = lastStrategistMemo.reviewContract.triggers.map { it.copy() }
+            ),
             campaignControl = lastStrategistMemo.campaignControl.copy(),
             reviewCityNames = ArrayList(lastStrategistMemo.reviewCityNames),
         ),
@@ -99,17 +87,6 @@ data class WorldModelMemory(
     var lastUpdatedTurn: Int = 0,
 ) : IsPartOfGameInfoSerialization {
     constructor() : this(null, arrayListOf(), arrayListOf(), 0)
-}
-
-@Serializable
-data class RivalNotebookMemory(
-    var rivalCiv: String = "",
-    var summary: String? = null,
-    var notes: ArrayList<MemoryNote> = arrayListOf(),
-    var anchors: ArrayList<MemoryAnchor> = arrayListOf(),
-    var lastUpdatedTurn: Int = 0,
-) : IsPartOfGameInfoSerialization {
-    constructor() : this("", null, arrayListOf(), arrayListOf(), 0)
 }
 
 @Serializable

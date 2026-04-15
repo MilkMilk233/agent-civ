@@ -58,12 +58,12 @@ object AgentStrategistPromptBuilder {
                   "nextCheckpoint": "finish assembly and be ready to declare without more drifting",
                   "expiryCondition": "if the package still cannot launch after the next short review window"
                 },
-                "planHealth": {
-                  "objectiveKind": "expand",
-                  "nextMilestoneKind": "city_founded",
-                  "nextMilestoneSummary": "found the second city",
-                  "milestoneHorizonTurns": 4,
-                  "blockerKind": "contact"
+                "reviewContract": {
+                  "maxAgeTurns": 8,
+                  "triggers": [
+                    {"kind": "milestone_reached", "metric": "second_city_founded", "summary": "The opener phase ends once the second city is founded."},
+                    {"kind": "deadline_missed", "metric": "second_city_founded", "withinTurns": 4, "summary": "Replan if the second city still is not founded by the short horizon."}
+                  ]
                 },
                 "campaignControl": {
                   "commitmentLevel": "prepare",
@@ -81,9 +81,6 @@ object AgentStrategistPromptBuilder {
                 "tacticianHandoff": "optional",
                 "worldModelSummary": "optional",
                 "worldModelNotes": ["optional"],
-                "rivals": [
-                  {"rivalCiv": "Persia", "summary": "optional", "notes": ["optional"]}
-                ],
                 "campaignTitle": "optional",
                 "campaignSummary": "optional",
                 "reinforcementPlan": "optional",
@@ -92,8 +89,7 @@ object AgentStrategistPromptBuilder {
                 "purchaseIntent": "optional",
                 "empirePlanNotes": ["optional"],
                 "recentChanges": ["optional"],
-                "lessons": ["optional"],
-                "reviewInTurns": 4
+                "lessons": ["optional"]
               },
               "notes": "optional"
             }
@@ -105,11 +101,9 @@ object AgentStrategistPromptBuilder {
             $cheatSheetSection
             - Use only public setup context and the factual state in Strategist Brief JSON.
             - Think of Strategist Brief JSON as the onboarding packet you would hand to a fresh strategist on your team: it gives the setup, the current empire, the current notebook, and the known rival picture.
-            - lastStrategistMemo is the previous strategist memo. worldModel, rivalNotebooks, campaign, empirePlan, recentChanges, lessons, and tacticianTurnLog are the current shared notebook. Use them to orient yourself quickly, not to repeat stale wording.
+            - lastStrategistMemo is the previous strategist memo. worldModel, campaign, empirePlan, recentChanges, lessons, and tacticianTurnLog are the current shared notebook. Use them to orient yourself quickly, not to repeat stale wording.
             - tacticianTurnLog is the per-turn delta since the last strategist pass. Read it as execution reality: what changed, what completed, what became obsolete, and what is still being carried forward.
-            - planHealth in the brief is the script-managed continuity scaffold for the current plan thread. Use it as evidence about age, progress, contradictions, and opportunity cost, not as a replacement for judgment.
             - campaignControl in the brief is the script-managed control scaffold for the active campaign. Use it to summarize commitment, battle readiness, supply health, next checkpoint, and what should force a rethink if the line stalls.
-            - If planHealth says the current thread is strained or contradicted, treat that as a serious warning that the old memo may now be losing the game. Rewrite the story plainly instead of preserving stale coherence.
             - Use campaignControl to keep the memo in the middle ground a strong human wants: committed enough to finish a live campaign, but willing to pivot when readiness or supply no longer justify the line.
             - Think about campaignControl the way a strong human would: choose a campaign, name the next checkpoint, commit for a short window, then reassess at checkpoints instead of re-deciding from zero every turn or postponing forever.
             - If campaignControl says checkpointStatus is missed, explain plainly whether the right response is launch now, stabilize first, or pivot away. Do not leave the memo in a vague “still preparing” state.
@@ -127,14 +121,26 @@ object AgentStrategistPromptBuilder {
             - Treat Strategist Brief JSON as a factual state packet, not a script-written strategic interpretation.
             - Think like a strong human strategist: identify what just changed, what the real bottleneck is, and what the tactician should optimize for next. Do not turn the memo into a long step-by-step playbook.
             - If the current line has consumed many turns without city growth, war conversion, or other concrete progress, say so plainly and pivot. Do not euphemize a stale plan as "still preparing" forever.
+            - refreshRequest tells you why this strategist call happened. Respect it as the phase boundary that just fired rather than retelling the previous memo from habit.
             - campaignStage is required. Use a short natural stage label such as scouting, expansion, staging, assault, rebuild, or consolidation.
             - decisiveObjective is required. Name the next objective that most directly converts the current position into progress. Keep it concrete and game-specific.
             - conversionBlocker should name the main thing still preventing that objective from converting cleanly, if there is one. If the path is already open, leave it empty instead of inventing filler.
             - decisionFrame is the compact strategist-to-tactician contract for this memo. Use it to answer, in plain teammate language, what kind of turn range this is, what target or axis matters most, why this mode is right now, what checkpoint should prove the line is working, and what would make the line stale.
             - decisionMode should be a short lowercase label such as expand, stage_briefly, launch_now, assault, pivot_recover, or stabilize when they fit. Pick one clear mode instead of smearing together multiple moods.
+            - If refreshRequest.triggerKind is deadline_missed and the same core checkpoint is still unresolved, do not casually re-issue stage_briefly with another soft short horizon. Either tighten to a final immediate 1-2 turn window with a sharper handoff or switch to a more decisive mode such as launch_now, pivot_recover, assault, or stabilize.
+            - If a rival city or capital is visible and the same checkpoint already slipped once, be very skeptical of another relaxed staging memo.
             - targetFrame, whyNow, nextCheckpoint, and expiryCondition should be short natural-language lines, not schema jargon or tactical scripts.
             - If war timing is the real strategic question, own that here. Say whether the empire is still staging briefly, should launch now, or should pivot away from the current line instead of hiding that judgment inside softer prose fields.
-            - planHealth is the small typed label block that the memory manager will track over time. Use short lowercase labels with underscores when useful, such as expand, declare_war, capture_city, city_founded, city_captured, economy_unstable, or no_melee. Keep nextMilestoneSummary human-readable and short.
+            - reviewContract is the strategist-authored refresh contract for this memo. It tells the engine when this report should be reconsidered.
+            - reviewContract.maxAgeTurns is only a safety backstop. Use it to say how long the memo can survive if no explicit trigger fires. Usually 6-10 is enough; do not use a tiny value unless the position is genuinely volatile.
+            - reviewContract.triggers should be a short list of near-future, script-verifiable phase boundaries. Good kinds are milestone_reached, deadline_missed, assumption_broken, and contract_broken.
+            - Good metrics are concrete events such as contact_made, second_city_founded, war_declared, city_captured, rival_city_visible, rival_capital_visible, target_site_contested, or action_surface_mismatch.
+            - Prefer the canonical metric names above. For example, use city_founded for first-capital founding milestones rather than inventing capital_founded.
+            - Use contact_made only when merely knowing the rival exists is enough to change plans. If geography, city approach, or the actual target location matters, use rival_city_visible or rival_capital_visible instead.
+            - Do not claim the blocker is "rival location unknown" once the relevant rival city or capital is already visible in the brief.
+            - For deadline_missed, withinTurns is required and should usually be 2-6 turns. Use it only for one clear milestone that the current memo is supposed to cover.
+            - Do not use persistent warning states like still_one_city, supply_fragile, launch_window_open, or checkpoint_missed as direct review triggers. Those are ongoing conditions to discuss in the memo, not repeatable reasons to summon strategist every turn.
+            - Design triggers so that anything before they fire should already be covered by this memo's guidance. If the trigger would just mean "the warning is still bad", it is the wrong trigger.
             - campaignControl is the companion typed label block for campaign commitment and sustainability. Use short lowercase labels such as prepare, commit, launch_window, sustain, stabilize, not_ready, nearly_ready, ready, overextended, healthy, strained, fragile, or collapsing when they fit. Keep nextCheckpointSummary human-readable and short.
             - nextCheckpointSummary should describe the next concrete state change that would prove the campaign is converting, such as founding the second city, declaring war, starting the assault, or taking the first city.
             - pivotTriggerKind should name the main reason this campaign should be reconsidered if it stalls, such as missed_checkpoint, supply_collapse, stalled_launch, or campaign_drift.
@@ -144,7 +150,6 @@ object AgentStrategistPromptBuilder {
             - futurePlan should briefly explain what the empire should try to accomplish over the next few turns and what should not delay that. Keep it to 1-3 sentences.
             - tacticianHandoff should be a direct 1-2 sentence handoff to the tactician about what should dominate this turn and the next few turns. If the empire should stop drifting, start marching, declare war now, or ignore a tempting distraction, say that plainly here.
             - worldModelSummary should capture the map-level idea that matters in this game, not generic doctrine. worldModelNotes should be short bullets about meaningful map or information inferences.
-            - rivals should only contain rivals that matter right now. Use short natural-language summaries and notes about what we believe, what they threaten, or what should still be remembered when vision drops.
             - campaignTitle, campaignSummary, reinforcementPlan, and campaignDoNotDo should describe the current operation in natural human language. This is the main shared intent between you and the tactician.
             - empirePlanSummary and purchaseIntent should explain what our cities and gold are for over the next few turns. Keep empirePlanNotes short and only include things with cross-turn value.
             - recentChanges should be a short list of what changed in this game that the tactician still needs in mind. lessons should be short cautions or reminders worth carrying forward.
@@ -156,7 +161,6 @@ object AgentStrategistPromptBuilder {
             - Do not write numbered plans, city-by-city build scripts, or long branch trees. Avoid repetitive fallback ladders unless the state truly requires one key contingency.
             - Avoid awkward internal jargon or schema-sounding language inside the memo itself. The prose inside the memo fields should read like a smart teammate briefing another teammate.
             - Do not mention difficulty, hidden bonuses, or opponent implementation.
-            - reviewInTurns should usually stay between 3 and 6 unless there is a strong reason to review sooner or later.
             - Keep the note arrays short. Usually 0-4 items per section is enough.
             - Prefer state-based milestones such as "before contact", "after the capital is founded", "once the current Scout finishes", or "before starting a settler".
             - Avoid guessed turn counts unless they are directly grounded by visible project timings, current research timings, or another concrete value in Strategist Brief JSON.

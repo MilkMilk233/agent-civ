@@ -13,6 +13,21 @@ data class AgentActionPlan(
 )
 
 @Serializable
+data class AgentTacticianReflection(
+    val summary: String? = null,
+    val memoValidity: String? = null,
+    val commitmentLevel: String? = null,
+    val battleReadiness: String? = null,
+    val supplyHealth: String? = null,
+    val whatChanged: List<String> = emptyList(),
+    val completed: List<String> = emptyList(),
+    val stillBlocked: List<String> = emptyList(),
+    val obsolete: List<String> = emptyList(),
+    val carryForward: List<String> = emptyList(),
+    val actionSurfaceMismatch: List<String> = emptyList(),
+)
+
+@Serializable
 sealed class AgentActionCommand {
     abstract val priority: Int
 

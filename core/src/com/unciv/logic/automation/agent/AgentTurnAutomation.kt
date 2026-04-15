@@ -931,13 +931,13 @@ object AgentTurnAutomation {
     private fun resolveObjectiveReference(memory: AgentMemory): Pair<Int, Int>? {
         val primaryRival = memory.campaign.primaryRivalCiv
         val objectiveText = memory.campaign.decisiveObjective?.lowercase().orEmpty()
-        val notebook = primaryRival?.let { rival -> memory.rivals.firstOrNull { it.rivalCiv == rival } }
-            ?: memory.rivals.firstOrNull()
-            ?: return null
+        val anchors = memory.worldModel.anchors
+            .filter { it.x != null && it.y != null && (primaryRival == null || it.civName == null || it.civName == primaryRival) }
+        if (anchors.isEmpty()) return null
         val anchor = if (objectiveText.contains("capital")) {
-            notebook.anchors.maxByOrNull { (if (it.kind == "capital") 1000 else 0) + it.lastConfirmedTurn }
+            anchors.maxByOrNull { (if (it.kind == "capital") 1000 else 0) + it.lastConfirmedTurn }
         } else {
-            notebook.anchors.maxByOrNull { it.lastConfirmedTurn }
+            anchors.maxByOrNull { it.lastConfirmedTurn }
         } ?: return null
         val x = anchor.x ?: return null
         val y = anchor.y ?: return null

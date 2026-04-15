@@ -85,6 +85,6 @@ Status:
 
 Notes:
 
-- The dashboard now surfaces `campaignControl` alongside `planHealth` in the memory view, strategist input view, strategist output memo, and tactician brief view.
+- The dashboard now surfaces `campaignControl` in the memory view, strategist input view, strategist output memo, and tactician brief view.
 - The tactician turn log now also shows compact commitment/readiness/supply tags, making it easier to inspect how campaign posture shifted across stateless turns.
 - This pass stayed on the live path only and did not add old-trace compatibility branches back into the UI.
