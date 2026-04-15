@@ -35,6 +35,7 @@ data class AgentStrategistReportMemo(
     val decisiveObjective: String? = null,
     val conversionBlocker: String? = null,
     val decisionFrame: AgentStrategistDecisionFrame = AgentStrategistDecisionFrame(),
+    val controlLanes: AgentStrategistControlLanes = AgentStrategistControlLanes(),
     val reviewContract: AgentStrategistReviewContract = AgentStrategistReviewContract(),
     val campaignControl: AgentCampaignControlLabels = AgentCampaignControlLabels(),
     val thesis: String? = null,

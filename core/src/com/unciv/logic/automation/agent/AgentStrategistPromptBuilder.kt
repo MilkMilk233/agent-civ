@@ -58,6 +58,15 @@ object AgentStrategistPromptBuilder {
                   "nextCheckpoint": "finish assembly and be ready to declare without more drifting",
                   "expiryCondition": "if the package still cannot launch after the next short review window"
                 },
+                "controlLanes": {
+                  "buildControl": "optional",
+                  "unitControl": "optional",
+                  "workerControl": "optional",
+                  "purchaseControl": "optional",
+                  "techControl": "optional",
+                  "policyControl": "optional",
+                  "driftWarnings": ["optional"]
+                },
                 "reviewContract": {
                   "maxAgeTurns": 8,
                   "triggers": [
@@ -102,7 +111,7 @@ object AgentStrategistPromptBuilder {
             - Use only public setup context and the factual state in Strategist Brief JSON.
             - Think of Strategist Brief JSON as the onboarding packet you would hand to a fresh strategist on your team: it gives the setup, the current empire, the current notebook, and the known rival picture.
             - lastStrategistMemo is the previous strategist memo. worldModel, campaign, empirePlan, recentChanges, lessons, and tacticianTurnLog are the current shared notebook. Use them to orient yourself quickly, not to repeat stale wording.
-            - tacticianTurnLog is the per-turn delta since the last strategist pass. Read it as execution reality: what changed, what completed, what became obsolete, and what is still being carried forward.
+            - tacticianTurnLog is the per-turn delta since the last strategist pass. Read it as execution reality: what changed, what completed, what became obsolete, and what is still blocked.
             - campaignControl in the brief is the script-managed control scaffold for the active campaign. Use it to summarize commitment, battle readiness, supply health, next checkpoint, and what should force a rethink if the line stalls.
             - Use campaignControl to keep the memo in the middle ground a strong human wants: committed enough to finish a live campaign, but willing to pivot when readiness or supply no longer justify the line.
             - Think about campaignControl the way a strong human would: choose a campaign, name the next checkpoint, commit for a short window, then reassess at checkpoints instead of re-deciding from zero every turn or postponing forever.
@@ -124,20 +133,34 @@ object AgentStrategistPromptBuilder {
             - Make the memo cover the whole phase, not just the milestone headline. If the current checkpoint is "make contact" or "found the second city", explain what production and posture should be used before that checkpoint is reached, what is already enough, and what would count as drift.
             - When a phase has a natural sufficiency point, say it plainly. For example, if one Scout is enough or two Scouts are the upper end of justified recon, write that in teammate language so the tactician understands what should stop and what should come next.
             - If the current phase should end with a production pivot, say what that pivot is. For example: after the recon package is sufficient, Berlin should stop adding recon and convert into Settler or military pressure unless the brief shows a concrete reason not to.
-            - Do not hide these expectations inside generic prose. Use thesis, currentSituation, futurePlan, and tacticianHandoff to make the expected pre-milestone behavior clear enough that a fresh tactician can avoid repeating low-value choices.
+            - Do not hide these expectations inside generic prose. Put the durable expectations mainly into decisionFrame and controlLanes, and use thesis/currentSituation/futurePlan only to explain the situation clearly.
+            - For long-lived memo fields, prefer declarative state-and-priority language over imperative sequence language. Say things like "recon is already sufficient", "Settler is now the build priority", or "existing forces should gather on the frontier axis" instead of fragile step chains like "finish Scout, then build Settler, then move east".
+            - Avoid encoding hidden timelines inside durable fields. If a statement depends on one project, unit, or exact next action still being live, it will go stale easily in a stateless loop.
+            - Do not rely on tacticianHandoff to carry essential guidance. The live tactician packet now depends on decisionFrame and controlLanes first, so put the real expectations there.
+            - controlLanes should usually be the most declarative part of the memo: describe what is sufficient, what should be preferred if surfaced, what should stop, and what posture should hold during this phase.
             - When a visible target or frontier axis already exists, describe both production posture and movement posture. Say what cities should build next, but also say whether already-built forces should keep screening, gather on the axis, march forward, hold a claim, or stop drifting elsewhere.
-            - Do not let existing units disappear from the strategic story once production becomes the bottleneck. If the current campaign depends on pressure against a visible objective, futurePlan and tacticianHandoff should make the intended posture of existing forces understandable in plain teammate language.
+            - Do not let existing units disappear from the strategic story once production becomes the bottleneck. If the current campaign depends on pressure against a visible objective, currentSituation, futurePlan, and controlLanes should make the intended posture of existing forces understandable in plain teammate language.
             - refreshRequest tells you why this strategist call happened. Respect it as the phase boundary that just fired rather than retelling the previous memo from habit.
             - campaignStage is required. Use a short natural stage label such as scouting, expansion, staging, assault, rebuild, or consolidation.
             - decisiveObjective is required. Name the next objective that most directly converts the current position into progress. Keep it concrete and game-specific.
             - conversionBlocker should name the main thing still preventing that objective from converting cleanly, if there is one. If the path is already open, leave it empty instead of inventing filler.
             - decisionFrame is the compact strategist-to-tactician contract for this memo. Use it to answer, in plain teammate language, what kind of turn range this is, what target or axis matters most, why this mode is right now, what checkpoint should prove the line is working, and what would make the line stale.
+            - controlLanes is the optional bounded-expectation section of the memo. Use it when the tactician needs clearer topic-specific expectations without turning the memo into a rigid playbook.
+            - Only fill the lanes that genuinely matter in this phase. Omit irrelevant lanes instead of writing boilerplate.
+            - buildControl should say the city-production posture in teammate language: what is already enough, what should stop, and what production should come next.
+            - unitControl should say how already-built forces should posture relative to the current axis: screen, escort, gather, march, hold, or stop drifting.
+            - workerControl should say whether worker tempo matters now, whether civilians should be deferred, protected, or actively improving.
+            - purchaseControl should say what gold is being reserved for or what spending posture should dominate the next few turns.
+            - techControl and policyControl should only be used when the current phase really cares about them. Keep them short.
+            - driftWarnings should be short bullets naming the specific low-value patterns the tactician should avoid repeating during this phase.
+            - Keep each filled control lane concise, usually a short natural-language line or 1-2 sentences. These lanes set bounded expectations; they are not exact commands.
             - decisionMode should be a short lowercase label such as expand, stage_briefly, launch_now, assault, pivot_recover, or stabilize when they fit. Pick one clear mode instead of smearing together multiple moods.
-            - If refreshRequest.triggerKind is deadline_missed and the same core checkpoint is still unresolved, do not casually re-issue stage_briefly with another soft short horizon. Either tighten to a final immediate 1-2 turn window with a sharper handoff or switch to a more decisive mode such as launch_now, pivot_recover, assault, or stabilize.
+            - If refreshRequest.triggerKind is deadline_missed and the same core checkpoint is still unresolved, do not casually re-issue stage_briefly with another soft short horizon. Either tighten to a final immediate 1-2 turn window with a sharper declarative memo or switch to a more decisive mode such as launch_now, pivot_recover, assault, or stabilize.
             - If a rival city or capital is visible and the same checkpoint already slipped once, be very skeptical of another relaxed staging memo.
             - targetFrame, whyNow, nextCheckpoint, and expiryCondition should be short natural-language lines, not schema jargon or tactical scripts.
             - If war timing is the real strategic question, own that here. Say whether the empire is still staging briefly, should launch now, or should pivot away from the current line instead of hiding that judgment inside softer prose fields.
             - In opener and expansion phases, be explicit about recon sufficiency versus recon drift. If more scouting is no longer worth another city build slot, say so plainly.
+            - If the empire already has 2 Scouts and no unusual map reason for more, default to saying recon is sufficient and that another Scout would be drift unless the brief shows a concrete reason otherwise.
             - reviewContract is the strategist-authored refresh contract for this memo. It tells the engine when this report should be reconsidered.
             - reviewContract.maxAgeTurns is only a safety backstop. Use it to say how long the memo can survive if no explicit trigger fires. Usually 6-10 is enough; do not use a tiny value unless the position is genuinely volatile.
             - reviewContract.triggers should be a short list of near-future, script-verifiable phase boundaries. Good kinds are milestone_reached, deadline_missed, assumption_broken, and contract_broken.
@@ -153,9 +176,9 @@ object AgentStrategistPromptBuilder {
             - pivotTriggerKind should name the main reason this campaign should be reconsidered if it stalls, such as missed_checkpoint, supply_collapse, stalled_launch, or campaign_drift.
             - thesis should be a single compact sentence capturing the core idea of the notebook update.
             - pastSummary should briefly bring the tactician up to speed on what changed recently and what background context still matters. Keep it to 1-2 sentences.
-            - currentSituation should briefly explain what is true now, what the empire's real bottleneck or tension is, and what the tactician should understand about the present board. Keep it to 1-3 sentences.
-            - futurePlan should briefly explain what the empire should try to accomplish over the next few turns and what should not delay that. Keep it to 1-3 sentences.
-            - tacticianHandoff should be a direct 1-2 sentence handoff to the tactician about what should dominate this turn and the next few turns. If the empire should stop drifting, start marching, gather on the objective axis, declare war now, or ignore a tempting distraction, say that plainly here.
+            - currentSituation should briefly explain what is true now, what the empire's real bottleneck or tension is, and what the tactician should understand about the present board. Keep it concise and descriptive rather than sequential; use controlLanes when topic-specific expectations need to be clearer.
+            - futurePlan should briefly explain what the empire should try to accomplish over the next few turns and what should not delay that. Prefer declarative priorities and posture over step-by-step scripts; use controlLanes when cities, units, workers, or purchases need separate expectations.
+            - tacticianHandoff is now optional auxiliary/debug text. If you fill it at all, keep it short and declarative, and do not put unique essential guidance there that is missing from decisionFrame or controlLanes.
             - worldModelSummary should capture the map-level idea that matters in this game, not generic doctrine. worldModelNotes should be short bullets about meaningful map or information inferences.
             - campaignTitle, campaignSummary, reinforcementPlan, and campaignDoNotDo should describe the current operation in natural human language. This is the main shared intent between you and the tactician.
             - empirePlanSummary and purchaseIntent should explain what our cities and gold are for over the next few turns. Keep empirePlanNotes short and only include things with cross-turn value.
@@ -169,7 +192,7 @@ object AgentStrategistPromptBuilder {
             - Avoid awkward internal jargon or schema-sounding language inside the memo itself. The prose inside the memo fields should read like a smart teammate briefing another teammate.
             - Do not mention difficulty, hidden bonuses, or opponent implementation.
             - Keep the note arrays short. Usually 0-4 items per section is enough.
-            - Prefer state-based milestones such as "before contact", "after the capital is founded", "once the current Scout finishes", or "before starting a settler".
+            - Prefer state-based milestones such as "before contact", "after the capital is founded", "once recon is sufficient", or "before starting a settler".
             - Avoid guessed turn counts unless they are directly grounded by visible project timings, current research timings, or another concrete value in Strategist Brief JSON.
             Strategist Brief JSON:
             $strategistBriefJson

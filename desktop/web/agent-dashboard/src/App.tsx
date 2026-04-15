@@ -930,12 +930,12 @@ function TurnDetail({
       ) || "No strategist thesis recorded.",
     },
     {
-      label: "Direct handoff",
+      label: "Priority window",
       text: firstNonEmptyText(
-        stringValue(strategistMemo?.tacticianHandoff),
-        stringValue(strategy?.tacticianHandoff),
+        stringValue(asRecord(strategy?.decisionFrame)?.whyNow),
+        stringValue(asRecord(strategy?.decisionFrame)?.nextCheckpoint),
         stringValue(strategistMemo?.futurePlan),
-      ) || "No tactician handoff was recorded.",
+      ) || "No active priority window was surfaced.",
     },
     {
       label: "Campaign focus",
@@ -1265,6 +1265,7 @@ function TurnDetail({
                 </>
               ) : null}
               <DecisionFrameBlock frame={asRecord(strategistMemo.decisionFrame)} />
+              <ControlLanesBlock lanes={asRecord(strategistMemo.controlLanes)} />
               <ReviewContractBlock contract={asRecord(strategistMemo.reviewContract)} />
               <CampaignControlLabelsBlock labels={asRecord(strategistMemo.campaignControl)} />
               {stringValue(strategistMemo.pastSummary) ? (
@@ -1325,22 +1326,26 @@ function TurnDetail({
                     <p className="card-paragraph">{stringValue(strategy?.conversionBlocker)}</p>
                   </>
                 ) : null}
-                {stringValue(strategy?.thesis) ? <p className="card-paragraph">{stringValue(strategy?.thesis)}</p> : null}
-                {stringValue(strategy?.tacticianHandoff) ? (
-                  <>
-                    <SectionLabel text="Direct handoff" />
-                    <p className="card-paragraph">{stringValue(strategy?.tacticianHandoff)}</p>
-                  </>
-                ) : null}
                 <DecisionFrameBlock frame={asRecord(strategy?.decisionFrame)} />
+                <ControlLanesBlock lanes={asRecord(strategy?.controlLanes)} />
                 {memoryContext ? (
                   <>
                     <SectionLabel text="Notebook context" />
                     <div className="structured-list">
                       {stringValue(memoryContext.worldModelSummary) ? <p className="card-paragraph">{stringValue(memoryContext.worldModelSummary)}</p> : null}
-                      {stringValue(memoryContext.campaignSummary) ? <p className="card-paragraph">{stringValue(memoryContext.campaignSummary)}</p> : null}
-                      {stringValue(memoryContext.decisiveObjective) ? <p className="card-paragraph"><strong>Objective:</strong> {stringValue(memoryContext.decisiveObjective)}</p> : null}
-                      {stringValue(memoryContext.conversionBlocker) ? <p className="card-paragraph"><strong>Blocker:</strong> {stringValue(memoryContext.conversionBlocker)}</p> : null}
+                      {stringValue(memoryContext.mainRivalCiv) ? <p className="card-paragraph"><strong>Main rival:</strong> {stringValue(memoryContext.mainRivalCiv)}</p> : null}
+                      {stringList(memoryContext.recentChanges).length ? (
+                        <>
+                          <SectionLabel text="Recent changes" />
+                          <TagList values={stringList(memoryContext.recentChanges)} />
+                        </>
+                      ) : null}
+                      {stringList(memoryContext.lessons).length ? (
+                        <>
+                          <SectionLabel text="Lessons" />
+                          <TagList values={stringList(memoryContext.lessons)} tone="warning" />
+                        </>
+                      ) : null}
                     </div>
                   </>
                 ) : null}
@@ -1727,6 +1732,69 @@ function DecisionFrameBlock({ frame }: { frame: Record<string, unknown> | null }
   );
 }
 
+function ControlLanesBlock({ lanes }: { lanes: Record<string, unknown> | null }) {
+  if (!lanes || !Object.keys(lanes).length) return null;
+  const buildControl = stringValue(lanes.buildControl);
+  const unitControl = stringValue(lanes.unitControl);
+  const workerControl = stringValue(lanes.workerControl);
+  const purchaseControl = stringValue(lanes.purchaseControl);
+  const techControl = stringValue(lanes.techControl);
+  const policyControl = stringValue(lanes.policyControl);
+  const driftWarnings = stringList(lanes.driftWarnings);
+  if (!buildControl && !unitControl && !workerControl && !purchaseControl && !techControl && !policyControl && !driftWarnings.length) {
+    return null;
+  }
+  return (
+    <>
+      <SectionLabel text="Control lanes" />
+      <div className="structured-item">
+        {buildControl ? (
+          <>
+            <SectionLabel text="Build control" />
+            <p className="card-paragraph">{buildControl}</p>
+          </>
+        ) : null}
+        {unitControl ? (
+          <>
+            <SectionLabel text="Unit control" />
+            <p className="card-paragraph">{unitControl}</p>
+          </>
+        ) : null}
+        {workerControl ? (
+          <>
+            <SectionLabel text="Worker control" />
+            <p className="card-paragraph">{workerControl}</p>
+          </>
+        ) : null}
+        {purchaseControl ? (
+          <>
+            <SectionLabel text="Purchase control" />
+            <p className="card-paragraph">{purchaseControl}</p>
+          </>
+        ) : null}
+        {techControl ? (
+          <>
+            <SectionLabel text="Tech control" />
+            <p className="card-paragraph">{techControl}</p>
+          </>
+        ) : null}
+        {policyControl ? (
+          <>
+            <SectionLabel text="Policy control" />
+            <p className="card-paragraph">{policyControl}</p>
+          </>
+        ) : null}
+        {driftWarnings.length ? (
+          <>
+            <SectionLabel text="Drift warnings" />
+            <TagList values={driftWarnings} tone="warning" />
+          </>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
 function ReviewContractBlock({ contract }: { contract: Record<string, unknown> | null }) {
   if (!contract || !Object.keys(contract).length) return null;
   const maxAgeTurns = numberValue(contract.maxAgeTurns);
@@ -2056,6 +2124,7 @@ function StrategistMemoMemorySection({ memo }: { memo: Record<string, unknown> |
             </>
           ) : null}
           <DecisionFrameBlock frame={asRecord(memo.decisionFrame)} />
+          <ControlLanesBlock lanes={asRecord(memo.controlLanes)} />
           <ReviewContractBlock contract={asRecord(memo.reviewContract)} />
           {stringValue(memo.pastSummary) ? (
             <>
@@ -2139,7 +2208,6 @@ function TacticianTurnLogSection({ entries }: { entries: Record<string, unknown>
                     <TacticianTurnLogGroup label="Completed" values={stringList(entry.completed)} tone="accent" />
                     <TacticianTurnLogGroup label="Still blocked" values={stringList(entry.stillBlocked)} tone="warning" />
                     <TacticianTurnLogGroup label="Obsolete" values={stringList(entry.obsolete)} />
-                    <TacticianTurnLogGroup label="Carry forward" values={stringList(entry.carryForward)} />
                     <TacticianTurnLogGroup label="Action-surface mismatch" values={stringList(entry.actionSurfaceMismatch)} tone="warning" />
                   </article>
                 ))}
@@ -2390,6 +2458,7 @@ function StrategistContextSection({
                   <SummaryStat label="Objective" value={stringValue(lastStrategistMemo.decisiveObjective)} />
                 </div>
                 <DecisionFrameBlock frame={asRecord(lastStrategistMemo.decisionFrame)} />
+                <ControlLanesBlock lanes={asRecord(lastStrategistMemo.controlLanes)} />
                 <ReviewContractBlock contract={asRecord(lastStrategistMemo.reviewContract)} />
                 {stringValue(lastStrategistMemo.conversionBlocker) ? (
                   <>

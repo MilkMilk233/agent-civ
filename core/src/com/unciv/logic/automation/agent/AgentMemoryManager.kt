@@ -42,6 +42,9 @@ object AgentMemoryManager {
             lessons = ArrayList(existing.lessons.takeLast(maxLessons).map { it.copy() }),
             lastStrategistMemo = existing.lastStrategistMemo.copy(
                 decisionFrame = existing.lastStrategistMemo.decisionFrame.copy(),
+                controlLanes = existing.lastStrategistMemo.controlLanes.copy(
+                    driftWarnings = ArrayList(existing.lastStrategistMemo.controlLanes.driftWarnings)
+                ),
                 campaignControl = existing.lastStrategistMemo.campaignControl.copy(),
                 reviewCityNames = ArrayList(existing.lastStrategistMemo.reviewCityNames),
             ),
@@ -131,7 +134,6 @@ object AgentMemoryManager {
                 intentionalNoOp = intentionalNoOp,
                 completed = intentReconciliation.completed,
                 obsolete = intentReconciliation.obsolete,
-                carryForward = intentReconciliation.carryForward,
             )
             val updated = refreshed.copy(
                 recentChanges = mergeRecentChanges(refreshed.recentChanges, afterActionNotes, turn),
@@ -170,10 +172,6 @@ object AgentMemoryManager {
             .filter { it.staleAfterTurn >= turn && it.unitId !in plannedUnitIds }
             .map { it.copy() }
 
-        val carryForward = buildCarryForwardNotes(
-            cityIntents = newCityIntents.ifEmpty { preservedCityIntents },
-            unitAssignments = newUnitAssignments.ifEmpty { preservedUnitAssignments },
-        )
         val tacticianEntry = buildTacticianTurnLogEntry(
             civInfo = civInfo,
             observation = observation,
@@ -186,7 +184,6 @@ object AgentMemoryManager {
             intentionalNoOp = intentionalNoOp,
             completed = intentReconciliation.completed,
             obsolete = intentReconciliation.obsolete,
-            carryForward = carryForward,
         )
 
         val updated = refreshed.copy(
@@ -270,6 +267,7 @@ object AgentMemoryManager {
             decisiveObjective = strategicPlan.memo.decisiveObjective.trim().takeUnless { it.isEmpty() },
             conversionBlocker = strategicPlan.memo.conversionBlocker?.trim().takeUnless { it.isNullOrEmpty() },
             decisionFrame = normalizeStrategistDecisionFrame(strategicPlan.memo.decisionFrame),
+            controlLanes = normalizeStrategistControlLanes(strategicPlan.memo.controlLanes),
             reviewContract = normalizedReviewContract,
             campaignControl = normalizeCampaignControlLabels(strategicPlan.memo.campaignControl),
             thesis = strategicPlan.memo.thesis?.trim().takeUnless { it.isNullOrEmpty() },
@@ -1037,7 +1035,6 @@ object AgentMemoryManager {
                     completed = ArrayList(entry.completed),
                     stillBlocked = ArrayList(entry.stillBlocked),
                     obsolete = ArrayList(entry.obsolete),
-                    carryForward = ArrayList(entry.carryForward),
                     actionSurfaceMismatch = ArrayList(entry.actionSurfaceMismatch),
                     memoValidity = entry.memoValidity,
                     commitmentLevel = entry.commitmentLevel,
@@ -1059,7 +1056,6 @@ object AgentMemoryManager {
                     completed = ArrayList(existingEntry.completed),
                     stillBlocked = ArrayList(existingEntry.stillBlocked),
                     obsolete = ArrayList(existingEntry.obsolete),
-                    carryForward = ArrayList(existingEntry.carryForward),
                     actionSurfaceMismatch = ArrayList(existingEntry.actionSurfaceMismatch),
                     memoValidity = existingEntry.memoValidity,
                     commitmentLevel = existingEntry.commitmentLevel,
@@ -1138,7 +1134,6 @@ object AgentMemoryManager {
             unitAssignments = activeUnitAssignments,
             completed = completed,
             obsolete = obsolete,
-            carryForward = buildCarryForwardNotes(activeCityIntents, activeUnitAssignments),
         )
     }
 
@@ -1154,7 +1149,6 @@ object AgentMemoryManager {
         intentionalNoOp: Boolean,
         completed: List<String>,
         obsolete: List<String>,
-        carryForward: List<String>,
     ): TacticianTurnLogEntry? {
         val turn = civInfo.gameInfo.turns
         val whatChanged = buildWhatChangedNotes(civInfo, observation, empireObservation, plan, report)
@@ -1174,7 +1168,6 @@ object AgentMemoryManager {
         val mergedCompleted = mergeTurnLogBullets(completed, reflection?.completed, 4)
         val mergedStillBlocked = mergeTurnLogBullets(stillBlocked, reflection?.stillBlocked, 3)
         val mergedObsolete = mergeTurnLogBullets(obsolete, reflection?.obsolete, 3)
-        val mergedCarryForward = mergeTurnLogBullets(carryForward, reflection?.carryForward, 4)
         val mergedActionSurfaceMismatch = mergeTurnLogBullets(
             emptyList(),
             reflection?.actionSurfaceMismatch,
@@ -1188,7 +1181,6 @@ object AgentMemoryManager {
             mergedCompleted.isEmpty() &&
             mergedObsolete.isEmpty() &&
             mergedStillBlocked.isEmpty() &&
-            mergedCarryForward.isEmpty() &&
             mergedActionSurfaceMismatch.isEmpty()
         ) {
             return null
@@ -1203,7 +1195,6 @@ object AgentMemoryManager {
             completed = ArrayList(mergedCompleted),
             stillBlocked = ArrayList(mergedStillBlocked),
             obsolete = ArrayList(mergedObsolete),
-            carryForward = ArrayList(mergedCarryForward),
             actionSurfaceMismatch = ArrayList(mergedActionSurfaceMismatch),
             memoValidity = normalizedMemoValidity,
             commitmentLevel = reflection?.commitmentLevel?.trim()?.takeUnless { it.isNullOrEmpty() },
@@ -1292,22 +1283,6 @@ object AgentMemoryManager {
         return blockers.toList()
     }
 
-    private fun buildCarryForwardNotes(
-        cityIntents: List<CityIntentMemory>,
-        unitAssignments: List<UnitAssignmentMemory>,
-    ): List<String> {
-        val notes = linkedSetOf<String>()
-        cityIntents.take(2).forEach { intent ->
-            val target = intent.target?.takeIf { it.isNotBlank() } ?: intent.intent
-            notes += "${intent.cityName} still carries $target."
-        }
-        unitAssignments.take(2).forEach { assignment ->
-            val unitName = assignment.unitName.ifBlank { "Unit #${assignment.unitId}" }
-            notes += "$unitName still carries ${describeUnitAssignment(assignment)}."
-        }
-        return notes.toList()
-    }
-
     private fun describeCityIntent(intent: CityIntentMemory): String {
         val target = intent.target?.takeIf { it.isNotBlank() } ?: intent.intent
         return "city intent for $target"
@@ -1322,7 +1297,6 @@ object AgentMemoryManager {
         val unitAssignments: ArrayList<UnitAssignmentMemory>,
         val completed: List<String>,
         val obsolete: List<String>,
-        val carryForward: List<String>,
     )
 
     private fun pruneWorldModel(worldModel: WorldModelMemory, turn: Int): WorldModelMemory {
@@ -1504,6 +1478,20 @@ object AgentMemoryManager {
             whyNow = frame.whyNow?.trim()?.takeUnless { it.isEmpty() },
             nextCheckpoint = frame.nextCheckpoint?.trim()?.takeUnless { it.isEmpty() },
             expiryCondition = frame.expiryCondition?.trim()?.takeUnless { it.isEmpty() },
+        )
+    }
+
+    private fun normalizeStrategistControlLanes(lanes: AgentStrategistControlLanes): AgentStrategistControlLanes {
+        return AgentStrategistControlLanes(
+            buildControl = lanes.buildControl?.trim()?.takeUnless { it.isEmpty() },
+            unitControl = lanes.unitControl?.trim()?.takeUnless { it.isEmpty() },
+            workerControl = lanes.workerControl?.trim()?.takeUnless { it.isEmpty() },
+            purchaseControl = lanes.purchaseControl?.trim()?.takeUnless { it.isEmpty() },
+            techControl = lanes.techControl?.trim()?.takeUnless { it.isEmpty() },
+            policyControl = lanes.policyControl?.trim()?.takeUnless { it.isEmpty() },
+            driftWarnings = lanes.driftWarnings
+                .mapNotNull { it.trim().takeUnless { trimmed -> trimmed.isEmpty() } }
+                .take(4),
         )
     }
 

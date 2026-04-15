@@ -435,6 +435,8 @@ object AgentCityOptionBuilder {
         val peacefulGrowthWindow = isPeacefulGrowthWindow(city)
         val noWorkerExists = civInfo.units.getCivUnits().none { it.cache.hasUniqueToBuildImprovements }
         val singleCity = civInfo.cities.size == 1
+        val scoutCount = civInfo.units.getCivUnits().count { it.name == "Scout" }
+        val contactComplete = civInfo.getKnownCivs().any { !it.isBarbarian && !it.isCityState }
         val currentName = city.cityConstructions.currentConstructionName()
         val currentTurnsLeft = currentName.takeIf { it.isNotBlank() }?.let { city.cityConstructions.turnsToConstruction(it) }
         val currentWorkDone = currentName.takeIf { it.isNotBlank() }?.let { city.cityConstructions.getWorkDone(it) } ?: 0
@@ -465,8 +467,13 @@ object AgentCityOptionBuilder {
                         score += 20
                     }
                 }
-                if (construction.name == "Scout" && peacefulGrowthWindow && civInfo.units.getCivUnits().count { it.name == construction.name } == 0) {
-                    score += 55
+                if (construction.name == "Scout" && peacefulGrowthWindow) {
+                    score += when {
+                        scoutCount == 0 -> 55
+                        scoutCount == 1 && !contactComplete -> 15
+                        scoutCount >= 2 -> -140
+                        else -> 0
+                    }
                 }
             }
             is Building -> {
@@ -504,6 +511,8 @@ object AgentCityOptionBuilder {
         val peacefulGrowthWindow = isPeacefulGrowthWindow(city)
         val noWorkerExists = civInfo.units.getCivUnits().none { it.cache.hasUniqueToBuildImprovements }
         val singleCity = civInfo.cities.size == 1
+        val scoutCount = civInfo.units.getCivUnits().count { it.name == "Scout" }
+        val contactComplete = civInfo.getKnownCivs().any { !it.isBarbarian && !it.isCityState }
         val needsExplicitChoice = AgentCityProjectPolicy.needsExplicitProjectChoice(city)
         val currentName = city.cityConstructions.currentConstructionName()
         val currentProgress = currentConstructionProgressText(city, construction.name)
@@ -525,9 +534,16 @@ object AgentCityOptionBuilder {
                     reasons += "Safe one-city opener; a second city accelerates the snowball"
                 }
                 if (construction.name == "Scout" && peacefulGrowthWindow) {
-                    reasons += "Finishes quickly and improves contact, city-site certainty, and map knowledge while the opener is still quiet"
+                    when {
+                        scoutCount == 0 ->
+                            reasons += "First Scout is still a normal opener tool for contact and site certainty"
+                        scoutCount == 1 && !contactComplete ->
+                            reasons += "A second Scout can still be justified while contact remains unresolved, but recon should stop after that"
+                        else ->
+                            reasons += "Recon is already sufficient here; another Scout is drift unless the board shows an unusual reason"
+                    }
                 }
-                if (construction.isMilitary && peacefulGrowthWindow && singleCity) {
+                if (construction.isMilitary && peacefulGrowthWindow && singleCity && scoutCount < 2 && !contactComplete) {
                     reasons += "A slower combat unit is less urgent than fast recon and growth tempo right now"
                 }
             }
@@ -554,9 +570,17 @@ object AgentCityOptionBuilder {
                 construction is BaseUnit && construction.isRanged() ->
                     reasons += "Extra ranged support helps sustain pressure, but frontline units matter more if capture capability is thin"
                 construction is BaseUnit && construction.name == "Scout" ->
-                    reasons += "Additional recon is lower value than objective conversion during this campaign"
+                    reasons += if (conversionContext.expansionCheckpointLive) {
+                        "Additional recon is lower value than securing the live second-city checkpoint"
+                    } else {
+                        "Additional recon is lower value than objective conversion during this campaign"
+                    }
                 construction is BaseUnit && construction.isCityFounder() ->
-                    reasons += "Expansion is not the current bottleneck; the decisive objective needs conversion first"
+                    reasons += if (conversionContext.expansionCheckpointLive) {
+                        "The second city is the live checkpoint that unlocks the rest of the plan"
+                    } else {
+                        "Expansion is not the current bottleneck; the decisive objective needs conversion first"
+                    }
                 construction is Building && isPassivePeacetimeConstruction(construction) ->
                     reasons += "Passive infrastructure slows the current conversion window unless the city is under real threat"
             }
@@ -621,6 +645,7 @@ object AgentCityOptionBuilder {
             construction is BaseUnit && construction.isRanged() && conversionContext.rangedShortage -> 155
             construction is BaseUnit && construction.isRanged() -> 110
             construction is BaseUnit && construction.name == "Scout" -> -170
+            construction is BaseUnit && construction.isCityFounder() && conversionContext.expansionCheckpointLive -> 170
             construction is BaseUnit && construction.isCityFounder() -> -210
             construction is BaseUnit && construction.hasUnique(UniqueType.BuildImprovements, GameContext.IgnoreConditionals) -> -130
             construction is Building && isMilitaryDefenseBuilding(construction) && city.getThreatScore() > 0 -> 45
@@ -704,8 +729,15 @@ object AgentCityOptionBuilder {
             decisiveObjective.contains("assault") ||
             decisiveObjective.contains("war") ||
             decisiveObjective.contains("frontier")
+        val expansionCheckpointLive =
+            decisiveObjective.contains("second city") ||
+                decisiveObjective.contains("found the second city") ||
+                decisiveObjective.contains("found a second city") ||
+                decisiveObjective.contains("city founded") ||
+                decisiveObjective.contains("settler")
         return ConversionContext(
             objectivePressure = objectivePressure,
+            expansionCheckpointLive = expansionCheckpointLive,
             frontlineShortage = conversionBlocker.contains("melee") ||
                 conversionBlocker.contains("frontline") ||
                 conversionBlocker.contains("capture"),
@@ -784,6 +816,7 @@ object AgentCityOptionBuilder {
 
     private data class ConversionContext(
         val objectivePressure: Boolean,
+        val expansionCheckpointLive: Boolean,
         val frontlineShortage: Boolean,
         val rangedShortage: Boolean,
     )

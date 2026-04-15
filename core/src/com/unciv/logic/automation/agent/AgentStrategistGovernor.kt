@@ -136,6 +136,7 @@ object AgentStrategistGovernor {
             decisiveObjective = memo.decisiveObjective,
             conversionBlocker = memo.conversionBlocker,
             decisionFrame = memo.decisionFrame,
+            controlLanes = memo.controlLanes,
             reviewContract = memo.reviewContract,
             campaignControl = memo.campaignControl,
             thesis = memo.thesis,

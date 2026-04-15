@@ -10,7 +10,7 @@ object AgentStrategicGovernor {
         val primaryThreat = empireObservation.victoryThreats.firstOrNull()
         val memo = memory.lastStrategistMemo.takeIf { it.campaignStage.isNotBlank() }
         val campaignControl = memory.campaignControl.toObservation(observation.turn)
-        val attentionFacts = buildAttentionFacts(observation, empireObservation, campaignControl)
+        val attentionFacts = buildAttentionFacts(observation)
         val mustActNow = buildMustActNow(observation, empireObservation, campaignControl)
         val campaignContext = buildCampaignContext(memory, observation, empireObservation)
         val cityHighlights = selectCityHighlights(observation, gameContext, campaignContext)
@@ -27,11 +27,7 @@ object AgentStrategicGovernor {
             decisiveObjective = memo?.decisiveObjective ?: memory.campaign.decisiveObjective,
             conversionBlocker = memo?.conversionBlocker ?: memory.campaign.conversionBlocker,
             decisionFrame = memo?.decisionFrame?.takeUnless { it.isEmpty() },
-            thesis = memo?.thesis,
-            pastSummary = memo?.pastSummary,
-            currentSituation = memo?.currentSituation,
-            futurePlan = memo?.futurePlan,
-            tacticianHandoff = memo?.tacticianHandoff ?: memo?.futurePlan,
+            controlLanes = memo?.controlLanes?.takeUnless { it.isEmpty() },
         )
         val decisionFocus = buildDecisionFocus(
             observation = observation,
@@ -105,10 +101,12 @@ object AgentStrategicGovernor {
         return AgentPlannerDecisionFocusObservation(
             mode = mode,
             targetFrame = explicitFrame?.targetFrame ?: campaignContext?.objectiveTarget?.name,
-            whyNow = explicitFrame?.whyNow ?: strategy.currentSituation ?: strategy.thesis,
+            whyNow = explicitFrame?.whyNow
+                ?: strategy.conversionBlocker
+                ?: campaignControl?.nextCheckpointSummary,
             nextCheckpoint = explicitFrame?.nextCheckpoint
                 ?: campaignControl?.nextCheckpointSummary
-                ?: strategy.futurePlan,
+                ?: strategy.decisiveObjective,
             expiryCondition = explicitFrame?.expiryCondition
                 ?: campaignControl?.pivotTriggers?.firstOrNull()
                 ?: strategy.conversionBlocker,
@@ -119,7 +117,6 @@ object AgentStrategicGovernor {
                 campaignContext = campaignContext,
                 objectiveTheater = objectiveTheater,
                 captureReadiness = captureReadiness,
-                mustActNow = mustActNow,
                 cityHighlights = cityHighlights,
             ).take(5),
             backgroundChores = buildBackgroundChores(
@@ -151,14 +148,7 @@ object AgentStrategicGovernor {
             ?: observation.visibleThreatsAndTargets.firstOrNull { it.civName != observation.civName }?.civName
         if (
             memory.worldModel.summary.isNullOrBlank() &&
-            memory.worldModel.notes.isEmpty() &&
-            memory.campaign.title.isBlank() &&
-            memory.campaign.stage.isBlank() &&
-            memory.campaign.decisiveObjective.isNullOrBlank() &&
-            memory.campaign.conversionBlocker.isNullOrBlank() &&
-            memory.campaign.summary.isNullOrBlank() &&
-            memory.empirePlan.summary.isNullOrBlank() &&
-            memory.empirePlan.purchaseIntent.isNullOrBlank() &&
+            primaryRivalCiv == null &&
             memory.recentChanges.isEmpty() &&
             memory.lessons.isEmpty() &&
             memory.tacticianTurnLog.isEmpty()
@@ -170,17 +160,7 @@ object AgentStrategicGovernor {
                 .takeIf { it > 0 }
                 ?.let { observation.turn - it },
             worldModelSummary = memory.worldModel.summary,
-            worldModelNotes = memory.worldModel.notes.takeLast(3).map { it.text },
             mainRivalCiv = primaryRivalCiv,
-            campaignTitle = memory.campaign.title.takeIf { it.isNotBlank() },
-            campaignStage = memory.campaign.stage.takeIf { it.isNotBlank() },
-            decisiveObjective = memory.campaign.decisiveObjective,
-            conversionBlocker = memory.campaign.conversionBlocker,
-            campaignSummary = memory.campaign.summary,
-            reinforcementPlan = memory.campaign.reinforcementPlan,
-            campaignDoNotDo = memory.campaign.doNotDo.take(4),
-            empirePlanSummary = memory.empirePlan.summary,
-            purchaseIntent = memory.empirePlan.purchaseIntent,
             recentChanges = memory.recentChanges.takeLast(4).map { it.text },
             lessons = memory.lessons.takeLast(4).map { it.text },
             tacticianTurnLog = memory.tacticianTurnLog.takeLast(4).map { entry ->
@@ -191,7 +171,6 @@ object AgentStrategicGovernor {
                     completed = entry.completed,
                     stillBlocked = entry.stillBlocked,
                     obsolete = entry.obsolete,
-                    carryForward = entry.carryForward,
                     actionSurfaceMismatch = entry.actionSurfaceMismatch,
                     memoValidity = entry.memoValidity,
                     commitmentLevel = entry.commitmentLevel,
@@ -291,17 +270,9 @@ object AgentStrategicGovernor {
         campaignContext: AgentPlannerCampaignContextObservation?,
         objectiveTheater: AgentPlannerObjectiveTheaterObservation?,
         captureReadiness: AgentPlannerCaptureReadinessObservation?,
-        mustActNow: List<AgentPlannerMustActObservation>,
         cityHighlights: List<AgentCityObservation>,
     ): List<AgentPlannerDecisionPriorityObservation> {
         val priorities = arrayListOf<AgentPlannerDecisionPriorityObservation>()
-        mustActNow.take(2).forEach { item ->
-            priorities += AgentPlannerDecisionPriorityObservation(
-                kind = item.kind,
-                headline = item.headline,
-                detail = item.detail,
-            )
-        }
 
         when (mode) {
             "launch_now", "assault" -> {
@@ -332,7 +303,7 @@ object AgentStrategicGovernor {
                     kind = "checkpoint",
                     headline = "Keep staging tied to one short checkpoint",
                     detail = campaignControl?.nextCheckpointSummary
-                        ?: strategy.futurePlan
+                        ?: strategy.conversionBlocker
                         ?: "Use this turn to complete the missing piece that makes the line truly launchable.",
                 )
                 strategy.conversionBlocker?.let { blocker ->
@@ -363,7 +334,7 @@ object AgentStrategicGovernor {
                     kind = "expansion",
                     headline = "Expansion tempo should stay clearer than passive posture",
                     detail = campaignControl?.nextCheckpointSummary
-                        ?: strategy.futurePlan
+                        ?: strategy.decisiveObjective
                         ?: "Serve the live expansion checkpoint before polishing secondary chores.",
                 )
             }
@@ -532,72 +503,10 @@ object AgentStrategicGovernor {
         return buildProgressInMotion(observation, empireObservation, cityHighlights, unitHighlights, campaignContext)
     }
 
-    private fun buildAttentionFacts(
-        observation: AgentObservation,
-        empireObservation: AgentEmpireObservation,
-        campaignControl: AgentCampaignControlObservation?,
-    ): List<ObservationFact> {
+    private fun buildAttentionFacts(observation: AgentObservation): List<ObservationFact> {
         val facts = linkedMapOf<String, ObservationFact>()
         fun addFact(fact: ObservationFact) {
             facts.putIfAbsent("${fact.category}|${fact.headline}", fact)
-        }
-
-        campaignControl?.let { liveCampaignControl ->
-            when {
-                liveCampaignControl.checkpointStatus.equals("missed", ignoreCase = true) -> addFact(
-                    ObservationFact(
-                        category = "campaign",
-                        severity = "warning",
-                        headline = "Current campaign missed its checkpoint",
-                        detail = liveCampaignControl.pivotTriggers.firstOrNull()
-                            ?: liveCampaignControl.nextCheckpointSummary
-                            ?: "The current line should be converted or rewritten now.",
-                    )
-                )
-                liveCampaignControl.launchWindowOpen &&
-                    !observation.empireSummary.isAtWar &&
-                    liveCampaignControl.battleReadiness in setOf("ready", "engaged") -> addFact(
-                    ObservationFact(
-                        category = "campaign",
-                        severity = "warning",
-                        headline = "A launch window is open",
-                        detail = liveCampaignControl.holdingCosts.firstOrNull()
-                            ?: "The force package already looks launchable, so more passive staging is suspicious.",
-                    )
-                )
-            }
-
-            when (liveCampaignControl.supplyHealth) {
-                "collapsing" -> addFact(
-                    ObservationFact(
-                        category = "campaign",
-                        severity = "warning",
-                        headline = "Campaign supply is collapsing",
-                        detail = liveCampaignControl.holdingCosts.firstOrNull()
-                            ?: "Treasury, happiness, or science strain is now severe enough to threaten the line.",
-                    )
-                )
-                "fragile", "strained" -> addFact(
-                    ObservationFact(
-                        category = "campaign",
-                        severity = "warning",
-                        headline = "Campaign sustainment is under pressure",
-                        detail = liveCampaignControl.holdingCosts.firstOrNull()
-                            ?: "Waiting or overbuilding is making the campaign more expensive each turn.",
-                    )
-                )
-            }
-
-            liveCampaignControl.pivotTriggers.take(2).forEach { trigger ->
-                addFact(
-                    ObservationFact(
-                        category = "campaign",
-                        severity = "warning",
-                        headline = "Campaign control warning",
-                        detail = trigger,
-                    )
-                )
-            }
         }
 
         val threatenedCities = observation.cities

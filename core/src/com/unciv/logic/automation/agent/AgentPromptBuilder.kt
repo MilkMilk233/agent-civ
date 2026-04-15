@@ -9,7 +9,7 @@ object AgentPromptBuilder {
         explicitNulls = false
     }
 
-    fun memoryJson(memory: AgentMemory): String = json.encodeToString(memory)
+    fun memoryJson(memory: AgentMemory): String = json.encodeToString(buildTacticalMemoryPrompt(memory))
     fun observationJson(observation: AgentObservation): String = json.encodeToString(observation)
     fun empireObservationJson(observation: AgentEmpireObservation): String = json.encodeToString(observation)
     fun plannerBrief(memory: AgentMemory, observation: AgentObservation, empireObservation: AgentEmpireObservation): AgentPlannerBrief =
@@ -68,31 +68,32 @@ object AgentPromptBuilder {
                 "completed": ["optional"],
                 "stillBlocked": ["optional"],
                 "obsolete": ["optional"],
-                "carryForward": ["optional"],
                 "actionSurfaceMismatch": ["optional"]
               },
               "notes": "optional"
             }
             Rules:
-            - Memory JSON carries tactical continuity plus the shared notebook for this specific game.
+            - Memory JSON carries only the continuity residue that is still useful for this exact turn: map anchors, live city intents, live unit assignments, and recent failures.
             - Planner Brief JSON is the tactical turn brief built from the current game state. It is the current truth for planning.
             - Trust Planner Brief JSON over Memory JSON if they conflict on current-turn facts.
             - Think like a strong Civilization V Vanilla player by default. Use normal Civ V Vanilla priors confidently when reasoning about openings, expansion, military timing, science, culture, and victory races.
             - The packet defines the real current state and the real legal action space. If a mechanic, action, or option is not surfaced here, do not assume it is available.
             - Planner Brief JSON already includes the current strategist memo under strategy, plus a compact memoryContext slice of the shared notebook.
-            - Treat campaignStage as the strategist's read of the current operation, decisiveObjective as the next objective that matters most, conversionBlocker as the main thing still preventing clean conversion, pastSummary as the recent background that still matters, currentSituation as what the strategist thinks is most important now, futurePlan as the next-few-turn intent you should serve, and tacticianHandoff as the strategist's clearest direct message to you.
+            - Treat campaignStage as the strategist's read of the current operation, decisiveObjective as the next objective that matters most, and conversionBlocker as the main thing still preventing clean conversion.
             - strategy.decisionFrame is the strategist's compact decision contract for this memo. Read decisionMode as the kind of turn range the strategist believes this is, targetFrame as the main axis or target that matters, nextCheckpoint as the next concrete proof that the line is converting, and expiryCondition as the thing that should stop you from blindly preserving the same story forever.
+            - strategy.controlLanes are the strategist's bounded expectation lanes for this phase. Read buildControl as city-production posture, unitControl as existing-force posture, workerControl as civilian posture, purchaseControl as gold posture, techControl and policyControl as rare empire-level nudges, and driftWarnings as the things that should stop even if they remain legal or tempting.
+            - Use controlLanes to preserve tactician ownership, not to surrender it. They are expectation envelopes, not exact scripts. Choose the best surfaced actions that fit inside those envelopes.
             - decisionFocus is the packet's mode-aware cockpit for this turn. criticalChoicesNow are the decisions that should dominate this turn, backgroundChores are the things that should not crowd them out, launchCohort is the compact battle package view when the line is war-facing, supplySnapshot is the compact sustainment picture, and actionSurfaceMismatch lists places where the current surfaced options may not fully support the strategist frame.
             - When decisionFocus is present, let its criticalChoicesNow outrank background chores unless the current visible board state shows a clearly stronger emergency.
-            - Planner Brief JSON may also include mustActNow. These are not strategy conclusions; they are hard unresolved commitments visible on this exact turn, such as a city still needing a real build choice, a Settler that can found immediately, or research still being unchosen.
+            - Planner Brief JSON may also include mustActNow. These are the hard unresolved commitments visible on this exact turn, such as a city still needing a real build choice, a Settler that can found immediately, or research still being unchosen.
             - Use only the surfaced legal candidate actions and exact action types from the brief. Do not invent unsupported commands or mod mechanics.
-            - Use Memory JSON for continuity when the current brief still supports it: world model notes and anchors, campaign memory, empire plan, tactician turn log, city intents, unit assignments, and recent failures.
+            - Use Memory JSON only for continuity helpers that are not already expressed in the planner brief: map anchors, lingering city intents, unit assignments, and recent failures.
             - Plan like a strong tactical player serving the strategist memo. Reconstruct the current situation from the packets you were given, then choose the best exact legal actions for this turn.
             - The planner brief is a factual tactical packet, not a script-written strategy layer. Use the strategist briefing plus the surfaced state and legal options to decide what matters.
             - The strategist report is a briefing written for you by an upstream teammate. Use it to understand what changed, what matters now, and what should dominate local choices, but do not treat it as a literal step list.
-            - memoryContext is the compact shared notebook slice for this game. Use it when it helps with map understanding, rival understanding, campaign intent, recent changes, or lessons from the last few turns.
+            - memoryContext is the compact shared notebook slice for this game. Use it for map understanding, main rival context, recent changes, lessons, and the recent tactician execution delta.
             - The strategist memo may be several turns old. If memoryContext includes strategistMemoAgeTurns or tacticianTurnLog, treat those as the age and delta since the strategist last refreshed the notebook.
-            - Read tacticianTurnLog like an execution log: completed and obsolete items should stop you from blindly repeating stale strategist guidance, while carryForward items are the things still live after recent turns.
+            - Read tacticianTurnLog like an execution log: completed and obsolete items should stop you from blindly repeating stale strategist guidance, while stillBlocked and actionSurfaceMismatch show what remains unresolved.
             - campaignContext is the factual rival/frontier packet for this turn. objectiveTarget is the resolved current target from that packet. If current visibility is incomplete but campaignContext still includes a last-known rival city or capital, use that to keep pressure moving in the right direction instead of resetting into broad blind scouting.
             - objectiveTheater is the surfaced battlefield around the current decisive objective. Treat it as the current operational map: those units and support cities are the ones that can materially affect the objective now, while the rest of the empire is compacted into reserves.
             - captureReadiness is the conversion read around the current objective. Use it to judge whether the current force package can actually take or hold the objective soon, especially whether healthy capture-capable melee are missing, worn down, or ready.
@@ -120,7 +121,7 @@ object AgentPromptBuilder {
             - Treat select_unit_option as a complete candidate-based plan for that unit this turn. Do not issue more than one select_unit_option for the same unit.
             - Do not mix select_unit_option with unit_move or unit_action for the same unit in the same plan.
             - If a unit includes legalActionCandidates, copy the actionType exactly. If a legalActionCandidate includes moveDestinationX/moveDestinationY, emit unit_move first and then unit_action.
-            - If a unit has assignmentProgress, prefer finishing the current assignment over chasing a new local opportunity unless there is a clearly stronger strategic reason to switch. A clear strategist handoff toward war, marching, declaring, or an immediate city tempo pivot is such a stronger reason.
+            - If a unit has assignmentProgress, prefer finishing the current assignment over chasing a new local opportunity unless there is a clearly stronger strategic reason to switch. A clear strategist frame toward war, marching, declaring, or an immediate city tempo pivot is such a stronger reason.
             - For workers, prefer grounded worker candidateIds over raw unit_action, never invent worker action names, and do not default to Sleep, Skip, or Automate when a real worker move or improvement option exists.
             - In a peaceful opener, prioritize worker tempo, capital growth, and safe expansion. Do not spend the turn only on passive unit posture when strong city or expansion choices exist.
             - In the mid and late game, do not float large gold reserves when meaningful purchases, upgrades, or other tempo gains are available.
@@ -135,8 +136,6 @@ object AgentPromptBuilder {
             - If mustActNow says campaign supply is under pressure, do not keep choosing actions whose main effect is to make the current stalled line even more expensive.
             - Only return an empty actions list when the surfaced actions are genuinely low-value or disruptive relative to the strategist memo and the current board state.
             - When preserve-progress instincts conflict with concrete frontline state, rival pressure, or better city tempo choices visible in the brief, trust the visible state and the strategist briefing over inertia.
-            - If tacticianHandoff says to stop delaying for recon, upkeep, or passive infrastructure, believe it and act accordingly.
-            - If tacticianHandoff says war should begin now and a legal declare-war option is surfaced, treat that as a top-tier action rather than waiting for perfect local information.
             - If campaignContext shows a last-known rival target and the strategist memo or memoryContext is pressuring that rival, march combat units toward that axis even if exact sight dropped this turn.
             - When objectiveTheater is present, prefer using the surfaced objective-theater units and support cities before unrelated rear-area micro. Off-axis reserves matter mainly as reinforcements.
             - When captureReadiness says healthy capture units are thin or missing, treat melee buys, melee builds, and preserving existing capture units as higher priority than extra ranged chip or side-target cleanup.
@@ -159,5 +158,34 @@ object AgentPromptBuilder {
             Planner Brief JSON:
             $plannerBriefJson
         """.trimIndent()
+    }
+
+    private fun buildTacticalMemoryPrompt(memory: AgentMemory): AgentTacticalMemoryPrompt {
+        return AgentTacticalMemoryPrompt(
+            worldModelAnchors = memory.worldModel.anchors.takeLast(6).map(::describeAnchor),
+            cityIntents = memory.cityIntents.takeLast(6).map(::describeCityIntent),
+            unitAssignments = memory.unitAssignments.takeLast(8).map(::describeUnitAssignment),
+            recentFailures = memory.recentFailures.takeLast(6).map { it.summary },
+        )
+    }
+
+    private fun describeAnchor(anchor: MemoryAnchor): String {
+        val civPart = anchor.civName?.let { " ($it)" } ?: ""
+        val coordPart = if (anchor.x != null && anchor.y != null) " at (${anchor.x}, ${anchor.y})" else ""
+        return "${anchor.kind}: ${anchor.label}$civPart$coordPart"
+    }
+
+    private fun describeCityIntent(intent: CityIntentMemory): String {
+        val targetPart = intent.target?.let { " -> $it" } ?: ""
+        val reasonsPart = intent.reasons.take(2).takeIf { it.isNotEmpty() }?.joinToString(", ")?.let { " [$it]" } ?: ""
+        return "${intent.cityName}: ${intent.intent}$targetPart$reasonsPart"
+    }
+
+    private fun describeUnitAssignment(assignment: UnitAssignmentMemory): String {
+        val targetPart = if (assignment.targetX != null && assignment.targetY != null) {
+            " -> (${assignment.targetX}, ${assignment.targetY})"
+        } else ""
+        val detailPart = assignment.detail?.let { " [$it]" } ?: ""
+        return "${assignment.unitName} #${assignment.unitId} (${assignment.role})$targetPart$detailPart"
     }
 }
