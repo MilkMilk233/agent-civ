@@ -1246,9 +1246,14 @@ function TurnDetail({
               <div className="summary-grid compact">
                 <SummaryStat label="Win path" value={stringValue(strategistMemo.winPath)} />
                 <SummaryStat label="Stage" value={stringValue(strategistMemo.campaignStage)} />
-                <SummaryStat label="Objective" value={stringValue(strategistMemo.decisiveObjective)} />
+                <SummaryStat label="Decisive objective" value={stringValue(strategistMemo.decisiveObjective)} />
                 <SummaryStat label="Strategist pass" value={strategistArtifacts ? "Ran this turn" : "Carried memo"} />
-                <SummaryStat label="Max age" value={formatNumber(numberValue(asRecord(strategistMemo.reviewContract)?.maxAgeTurns))} />
+                <SummaryStat
+                  label="Review max age"
+                  value={(numberValue(asRecord(strategistMemo.reviewContract)?.maxAgeTurns) ?? 0) > 0
+                    ? formatNumber(numberValue(asRecord(strategistMemo.reviewContract)?.maxAgeTurns))
+                    : "—"}
+                />
                 <SummaryStat label="Created" value={memoCreatedTurn === null ? "Unknown" : `Turn ${formatNumber(memoCreatedTurn)}`} />
                 <SummaryStat label="Last reviewed" value={memoLastReviewedTurn === null ? "Unknown" : `Turn ${formatNumber(memoLastReviewedTurn)}`} />
               </div>
@@ -1313,6 +1318,18 @@ function TurnDetail({
                   <SummaryStat label="Archetype" value={stringValue(strategy?.gameArchetype)} />
                   <SummaryStat label="Stage" value={stringValue(strategy?.campaignStage)} />
                   <SummaryStat label="Victory goal" value={stringValue(strategy?.winPath)} />
+                  <SummaryStat
+                    label="Memo reviewed"
+                    value={numberValue(memoryContext?.strategistMemoLastReviewedTurn) === null
+                      ? "—"
+                      : `Turn ${formatNumber(numberValue(memoryContext?.strategistMemoLastReviewedTurn))}`}
+                  />
+                  <SummaryStat
+                    label="Memo age"
+                    value={numberValue(memoryContext?.strategistMemoAgeTurns) === null
+                      ? "—"
+                      : `${formatNumber(numberValue(memoryContext?.strategistMemoAgeTurns))} turns`}
+                  />
                 </div>
                 {stringValue(strategy?.decisiveObjective) ? (
                   <>
@@ -2102,18 +2119,19 @@ function MemoryNotesCard({
 }
 
 function StrategistMemoMemorySection({ memo }: { memo: Record<string, unknown> | null }) {
+  const reviewMaxAgeTurns = numberValue(asRecord(memo)?.reviewContract?.maxAgeTurns);
   return (
-    <Card title="Last strategist memo" subtitle="The strategist memo snapshot currently stored in shared memory, before any new strategist pass on this turn.">
+    <Card title="Last strategist memo" subtitle="The exact strategist memo snapshot stored in shared memory at turn start, before any new strategist pass on this turn.">
       {memo && Object.keys(memo).length ? (
         <>
           <div className="summary-grid compact">
             <SummaryStat label="Archetype" value={stringValue(memo.gameArchetype) || "—"} />
             <SummaryStat label="Win path" value={stringValue(memo.winPath) || "—"} />
             <SummaryStat label="Stage" value={stringValue(memo.campaignStage) || "—"} />
-            <SummaryStat label="Objective" value={stringValue(memo.decisiveObjective) || "—"} />
-            <SummaryStat label="Created" value={formatNumber(numberValue(memo.createdTurn))} />
-            <SummaryStat label="Last reviewed" value={formatNumber(numberValue(memo.lastReviewedTurn))} />
-            <SummaryStat label="Max age" value={formatNumber(numberValue(asRecord(memo.reviewContract)?.maxAgeTurns))} />
+            <SummaryStat label="Decisive objective" value={stringValue(memo.decisiveObjective) || "—"} />
+            <SummaryStat label="Memo created" value={formatNumber(numberValue(memo.createdTurn))} />
+            <SummaryStat label="Memo reviewed" value={formatNumber(numberValue(memo.lastReviewedTurn))} />
+            <SummaryStat label="Review max age" value={reviewMaxAgeTurns && reviewMaxAgeTurns > 0 ? formatNumber(reviewMaxAgeTurns) : "—"} />
             <SummaryStat label="Refresh reason" value={stringValue(memo.lastRefreshReason) || "—"} />
           </div>
           {stringValue(memo.thesis) ? <p className="card-paragraph">{stringValue(memo.thesis)}</p> : null}
@@ -2455,7 +2473,7 @@ function StrategistContextSection({
               <div className="summary-grid compact">
                   <SummaryStat label="Stage" value={stringValue(lastStrategistMemo.campaignStage)} />
                   <SummaryStat label="Win path" value={stringValue(lastStrategistMemo.winPath)} />
-                  <SummaryStat label="Objective" value={stringValue(lastStrategistMemo.decisiveObjective)} />
+                  <SummaryStat label="Decisive objective" value={stringValue(lastStrategistMemo.decisiveObjective)} />
                 </div>
                 <DecisionFrameBlock frame={asRecord(lastStrategistMemo.decisionFrame)} />
                 <ControlLanesBlock lanes={asRecord(lastStrategistMemo.controlLanes)} />
@@ -2544,7 +2562,7 @@ function StrategistContextSection({
           ) : null}
 
           <ThreatHighlightsSection title="Rival threats" threats={threats} embedded />
-          <ProgressSection title="Strategist progress cues" items={progressInMotion.slice(0, 4)} embedded />
+          <ProgressSection title="Strategist progress cues" items={progressInMotion} embedded />
 
           {recentFailures.length ? (
             <>
@@ -2719,7 +2737,7 @@ function StrategistCitySnapshotsSection({
                 {signals.length ? (
                   <>
                     <SectionLabel text="Signals" />
-                    <TagList values={signals.slice(0, 5)} />
+                    <TagList values={signals} />
                   </>
                 ) : null}
 
@@ -2748,12 +2766,13 @@ function StrategistUnitSnapshotsSection({
   units: Record<string, unknown>[];
 }) {
   return (
-    <Card title={title} subtitle="All current units shared with the strategist in compact form.">
+    <Card title={title} subtitle="Compact unit snapshots the strategist actually received. These do not include reachable tiles or tactical action menus.">
       {units.length ? (
         <div className="structured-list structured-list-grid">
           {units.map((unit, index) => {
             const progress = asRecord(unit.assignmentProgress);
-            const signals = [...stringList(unit.reasons), ...stringList(unit.localFacts)].slice(0, 6);
+            const reasons = stringList(unit.reasons);
+            const localFacts = stringList(unit.localFacts);
 
             return (
               <article key={`${stringValue(unit.name)}-${numberValue(unit.id) ?? index}`} className="structured-item">
@@ -2796,10 +2815,17 @@ function StrategistUnitSnapshotsSection({
 
                 {progress ? <p className="card-paragraph">{stringValue(progress.progressNote)}</p> : null}
 
-                {signals.length ? (
+                {reasons.length ? (
                   <>
-                    <SectionLabel text="Signals" />
-                    <TagList values={signals} />
+                    <SectionLabel text="Reasons" />
+                    <TagList values={reasons} />
+                  </>
+                ) : null}
+
+                {localFacts.length ? (
+                  <>
+                    <SectionLabel text="Local facts" />
+                    <TagList values={localFacts} />
                   </>
                 ) : null}
               </article>
@@ -3417,7 +3443,7 @@ function EmpireChoicesSection({
                 <span className="tag neutral">{formatNumber(section.items.length)} surfaced</span>
               </div>
               <TagList
-                values={section.items.slice(0, 5).map((item) => stringValue(item.title)).filter(Boolean)}
+                values={section.items.map(formatEmpireChoiceCandidateLabel).filter(Boolean)}
                 tone="accent"
               />
             </article>
@@ -3489,35 +3515,35 @@ function CityHighlightsSection({ title, cities }: { title: string; cities: Recor
                 {projectChoices.length ? (
                   <>
                     <SectionLabel text={needsProjectChoice ? "Available project choices" : "Choose project"} />
-                    <TagList values={needsProjectChoice ? projectChoices : projectChoices.slice(0, 4)} tone="accent" />
+                    <TagList values={projectChoices} tone="accent" />
                   </>
                 ) : null}
 
                 {purchaseChoices.length ? (
                   <>
                     <SectionLabel text="Purchase" />
-                    <TagList values={purchaseChoices.slice(0, 3)} />
+                    <TagList values={purchaseChoices} />
                   </>
                 ) : null}
 
                 {tileChoices.length ? (
                   <>
                     <SectionLabel text="Buy tile" />
-                    <TagList values={tileChoices.slice(0, 3)} />
+                    <TagList values={tileChoices} />
                   </>
                 ) : null}
 
                 {focusChoices.length ? (
                   <>
                     <SectionLabel text="Focus" />
-                    <TagList values={focusChoices.slice(0, 2)} />
+                    <TagList values={focusChoices} />
                   </>
                 ) : null}
 
                 {growthChoices.length ? (
                   <>
                     <SectionLabel text="Growth mode" />
-                    <TagList values={growthChoices.slice(0, 2)} />
+                    <TagList values={growthChoices} />
                   </>
                 ) : null}
               </article>
@@ -3533,16 +3559,20 @@ function CityHighlightsSection({ title, cities }: { title: string; cities: Recor
 
 function UnitHighlightsSection({ title, units }: { title: string; units: Record<string, unknown>[] }) {
   return (
-    <Card title={title}>
+    <Card title={title} subtitle="Exact unit cards surfaced to the tactician for this turn.">
       {units.length ? (
         <div className="structured-list structured-list-grid">
           {units.map((unit, index) => {
             const progress = asRecord(unit.assignmentProgress);
-            const reasons = [...stringList(unit.reasons), ...stringList(unit.localFacts)].slice(0, 6);
-            const candidates = [
-              ...objectArray(unit.unitOptionCandidates).map((candidate) => stringValue(candidate.title)).filter(Boolean),
-              ...objectArray(unit.legalActionCandidates).map((candidate) => stringValue(candidate.title)).filter(Boolean),
-            ].slice(0, 5);
+            const reasons = stringList(unit.reasons);
+            const localFacts = stringList(unit.localFacts);
+            const detailReasons = stringList(unit.detailReasons);
+            const rawUnitActions = stringList(unit.unitActions);
+            const unitOptionCandidates = objectArray(unit.unitOptionCandidates).map(formatUnitOptionCandidateLabel).filter(Boolean);
+            const legalActionCandidates = objectArray(unit.legalActionCandidates).map(formatLegalActionCandidateLabel).filter(Boolean);
+            const reachableTiles = objectArray(unit.reachableTiles)
+              .map((tile) => formatCoordinateText(numberValue(tile.x), numberValue(tile.y)))
+              .filter((label) => label !== "—");
 
             return (
               <article key={`${stringValue(unit.name)}-${numberValue(unit.id) ?? index}`} className="structured-item">
@@ -3551,6 +3581,7 @@ function UnitHighlightsSection({ title, units }: { title: string; units: Record<
                   <div className="tag-list compact">
                     <span className="tag neutral">({formatNumber(numberValue(unit.x))}, {formatNumber(numberValue(unit.y))})</span>
                     <span className="tag neutral">{stringValue(unit.role) || "unit"}</span>
+                    <span className="tag neutral">{stringValue(unit.detailLevel) || "compact"}</span>
                     <span className="tag neutral">HP {formatNumber(numberValue(unit.health))}</span>
                     <span className="tag neutral">{stringValue(unit.movementPoints) || "0/0"}</span>
                   </div>
@@ -3560,7 +3591,13 @@ function UnitHighlightsSection({ title, units }: { title: string; units: Record<
                   <MiniMetric label="Strength" value={nullableNumberText(unit.strength)} />
                   <MiniMetric label="Ranged" value={nullableNumberText(unit.rangedStrength)} />
                   <MiniMetric label="Range" value={nullableNumberText(unit.range)} />
-                  <MiniMetric label="Nearby hostiles" value={formatNumber(numberValue(unit.nearbyHostileUnits))} />
+                  <MiniMetric label="Has move" value={booleanText(unit.hasMovement)} />
+                </div>
+
+                <div className="mini-metric-grid">
+                  <MiniMetric label="Nearby hostile units" value={formatNumber(numberValue(unit.nearbyHostileUnits))} />
+                  <MiniMetric label="Nearby hostile cities" value={formatNumber(numberValue(unit.nearbyHostileCities))} />
+                  <MiniMetric label="Reachable tiles" value={formatNumber(reachableTiles.length)} />
                 </div>
 
                 {progress ? (
@@ -3573,17 +3610,52 @@ function UnitHighlightsSection({ title, units }: { title: string; units: Record<
 
                 {progress ? <p className="card-paragraph">{stringValue(progress.progressNote)}</p> : null}
 
+                {detailReasons.length ? (
+                  <>
+                    <SectionLabel text="Detail reasons" />
+                    <TagList values={detailReasons} />
+                  </>
+                ) : null}
+
                 {reasons.length ? (
                   <>
-                    <SectionLabel text="Why it matters" />
+                    <SectionLabel text="Reasons" />
                     <TagList values={reasons} />
                   </>
                 ) : null}
 
-                {candidates.length ? (
+                {localFacts.length ? (
                   <>
-                    <SectionLabel text="Best surfaced options" />
-                    <TagList values={candidates} tone="accent" />
+                    <SectionLabel text="Local facts" />
+                    <TagList values={localFacts} />
+                  </>
+                ) : null}
+
+                {rawUnitActions.length ? (
+                  <>
+                    <SectionLabel text="Raw unit actions" />
+                    <TagList values={rawUnitActions} />
+                  </>
+                ) : null}
+
+                {unitOptionCandidates.length ? (
+                  <>
+                    <SectionLabel text="Surfaced unit options" />
+                    <TagList values={unitOptionCandidates} tone="accent" />
+                  </>
+                ) : null}
+
+                {legalActionCandidates.length ? (
+                  <>
+                    <SectionLabel text="Legal action candidates" />
+                    <TagList values={legalActionCandidates} tone="accent" />
+                  </>
+                ) : null}
+
+                {reachableTiles.length ? (
+                  <>
+                    <SectionLabel text="Reachable tiles for raw unit_move" />
+                    <TagList values={reachableTiles} />
                   </>
                 ) : null}
               </article>
@@ -4209,10 +4281,19 @@ function formatCityActionCandidateLabel(candidate: Record<string, unknown>): str
   const title = stringValue(candidate.title) || stringValue(candidate.candidateId) || "Unnamed action";
   const estimatedTurns = numberValue(candidate.estimatedTurns);
   const goldCost = numberValue(candidate.goldCost);
+  const effectTiming = stringValue(candidate.effectTiming);
+  const switchCost = stringValue(candidate.switchCost);
+  const detail = stringValue(candidate.detail);
+  const tileSummary = stringValue(candidate.tileSummary);
+  const yieldHints = stringList(candidate.yieldHints);
   const parts = [title];
   if (estimatedTurns !== null) parts.push(`${formatNumber(estimatedTurns)}t`);
   if (goldCost !== null) parts.push(`${formatNumber(goldCost)}g`);
-  return parts.join(" · ");
+  if (effectTiming) parts.push(effectTiming);
+  if (switchCost) parts.push(`switch ${switchCost}`);
+  if (yieldHints.length) parts.push(yieldHints.join("/"));
+  const suffix = [detail, tileSummary].filter(Boolean).join(" ");
+  return suffix ? `${parts.join(" · ")} — ${suffix}` : parts.join(" · ");
 }
 
 function formatStrategistProjectOption(option: Record<string, unknown>): string {
@@ -4223,8 +4304,35 @@ function formatStrategistProjectOption(option: Record<string, unknown>): string 
   const parts = [title];
   if (estimatedTurns !== null) parts.push(`${formatNumber(estimatedTurns)}t`);
   if (goldCost !== null) parts.push(`${formatNumber(goldCost)}g`);
-  if (yieldHints.length) parts.push(yieldHints.slice(0, 2).join("/"));
+  if (yieldHints.length) parts.push(yieldHints.join("/"));
   return parts.join(" · ");
+}
+
+function formatEmpireChoiceCandidateLabel(candidate: Record<string, unknown>): string {
+  const title = stringValue(candidate.title) || stringValue(candidate.candidateId) || "Unnamed empire choice";
+  const category = stringValue(candidate.category);
+  const detail = stringValue(candidate.detail);
+  const prefix = category ? `${title} · ${category}` : title;
+  return detail ? `${prefix} — ${detail}` : prefix;
+}
+
+function formatLegalActionCandidateLabel(candidate: Record<string, unknown>): string {
+  const title = stringValue(candidate.title) || stringValue(candidate.actionType) || "Unnamed legal action";
+  const rationale = stringValue(candidate.rationale);
+  const moveDestination = formatCoordinateText(numberValue(candidate.moveDestinationX), numberValue(candidate.moveDestinationY));
+  const target = formatCoordinateText(numberValue(candidate.targetX), numberValue(candidate.targetY));
+  const parts = [title];
+  if (moveDestination !== "—") parts.push(`move ${moveDestination}`);
+  if (target !== "—") parts.push(`target ${target}`);
+  return rationale ? `${parts.join(" · ")} — ${rationale}` : parts.join(" · ");
+}
+
+function formatUnitOptionCandidateLabel(candidate: Record<string, unknown>): string {
+  const title = stringValue(candidate.title) || stringValue(candidate.candidateId) || "Unnamed unit option";
+  const category = stringValue(candidate.category);
+  const detail = stringValue(candidate.detail);
+  const prefix = category ? `${title} · ${category}` : title;
+  return detail ? `${prefix} — ${detail}` : prefix;
 }
 
 function booleanText(value: unknown): string {

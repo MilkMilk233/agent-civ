@@ -25,6 +25,10 @@ object AgentTurnAutomation {
         }
 
         AgentCityProjectPolicy.enforceSingleProject(civInfo)
+        val startTurnExploringUnitIds = civInfo.units.getCivUnits()
+            .filter { it.isExploring() }
+            .mapTo(linkedSetOf()) { it.id }
+        val touchedUnitIds = linkedSetOf<Int>()
         val seedMemory = civInfo.agentMemory.clone()
         val initialObservation = AgentObservationBuilder.build(civInfo, seedMemory)
         val initialEmpireObservation = AgentEmpireObservationBuilder.build(civInfo, seedMemory).observation
@@ -453,6 +457,8 @@ object AgentTurnAutomation {
         }
 
         if (validation.status == AgentActionExecutor.ValidationStatus.NoOp) {
+            touchedUnitIds += touchedUnitIds(selectedPlan)
+            advanceDeferredAutoExploreUnits(civInfo, startTurnExploringUnitIds, touchedUnitIds)
             val updatedMemory = AgentMemoryManager.updateAfterTurn(
                 civInfo = civInfo,
                 observation = observation,
@@ -499,6 +505,7 @@ object AgentTurnAutomation {
             selectedPlan,
             ExecutionOptions(stopAfterCityCreation = maxPlanningPassesPerTurn > 1),
         )
+        touchedUnitIds += touchedUnitIds(selectedPlan)
         if (firstPassReport.rejectedActions > 0 && !canIgnoreSoftRejections(civInfo, selectedPlan, firstPassReport.outcomes)) {
             val updatedMemory = AgentMemoryManager.updateAfterTurn(
                 civInfo = civInfo,
@@ -712,6 +719,7 @@ object AgentTurnAutomation {
                 finalReport = firstPassReport
             } else {
                 val secondPassReport = executor.execute(civInfo, selectedPlan)
+                touchedUnitIds += touchedUnitIds(selectedPlan)
                 if (secondPassReport.rejectedActions > 0 && !canIgnoreSoftRejections(civInfo, selectedPlan, secondPassReport.outcomes)) {
                     val combinedFailureReport = combineReports(firstPassReport, secondPassReport)
                     val updatedMemory = AgentMemoryManager.updateAfterTurn(
@@ -752,6 +760,7 @@ object AgentTurnAutomation {
             }
         }
 
+        advanceDeferredAutoExploreUnits(civInfo, startTurnExploringUnitIds, touchedUnitIds)
         val updatedMemory = AgentMemoryManager.updateAfterTurn(
             civInfo = civInfo,
             observation = observation,
@@ -784,6 +793,58 @@ object AgentTurnAutomation {
                 outcomes = finalReport.outcomes,
             ),
         )
+    }
+
+    private fun advanceDeferredAutoExploreUnits(
+        civInfo: Civilization,
+        startTurnExploringUnitIds: Set<Int>,
+        touchedUnitIds: Set<Int>,
+    ) {
+        val exploringUnits = civInfo.units.getCivUnits()
+            .filter { it.id in startTurnExploringUnitIds && it.id !in touchedUnitIds && it.isExploring() && it.hasMovement() }
+            .toList()
+        if (exploringUnits.isEmpty()) return
+
+        var movedUnits = 0
+        for (unit in exploringUnits) {
+            val beforeX = unit.getTile().position.x
+            val beforeY = unit.getTile().position.y
+            val beforeAction = unit.action
+            unit.doAction()
+            if (unit.isDestroyed) continue
+            val afterTile = unit.getTile().position
+            if (afterTile.x != beforeX || afterTile.y != beforeY || beforeAction != unit.action) {
+                movedUnits += 1
+            }
+        }
+
+        AgentObservability.record(
+            type = "auto_explore_tick",
+            message = "Advanced untouched auto-explore units after planning",
+            civName = civInfo.civName,
+            turn = civInfo.gameInfo.turns,
+            details = mapOf(
+                "candidateUnits" to exploringUnits.size.toString(),
+                "stateChangedUnits" to movedUnits.toString(),
+            ),
+        )
+    }
+
+    private fun touchedUnitIds(plan: AgentActionPlan): Set<Int> {
+        val touched = linkedSetOf<Int>()
+        for (action in plan.actions) {
+            when (action) {
+                is AgentActionCommand.SelectUnitOption -> {
+                    val parts = action.candidateId.split(':', limit = 3)
+                    val unitId = parts.getOrNull(1)?.toIntOrNull()
+                    if (unitId != null) touched += unitId
+                }
+                is AgentActionCommand.UnitMove -> touched += action.unitId
+                is AgentActionCommand.UnitAction -> touched += action.unitId
+                else -> Unit
+            }
+        }
+        return touched
     }
 
     private fun trySalvageSoftValidationFailure(
