@@ -695,23 +695,7 @@ object AgentStrategicGovernor {
         campaignContext: AgentPlannerCampaignContextObservation?,
     ): UnitSurfacingResult {
         val warLikeContext = isPressureContext(observation, campaignContext)
-        val maxUnits = when {
-            observation.empireSummary.isAtWar -> 10
-            warLikeContext -> 8
-            observation.turn >= 150 -> 5
-            else -> 4
-        }
-        val workerCap = when {
-            warLikeContext -> 1
-            primaryThreat?.threatLevel == "critical" -> 1
-            gameContext.contactComplete && observation.turn >= 120 -> 1
-            observation.turn >= 80 -> 2
-            else -> 3
-        }
-
         val candidateUnits = observation.units
-            .filter { it.detailLevel == "expanded" }
-            .ifEmpty { observation.units }
         val objective = campaignContext?.objectiveTarget
         if (warLikeContext && objective != null) {
             return selectObjectiveTheaterUnits(
@@ -721,21 +705,11 @@ object AgentStrategicGovernor {
                 primaryThreat = primaryThreat,
                 campaignContext = campaignContext,
                 objective = objective,
-                workerCap = workerCap,
             )
         }
 
         val ranked = candidateUnits.sortedByDescending { unitScore(it, observation, gameContext, primaryThreat, campaignContext) }
-        val selected = arrayListOf<AgentUnitObservation>()
-        var workerCount = 0
-        for (unit in ranked) {
-            if (selected.size >= maxUnits) break
-            if (unit.role == "worker" && workerCount >= workerCap) continue
-            selected += unit
-            if (unit.role == "worker") workerCount += 1
-        }
-        val fallback = if (selected.isEmpty()) ranked.take(maxUnits) else selected
-        return UnitSurfacingResult(units = fallback)
+        return UnitSurfacingResult(units = ranked)
     }
 
     private fun selectObjectiveTheaterUnits(
@@ -745,30 +719,13 @@ object AgentStrategicGovernor {
         primaryThreat: AgentVictoryThreatObservation?,
         campaignContext: AgentPlannerCampaignContextObservation,
         objective: AgentStrategistTargetReference,
-        workerCap: Int,
     ): UnitSurfacingResult {
         val ranked = candidateUnits.sortedByDescending { unitScore(it, observation, gameContext, primaryThreat, campaignContext) }
         val theaterUnits = ranked.filter { isObjectiveTheaterUnit(it, objective, observation.empireSummary.isAtWar) }
-        val selected = arrayListOf<AgentUnitObservation>()
-        var workerCount = 0
-
-        theaterUnits.forEach { unit ->
-            if (unit.role == "worker" && workerCount >= workerCap) return@forEach
-            selected += unit
-            if (unit.role == "worker") workerCount += 1
-        }
-
-        val remaining = ranked.filter { rankedUnit -> selected.none { it.id == rankedUnit.id } }
-        val reserveUnits = arrayListOf<AgentUnitObservation>()
-        var reserveWorkerCount = workerCount
-        for (unit in remaining) {
-            if (!shouldSurfaceAsReserve(unit)) continue
-            if (reserveUnits.size >= 4) break
-            if (unit.role == "worker" && reserveWorkerCount >= workerCap) continue
-            reserveUnits += unit
-            if (unit.role == "worker") reserveWorkerCount += 1
-        }
-        selected += reserveUnits
+        val remaining = ranked.filter { rankedUnit -> theaterUnits.none { it.id == rankedUnit.id } }
+        val reserveUnits = remaining.filter { shouldSurfaceAsReserve(it) }
+        val backgroundUnits = remaining.filterNot { unit -> reserveUnits.any { it.id == unit.id } }
+        val selected = (theaterUnits + reserveUnits + backgroundUnits).distinctBy { it.id }
 
         val theaterCombatUnits = theaterUnits.filter { isCombatRole(it.role) }
         val reserveCombatUnits = remaining.filter { shouldSurfaceAsReserve(it) && isCombatRole(it.role) }
@@ -791,24 +748,13 @@ object AgentStrategicGovernor {
             reserveCombatUnits = reserveCombatUnits.size,
             reserveMeleeUnits = reserveCombatUnits.count { isMeleeRole(it.role) },
             reserveRangedUnits = reserveCombatUnits.count { isRangedRole(it.role) },
-            hiddenRearUnits = (observation.units.size - selected.size).coerceAtLeast(0),
+            hiddenRearUnits = 0,
             supportCities = supportCities,
         )
-
-        val suppressedNotes = buildList {
-            val hiddenRearUnits = (observation.units.size - selected.size).coerceAtLeast(0)
-            if (hiddenRearUnits > 0) {
-                add("$hiddenRearUnits rear or off-axis units were summarized so the decisive objective theater could stay fully visible.")
-            }
-            if (reserveCombatUnits.isNotEmpty()) {
-                add("${reserveCombatUnits.size} off-axis combat units remain in reserve behind the current objective.")
-            }
-        }
 
         return UnitSurfacingResult(
             units = selected.distinctBy { it.id },
             objectiveTheater = objectiveTheater,
-            suppressedNotes = suppressedNotes,
         )
     }
 
