@@ -1538,9 +1538,6 @@ function TurnDetail({
         <details className="section-disclosure">
           <summary>Open literal prompt and JSON artifacts</summary>
           <LiteralArtifactsSection
-            memory={turn.memory}
-            plannerBrief={turn.plannerBrief}
-            strategistBrief={turn.strategistBrief}
             tacticalAttempts={tacticalAttempts}
             strategistArtifacts={strategistArtifacts}
           />
@@ -3803,15 +3800,9 @@ function AttemptLadderSection({
 }
 
 function LiteralArtifactsSection({
-  memory,
-  plannerBrief,
-  strategistBrief,
   tacticalAttempts,
   strategistArtifacts,
 }: {
-  memory: unknown;
-  plannerBrief: unknown;
-  strategistBrief: unknown;
   tacticalAttempts: TacticalAttemptView[];
   strategistArtifacts: StrategistArtifactsView | null;
 }) {
@@ -3822,8 +3813,8 @@ function LiteralArtifactsSection({
       <Card title="Tactical prompt artifacts" subtitle="Exact payloads and prompt text from the most recent tactical request.">
         {latestAttempt ? (
           <>
-            <CodeDisclosure title="Memory JSON" content={latestAttempt.memoryJson || JSON.stringify(memory, null, 2)} />
-            <CodeDisclosure title="Planner Brief JSON" content={latestAttempt.plannerBriefJson || JSON.stringify(plannerBrief, null, 2)} />
+            {latestAttempt.memoryJson ? <CodeDisclosure title="Memory JSON" content={latestAttempt.memoryJson} /> : null}
+            {latestAttempt.plannerBriefJson ? <CodeDisclosure title="Planner Brief JSON" content={latestAttempt.plannerBriefJson} /> : null}
             {latestAttempt.retryContext ? <CodeDisclosure title="Retry Context JSON" content={latestAttempt.retryContext} /> : null}
             {latestAttempt.rawResponse ? <CodeDisclosure title="Raw Tactical Response" content={latestAttempt.rawResponse} /> : null}
             {latestAttempt.parsedPlanJson ? <CodeDisclosure title="Parsed Tactical Plan JSON" content={latestAttempt.parsedPlanJson} /> : null}
@@ -3846,7 +3837,7 @@ function LiteralArtifactsSection({
               <CodeDisclosure title="Strategist provider retry timeline" content={formatProviderRetryTimeline(strategistArtifacts.retryEvents)} />
             ) : null}
             {strategistArtifacts.requestError ? <CodeDisclosure title="Strategist final provider error" content={strategistArtifacts.requestError} /> : null}
-            <CodeDisclosure title="Strategist Brief JSON" content={strategistArtifacts.briefJson || JSON.stringify(strategistBrief, null, 2)} />
+            {strategistArtifacts.briefJson ? <CodeDisclosure title="Strategist Brief JSON" content={strategistArtifacts.briefJson} /> : null}
             {strategistArtifacts.refreshRequest ? <CodeDisclosure title="Refresh Request JSON" content={strategistArtifacts.refreshRequest} /> : null}
             {strategistArtifacts.rawResponse ? <CodeDisclosure title="Raw Strategist Response" content={strategistArtifacts.rawResponse} /> : null}
             {strategistArtifacts.parsedPlanJson ? <CodeDisclosure title="Parsed Strategist Plan JSON" content={strategistArtifacts.parsedPlanJson} /> : null}
