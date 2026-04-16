@@ -858,11 +858,9 @@ object AgentTurnAutomation {
 
     private fun assignmentExecutionPriority(role: String): Int {
         return when (role) {
-            "recover_then_rejoin" -> 0
-            "preserve_capture_unit" -> 1
-            "assault_city_ring" -> 2
-            "reinforce_assault" -> 3
-            "stage_outside_border" -> 4
+            "fallback_and_heal" -> 0
+            "attack_target_city" -> 1
+            "stage_near_target_city" -> 2
             "settle_city_site" -> 5
             "move_to_tile" -> 6
             "auto_explore" -> 7

@@ -984,9 +984,10 @@ object AgentObservationBuilder {
             candidate.candidateId.startsWith("unitworkerimprove:${unit.id}:${assignment.targetX},${assignment.targetY}:") ||
                 candidate.candidateId == "unitsettle:${unit.id}:${assignment.targetX},${assignment.targetY}" ||
                 candidateMatchesAssignment(candidate.candidateId, assignment)
-        }
+        } || (assignment.role == "fallback_and_heal" && unit.health >= 85)
         val status = when {
             assignment.role == "auto_explore" && unit.isExploring() -> "automation_active"
+            assignment.role == "fallback_and_heal" && unit.health >= 85 -> "ready_to_finish"
             onTarget && readyToFinish -> "ready_to_finish"
             onTarget -> "on_target"
             groundedStep && assignment.executionMode != "memory_only" -> "moving_to_target"
@@ -1002,19 +1003,18 @@ object AgentObservationBuilder {
                 "attack_target",
                 "heal_and_hold",
                 "hold_position",
-                "stage_outside_border",
-                "reinforce_assault",
-                "assault_city_ring",
-                "recover_then_rejoin",
-                "preserve_capture_unit",
+                "stage_near_target_city",
+                "attack_target_city",
+                "fallback_and_heal",
             ) -> "medium"
             else -> "low"
         }
         return UnitAssignmentProgressObservation(
-            role = assignment.role,
+            role = publicAssignmentRole(assignment.role),
             targetX = assignment.targetX,
             targetY = assignment.targetY,
             detail = assignment.detail,
+            assignmentSource = assignment.assignmentSource,
             assignmentCategory = assignment.assignmentCategory,
             executionMode = assignment.executionMode,
             completionPolicy = assignment.completionPolicy,
@@ -1037,6 +1037,12 @@ object AgentObservationBuilder {
                 candidateId.endsWith(":${assignment.targetX},${assignment.targetY}") -> true
             candidateId == "unitautoexplore:${assignment.unitId}" -> assignment.role == "auto_explore"
             candidateId == "unitstopautoexplore:${assignment.unitId}" -> assignment.role == "stop_auto_explore"
+            candidateId == "unitstagecity:${assignment.unitId}:${assignment.targetX},${assignment.targetY}" ->
+                assignment.role == "stage_near_target_city"
+            candidateId == "unitattackcity:${assignment.unitId}:${assignment.targetX},${assignment.targetY}" ->
+                assignment.role == "attack_target_city"
+            candidateId.startsWith("unitfallbackheal:${assignment.unitId}:") ->
+                assignment.role == "fallback_and_heal"
             candidateId.startsWith("unitheal:${assignment.unitId}:") -> assignment.role == "heal_and_hold"
             candidateId.startsWith("unithold:${assignment.unitId}:") -> assignment.role == "hold_position"
             candidateId.startsWith("unitupgrade:${assignment.unitId}:") -> assignment.role == "upgrade_self"
@@ -1056,30 +1062,21 @@ object AgentObservationBuilder {
                 "moving_to_target" -> "This unit still has a grounded way to resume auto-explore if left alone."
                 else -> "This unit used to be on auto-explore, but that automation no longer looks healthy."
             }
-            "stage_outside_border" -> when (status) {
-                "on_target" -> "This unit is already staged outside the target border and should hold that prewar slot unless a stronger tactical reason appears."
-                "moving_to_target" -> "This unit is marching toward a prewar staging slot outside the target border."
-                else -> "This unit was supposed to stage outside the target border, but the current turn no longer shows a clean matching route."
+            "stage_near_target_city" -> when (status) {
+                "on_target" -> "This unit is already staged near the target city and should hold that pre-attack slot unless you retask it."
+                "moving_to_target" -> "This unit is gathering near the target city and still has a grounded way to improve staging."
+                else -> "This unit was supposed to stage near the target city, but the current turn no longer shows a clean matching route."
             }
-            "reinforce_assault" -> when (status) {
-                "on_target" -> "This unit is already close enough to reinforce the active assault line."
-                "moving_to_target" -> "This unit is already committed to reinforcing the assault axis."
-                else -> "This unit was supposed to reinforce the assault, but the current turn no longer shows a clean matching route."
+            "attack_target_city" -> when (status) {
+                "on_target" -> "This unit is already in a useful position to keep pressuring the target city."
+                "moving_to_target" -> "This unit is committed to approaching and attacking the target city."
+                else -> "This unit was supposed to attack the target city, but the current turn no longer shows a clean matching route."
             }
-            "assault_city_ring" -> when (status) {
-                "on_target" -> "This unit is already in the active assault ring and should keep pressure on the target city."
-                "moving_to_target" -> "This unit is moving into the assault ring around the target city."
-                else -> "This unit was supposed to join the assault ring, but the current turn no longer shows a clean matching route."
-            }
-            "recover_then_rejoin" -> when (status) {
-                "on_target" -> "This unit is already on a safer recovery tile and should heal before rejoining the assault."
-                "moving_to_target" -> "This unit is falling back to a recovery tile that still keeps it near the assault axis."
-                else -> "This unit was supposed to recover near the target, but the current turn no longer shows a clean matching route."
-            }
-            "preserve_capture_unit" -> when (status) {
-                "on_target" -> "This unit is already being preserved as a healthy capture reserve near the city."
-                "moving_to_target" -> "This unit is moving into a capture-ready reserve slot near the city."
-                else -> "This unit was supposed to stay healthy and near the city as the capture reserve, but the current turn no longer shows a clean matching route."
+            "fallback_and_heal" -> when (status) {
+                "ready_to_finish" -> "This unit has recovered enough that the fallback-and-heal job can end and the tactician can assign a fresh combat role."
+                "on_target" -> "This unit is already on a safer fallback tile and should finish healing before taking a new combat job."
+                "moving_to_target" -> "This unit is disengaging toward a safer healing tile."
+                else -> "This unit was supposed to fall back and heal, but the current turn no longer shows a clean matching route."
             }
             else -> when (status) {
                 "ready_to_finish" -> "This unit is already in position to finish its carried assignment."
@@ -1089,6 +1086,8 @@ object AgentObservationBuilder {
             }
         }
     }
+
+    private fun publicAssignmentRole(role: String): String = role
 
     private fun collectCityResourceAlerts(city: City): List<String> {
         return city.getWorkableTiles()

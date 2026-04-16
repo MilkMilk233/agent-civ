@@ -20,11 +20,9 @@ object AgentMemoryManager {
         "auto_explore",
         "hold_position",
         "heal_and_hold",
-        "stage_outside_border",
-        "reinforce_assault",
-        "assault_city_ring",
-        "recover_then_rejoin",
-        "preserve_capture_unit",
+        "stage_near_target_city",
+        "attack_target_city",
+        "fallback_and_heal",
         "move_to_tile",
         "settle_city_site",
         "improve_tile",
@@ -100,9 +98,10 @@ object AgentMemoryManager {
                 latestSupplyHealth = basePrepared.tacticianTurnLog.lastOrNull()?.supplyHealth,
             ),
         )
+        val completedAssignments = ensureUnitAssignmentsCoverAllUnits(civInfo, observation, prepared, turn)
 
-        civInfo.agentMemory = prepared.clone()
-        return prepared
+        civInfo.agentMemory = completedAssignments.clone()
+        return completedAssignments
     }
 
     fun updateAfterTurn(
@@ -179,8 +178,9 @@ object AgentMemoryManager {
                     latestSupplyHealth = updated.tacticianTurnLog.lastOrNull()?.supplyHealth,
                 ),
             )
-            civInfo.agentMemory = reconciled.clone()
-            return reconciled
+            val completedAssignments = ensureUnitAssignmentsCoverAllUnits(civInfo, observation, reconciled, turn)
+            civInfo.agentMemory = completedAssignments.clone()
+            return completedAssignments
         }
 
         val newCityIntents = deriveCityIntents(observation, plan, turn)
@@ -230,8 +230,9 @@ object AgentMemoryManager {
                 latestSupplyHealth = updated.tacticianTurnLog.lastOrNull()?.supplyHealth,
             ),
         )
-        civInfo.agentMemory = reconciled.clone()
-        return reconciled
+        val completedAssignments = ensureUnitAssignmentsCoverAllUnits(civInfo, observation, reconciled, turn)
+        civInfo.agentMemory = completedAssignments.clone()
+        return completedAssignments
     }
 
     fun shouldRefreshStrategist(
@@ -598,6 +599,7 @@ object AgentMemoryManager {
                     targetX = unit.getTile().position.x,
                     targetY = unit.getTile().position.y,
                     detail = assignment.detail ?: "Auto-explore active",
+                    assignmentSource = normalizeCarriedAssignmentSource(assignment.assignmentSource),
                     assignmentCategory = defaultUnitAssignmentCategory("auto_explore"),
                     executionMode = "engine_auto",
                     completionPolicy = "until_switched",
@@ -607,6 +609,7 @@ object AgentMemoryManager {
             } else {
                 assignment.copy(
                     unitName = unit.name,
+                    assignmentSource = normalizeCarriedAssignmentSource(assignment.assignmentSource),
                     assignmentCategory = defaultUnitAssignmentCategory(assignment.role),
                     executionMode = defaultUnitAssignmentExecutionMode(assignment.role),
                     completionPolicy = defaultUnitAssignmentCompletionPolicy(assignment.role),
@@ -626,10 +629,116 @@ object AgentMemoryManager {
                 targetY = unit.getTile().position.y,
                 detail = "Auto-explore active",
                 turn = turn,
+                assignmentSource = "auto_filled",
             )
         }
 
         return ArrayList(reconciled.values)
+    }
+
+    private fun ensureUnitAssignmentsCoverAllUnits(
+        civInfo: Civilization,
+        observation: AgentObservation,
+        memory: AgentMemory,
+        turn: Int,
+    ): AgentMemory {
+        val liveUnits = civInfo.units.getCivUnits().toList().sortedBy { it.id }
+        if (liveUnits.isEmpty()) return memory
+
+        val assignmentsByUnitId = linkedMapOf<Int, UnitAssignmentMemory>()
+        for (assignment in reconcileLiveUnitAssignments(memory.unitAssignments, liveUnits, turn)) {
+            assignmentsByUnitId[assignment.unitId] = assignment
+        }
+
+        val unitOptionContext = AgentUnitOptionBuilder.build(civInfo, memory)
+        val unitById = observation.units.associateBy { it.id }
+        val candidateObservations = unitOptionContext.observationsByUnitId
+            .values
+            .flatten()
+            .associateBy { it.candidateId }
+
+        for (unit in liveUnits) {
+            if (assignmentsByUnitId.containsKey(unit.id)) continue
+            val autoAssignment = deriveAutoFilledUnitAssignment(
+                unit = unit,
+                unitObservation = unitById[unit.id],
+                candidateObservations = unitOptionContext.observationsByUnitId[unit.id].orEmpty(),
+                unitById = unitById,
+                allCandidateObservations = candidateObservations,
+                turn = turn,
+            ) ?: buildFallbackHoldAssignment(unit, turn)
+            assignmentsByUnitId[unit.id] = autoAssignment
+        }
+
+        return memory.copy(unitAssignments = ArrayList(assignmentsByUnitId.values))
+    }
+
+    private fun deriveAutoFilledUnitAssignment(
+        unit: MapUnit,
+        unitObservation: AgentUnitObservation?,
+        candidateObservations: List<UnitOptionCandidateObservation>,
+        unitById: Map<Int, AgentUnitObservation>,
+        allCandidateObservations: Map<String, UnitOptionCandidateObservation>,
+        turn: Int,
+    ): UnitAssignmentMemory? {
+        val candidateId = selectAutoFilledUnitCandidateId(unit, candidateObservations)
+            ?: return null
+        return deriveUnitOptionAssignment(candidateId, unitById, allCandidateObservations, turn)
+            ?.copy(assignmentSource = "auto_filled")
+    }
+
+    private fun selectAutoFilledUnitCandidateId(
+        unit: MapUnit,
+        candidateObservations: List<UnitOptionCandidateObservation>,
+    ): String? {
+        fun firstMatching(prefix: String): String? =
+            candidateObservations.firstOrNull { it.candidateId.startsWith(prefix) }?.candidateId
+
+        return when {
+            unit.name == "Scout" ->
+                firstMatching("unitautoexplore:${unit.id}") ?: firstMatching("unithold:${unit.id}:")
+            unit.name == "Settler" ->
+                firstMatching("unitsettle:${unit.id}:") ?: firstMatching("unithold:${unit.id}:")
+            unit.name == "Worker" ->
+                firstMatching("unitworkerimprove:${unit.id}:") ?:
+                    firstMatching("unitworkerreposition:${unit.id}:") ?:
+                    firstMatching("unithold:${unit.id}:")
+            isOperationalAutoFillCombatUnit(unit) ->
+                firstMatching("unitattackcity:${unit.id}:") ?:
+                    firstMatching("unitstagecity:${unit.id}:") ?:
+                    firstMatching("unithold:${unit.id}:")
+            else ->
+                firstMatching("unithold:${unit.id}:")
+        }
+    }
+
+    private fun buildFallbackHoldAssignment(
+        unit: MapUnit,
+        turn: Int,
+    ): UnitAssignmentMemory {
+        return buildUnitAssignmentMemory(
+            unitId = unit.id,
+            unitName = unit.name,
+            role = "hold_position",
+            targetX = unit.getTile().position.x,
+            targetY = unit.getTile().position.y,
+            detail = "Auto-filled hold assignment because no stronger unit job was available.",
+            turn = turn,
+            assignmentSource = "auto_filled",
+        )
+    }
+
+    private fun normalizeCarriedAssignmentSource(source: String): String = when (source) {
+        "auto_filled" -> "auto_filled"
+        "carried_forward" -> "carried_forward"
+        else -> "carried_forward"
+    }
+
+    private fun isOperationalAutoFillCombatUnit(unit: MapUnit): Boolean {
+        if (!unit.isMilitary()) return false
+        if (unit.baseUnit.movesLikeAirUnits || unit.baseUnit.isWaterUnit) return false
+        if (unit.name == "Scout") return false
+        return unit.baseUnit.isMelee() || unit.baseUnit.isRanged()
     }
 
     private data class CampaignControlSnapshot(
@@ -1271,6 +1380,10 @@ object AgentMemoryManager {
                 liveUnit.getTile().position.y == assignment.targetY
             if (targetReached && assignment.completionPolicy == "until_arrival") {
                 completed += "${assignment.unitName.ifBlank { "Unit #${assignment.unitId}" }} reached (${assignment.targetX}, ${assignment.targetY}), so that carry-over is complete."
+                continue
+            }
+            if (assignment.completionPolicy == "until_recovered" && liveUnit.health >= 85) {
+                completed += "${assignment.unitName.ifBlank { "Unit #${assignment.unitId}" }} is healthy again, so that fallback-and-heal carry-over is complete."
                 continue
             }
             activeUnitAssignments += assignment.copy(staleAfterTurn = turn + unitAssignmentHorizonTurns)
@@ -2046,49 +2159,31 @@ object AgentMemoryManager {
                 detail = observation?.detail ?: observation?.title ?: "Grounded worker job",
                 turn = turn,
             )
-            "unitstage" -> buildUnitAssignmentMemory(
+            "unitstagecity" -> buildUnitAssignmentMemory(
                 unitId = parsed.unitId,
                 unitName = unit?.name ?: "",
-                role = "stage_outside_border",
+                role = "stage_near_target_city",
                 targetX = parsed.targetX,
                 targetY = parsed.targetY,
                 detail = observation?.detail ?: "Prewar staging assignment",
                 turn = turn,
             )
-            "unitreinforce" -> buildUnitAssignmentMemory(
+            "unitattackcity" -> buildUnitAssignmentMemory(
                 unitId = parsed.unitId,
                 unitName = unit?.name ?: "",
-                role = "reinforce_assault",
+                role = "attack_target_city",
                 targetX = parsed.targetX,
                 targetY = parsed.targetY,
-                detail = observation?.detail ?: "Frontline reinforcement assignment",
+                detail = observation?.detail ?: "Target city attack assignment",
                 turn = turn,
             )
-            "unitassault" -> buildUnitAssignmentMemory(
+            "unitfallbackheal" -> buildUnitAssignmentMemory(
                 unitId = parsed.unitId,
                 unitName = unit?.name ?: "",
-                role = "assault_city_ring",
+                role = "fallback_and_heal",
                 targetX = parsed.targetX,
                 targetY = parsed.targetY,
-                detail = observation?.detail ?: "City assault ring assignment",
-                turn = turn,
-            )
-            "unitrecoverrejoin" -> buildUnitAssignmentMemory(
-                unitId = parsed.unitId,
-                unitName = unit?.name ?: "",
-                role = "recover_then_rejoin",
-                targetX = parsed.targetX,
-                targetY = parsed.targetY,
-                detail = observation?.detail ?: "Recover and rejoin assignment",
-                turn = turn,
-            )
-            "unitcaptorpreserve" -> buildUnitAssignmentMemory(
-                unitId = parsed.unitId,
-                unitName = unit?.name ?: "",
-                role = "preserve_capture_unit",
-                targetX = parsed.targetX,
-                targetY = parsed.targetY,
-                detail = observation?.detail ?: "Capture reserve assignment",
+                detail = observation?.detail ?: "Fallback and heal assignment",
                 turn = turn,
             )
             "unitautoexplore" -> buildUnitAssignmentMemory(
@@ -2168,6 +2263,7 @@ object AgentMemoryManager {
         targetY: Int?,
         detail: String?,
         turn: Int,
+        assignmentSource: String = "explicit",
     ): UnitAssignmentMemory {
         return UnitAssignmentMemory(
             unitId = unitId,
@@ -2176,6 +2272,7 @@ object AgentMemoryManager {
             targetX = targetX,
             targetY = targetY,
             detail = detail,
+            assignmentSource = assignmentSource,
             assignmentCategory = defaultUnitAssignmentCategory(role),
             executionMode = defaultUnitAssignmentExecutionMode(role),
             completionPolicy = defaultUnitAssignmentCompletionPolicy(role),
@@ -2189,6 +2286,7 @@ object AgentMemoryManager {
         "settle_city_site",
         "improve_tile",
         "attack_target",
+        "fallback_and_heal",
         -> "finite"
         "stop_auto_explore",
         "upgrade_self",
@@ -2202,11 +2300,9 @@ object AgentMemoryManager {
         "auto_explore" -> "engine_auto"
         "move_to_tile",
         "settle_city_site",
-        "stage_outside_border",
-        "reinforce_assault",
-        "assault_city_ring",
-        "recover_then_rejoin",
-        "preserve_capture_unit",
+        "stage_near_target_city",
+        "attack_target_city",
+        "fallback_and_heal",
         -> "deferred_heuristic"
         else -> "memory_only"
     }
@@ -2218,14 +2314,12 @@ object AgentMemoryManager {
         "attack_target",
         -> "until_arrival"
         "auto_explore",
-        "stage_outside_border",
-        "reinforce_assault",
-        "assault_city_ring",
-        "recover_then_rejoin",
-        "preserve_capture_unit",
+        "stage_near_target_city",
+        "attack_target_city",
         "hold_position",
         "heal_and_hold",
         -> "until_switched"
+        "fallback_and_heal" -> "until_recovered"
         else -> "until_stale"
     }
 
@@ -2310,7 +2404,7 @@ object AgentMemoryManager {
                     targetY = target.second,
                 )
             }
-            "unitstage", "unitreinforce", "unitassault", "unitrecoverrejoin", "unitcaptorpreserve" -> {
+            "unitstagecity", "unitattackcity", "unitfallbackheal" -> {
                 if (parts.size != 3) return null
                 val target = parseCoords(parts[2]) ?: return null
                 ParsedUnitOption(

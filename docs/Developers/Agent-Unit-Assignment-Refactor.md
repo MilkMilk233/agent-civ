@@ -82,8 +82,8 @@ Suggested fields:
   - completes when the target tile or target condition is reached
 - `until_switched`
   - remains active until tactician explicitly replaces or clears it
-- `until_invalid`
-  - remains active until the target or context becomes invalid
+- `until_recovered`
+  - finite recovery job; completes once the unit is healthy again
 
 ## Assignment families
 
@@ -98,17 +98,14 @@ Suggested fields:
 
 ### Prewar / war operational roles
 
-- `stage_outside_border`
-  - move toward a staging ring outside the target city
-  - then hold that ring until switched
-- `reinforce_assault`
-  - march toward the target city axis as replacement depth
-- `assault_city_ring`
-  - move into the useful assault ring and keep pressure on the city
-- `recover_then_rejoin`
-  - fall back to safer tiles, heal, and rejoin the assault
-- `preserve_capture_unit`
-  - keep one healthy melee close enough to take the city later
+- `stage_near_target_city`
+  - gather near the target city and stop as close as safely possible before the attack
+- `attack_target_city`
+  - treat the city as the live objective; keep approaching and attacking until retasked
+- `fallback_and_heal`
+  - disengage from the fight, recover on a safer tile, and finish once healthy again
+- `hold_position`
+  - explicit anchor job; stay put and do not drift
 
 ### Civilian / finite job roles
 
@@ -185,25 +182,25 @@ Notes:
 - This pass should support at least:
   - `auto_explore`
   - `move_to_tile`
-  - `stage_outside_border`
-  - `reinforce_assault`
+  - `stage_near_target_city`
+  - `attack_target_city`
 - The live path now gives carried unit assignments explicit execution/completion semantics and
   auto-advances untouched supported assignments after planning.
 - Tactician touch now replaces or clears the previous carried unit assignment instead of silently
   preserving it.
 - `assignmentProgress` now recognizes ongoing assignment viability from the assignment engine, not
   only from re-surfaced matching candidates.
-- `assault_city_ring`, `recover_then_rejoin`, and `preserve_capture_unit` now participate in the same
-  deferred assignment-step framework, but their heuristics are still intentionally simple.
+- The first pass still used more detailed hidden local heuristics underneath the public combat
+  jobs, but the contract exposed to the tactician was already simplified.
 
 ### Pass 2: Military-role automation
 
 Scope:
 
-- upgrade assault-family roles into stronger ongoing heuristics
-- keep one healthy captor
-- let damaged units recover and rejoin
-- let rear replacements keep stepping toward the line
+- make the simplified combat jobs drive execution directly
+- let `attack_target_city` really mean "approach and attack"
+- let `fallback_and_heal` really mean "stop attacking and recover"
+- keep local slotting / captor preservation as hidden heuristic detail
 
 Status:
 
@@ -211,16 +208,14 @@ Status:
 
 Notes:
 
-- Assault-family roles now execute as objective-aware ongoing heuristics instead of one-turn
-  move wrappers.
-- `reinforce_assault` keeps marching toward the target city axis and can auto-transition into
-  the assault role when the unit reaches the useful range band.
-- `assault_city_ring` now looks for target-city attacks first and otherwise keeps stepping into
-  useful firing or surround tiles.
-- `recover_then_rejoin` now falls back, heals in place when appropriate, and automatically
-  returns to the reinforcement flow once the unit is healthy enough.
-- `preserve_capture_unit` now avoids low-value trades and only attacks when the capture window
-  looks safe enough.
+- The carried combat jobs are now stored and executed as:
+  - `stage_near_target_city`
+  - `attack_target_city`
+  - `fallback_and_heal`
+- `attack_target_city` no longer silently retasks itself into fallback behavior.
+- `fallback_and_heal` is now a finite recovery job that completes once the unit is healthy enough.
+- Local slotting and captor preservation still happen underneath the attack job, but they are no
+  longer the surfaced assignment vocabulary.
 - Military `assignmentProgress` no longer depends on the same operational candidate resurfacing
   next turn; assignment health is now driven by the assignment engine itself.
 
@@ -335,15 +330,14 @@ This should reduce the most obvious clustering failure:
 
 The LLM-facing assignments are still the right abstraction:
 
-- `stage_outside_border`
-- `reinforce_assault`
-- `assault_city_ring`
-- `recover_then_rejoin`
-- `preserve_capture_unit`
+- `stage_near_target_city`
+- `attack_target_city`
+- `fallback_and_heal`
+- `hold_position`
 
 These roles are understandable, durable, and easy for the stateless tactician to use.
 
-The improvement should happen underneath them, not by replacing them with lower-level commands.
+The improvement should happen underneath them, not by reintroducing lower-level unit commands.
 
 ### Add a per-target battle theater planner
 
@@ -403,8 +397,8 @@ This is much stronger than letting every unit greedily pick its own best attack 
 
 ### 4. Maintain one protected captor policy
 
-The current `preserve_capture_unit` role is a good start, but the planner should make this more
-explicit:
+The hidden `preserve_capture_unit` heuristic is a good start, but the planner should make this
+more explicit:
 
 - choose one primary captor
 - optionally designate one backup captor
@@ -578,11 +572,8 @@ The long-term unit API should revolve around one small canonical list.
 - `auto_explore`
 - `hold_position`
 - `heal_and_hold`
-- `stage_outside_border`
-- `reinforce_assault`
-- `assault_city_ring`
-- `recover_then_rejoin`
-- `preserve_capture_unit`
+- `stage_near_target_city`
+- `attack_target_city`
 
 These remain active until switched or invalidated.
 
@@ -592,6 +583,7 @@ These remain active until switched or invalidated.
 - `settle_city_site`
 - `improve_tile`
 - `attack_target`
+- `fallback_and_heal`
 
 These complete when their target condition is met.
 
@@ -886,6 +878,330 @@ If this order is followed, the resulting system should finally match the intende
 - heuristics execute them
 - assignments may be one-shot, finite, or persistent
 - any assignment may be switched when the turn demands it
+
+## Next change proposal: simplify the combat assignment surface
+
+The next combat-facing change should not expose more battlefield sub-modes.
+
+It should do the opposite:
+
+- shrink the LLM-facing combat surface to a very small assignment vocabulary
+- move the current detailed assault sub-modes behind the heuristic boundary
+- make the tactician choose the combat job while the lower layer chooses the local shape
+
+### Why simplify the combat surface
+
+The current exposed war roles are useful as implementation details, but they are too
+implementation-shaped as the public tactician API:
+
+- `stage_near_target_city`
+- `attack_target_city`
+- `fallback_and_heal`
+- `hold_position`
+
+These roles blur two different responsibilities:
+
+- what job the tactician wants the unit to do
+- how the lower heuristic chooses to realize that job on the map
+
+That boundary blur is part of the current battlefield failure pattern:
+
+- units are assigned technically reasonable roles
+- the lower heuristic then resolves those roles too loosely
+- the tactician has to think in internal heuristic sub-states instead of simple jobs
+
+The healthier model is:
+
+- tactician chooses a small, clear combat assignment
+- the lower heuristic owns reserve-vs-frontline positioning, exact tile choice, and attack timing
+
+### Proposed surfaced combat assignments
+
+Combat units should surface only these main assignment options:
+
+- `stage_near_target_city`
+  - persistent
+- `attack_target_city`
+  - persistent
+- `fallback_and_heal`
+  - finite
+- `hold_position`
+  - persistent
+
+### Proposed meaning of each surfaced combat assignment
+
+#### `stage_near_target_city`
+
+Persistent.
+
+Single-unit behavior:
+
+- march toward the chosen enemy city
+- stop as close as safely possible before overcommitting
+- prefer tiles just outside hostile territory or just outside unsafe direct pressure
+- if no better staging step exists, hold the best current staging tile instead of jittering
+
+Troop behavior:
+
+- all units with this assignment compress toward the same city approach
+- melee tends to form the closer edge of the staging package
+- ranged tends to stop slightly farther back
+- once no unit can safely improve staging, the group should look assembled on the frontier
+
+This is the clean prewar or pre-launch assignment:
+
+- gather at the doorstep
+- do not begin the true assault yet
+
+#### `attack_target_city`
+
+Persistent.
+
+Single-unit behavior:
+
+- treat the city as the live objective
+- move closer when not yet useful
+- attack the city or key defenders when possible
+- hold only when there is no productive legal attack or better approach step this turn
+
+Troop behavior:
+
+- the group converges on the same city
+- some units occupy the front
+- some units reinforce from behind
+- ranged softens targets
+- melee presses toward the city and eventually captures
+
+Important contract:
+
+- this assignment means "approach and attack"
+- it should not silently convert itself into surfaced retreat mode
+
+The lower heuristic may still choose exact movement and exact attack timing, but it should not
+change the unit's top-level job away from attacking unless the tactician explicitly retasks it.
+
+#### `fallback_and_heal`
+
+Finite.
+
+Single-unit behavior:
+
+- disengage from the current frontline
+- move to a genuinely safer recovery tile
+- heal there until a defined health threshold is reached
+- complete automatically once the unit is healthy enough
+
+Troop behavior:
+
+- wounded units rotate out of the line
+- healthier units or later arrivals fill the gap
+- recovered units become ready for a fresh tactician assignment
+
+This is not just "heal where you are standing."
+
+It is:
+
+- cancel the attack job
+- leave danger
+- recover
+- finish
+
+#### `hold_position`
+
+Persistent.
+
+Single-unit behavior:
+
+- remain anchored on the current tile or local area
+- defend rather than drift
+
+Troop behavior:
+
+- mostly static local anchoring
+- useful for guarding, blocking, or refusing to overextend
+
+This should remain a generic fallback assignment outside the core city-assault trio.
+
+### Duty split between tactician and heuristic
+
+The boundary should be explicit:
+
+The tactician chooses:
+
+- whether the unit is staging
+- whether the unit is attacking
+- whether the unit is falling back to recover
+- whether the unit should simply hold
+
+The lower heuristic chooses:
+
+- exact path
+- exact tile
+- exact attack timing
+- local surround shape
+- local reserve/frontline mix
+- whether a melee is currently best treated as captor, screen, or reinforcement depth
+
+This means the current detailed roles should become internal heuristic states, not surfaced
+planner choices.
+
+### Internal roles that should stop being LLM-facing
+
+These should remain available as hidden heuristic sub-states if they are still useful for local
+execution:
+
+- `reinforce_assault`
+- `assault_city_ring`
+- `preserve_capture_unit`
+- `recover_then_rejoin`
+- `stage_outside_border`
+
+They are still valuable internally because they encode different local movement and slotting
+logic.
+
+They are no longer ideal as public tactician concepts.
+
+### Strong contract for `attack_target_city`
+
+The most important simplification is:
+
+- `attack_target_city` should really mean "approach and attack this city"
+
+That is closer to the human mental model from Civilization's own automation behavior:
+
+- click the unit
+- point it at the enemy city
+- let it keep trying to close and attack
+
+Under this contract:
+
+- the lower heuristic may choose different local attack lanes
+- it may decide that this exact turn has no productive step
+- it may hold because pathing or attack geometry is bad
+
+But it should not silently decide:
+
+- "this unit should now become a surfaced recovery assignment"
+
+That retask should belong to the tactician through explicit `fallback_and_heal`.
+
+### Strong contract for `fallback_and_heal`
+
+`fallback_and_heal` should be understood as:
+
+- cancel the current attack assignment
+- leave the frontline
+- recover on a safer tile
+- complete once healthy
+
+That means fallback is tactician-owned, not silently heuristic-owned.
+
+This keeps the top-level contract much cleaner:
+
+- `attack_target_city` means keep attacking
+- `fallback_and_heal` means stop attacking and recover
+
+### Expected benefits
+
+This simplification should make the system healthier in several ways:
+
+- the LLM has fewer combat concepts to misuse
+- the surfaced contract is easier to explain in prompt and UI
+- the lower heuristic gets more room to manage local battlefield shape without extra LLM burden
+- traces become easier to read because the tactician's intent is simpler
+- failures become easier to diagnose because "bad attack execution" is no longer mixed with
+  "wrong internal role choice"
+
+### Migration shape
+
+The recommended migration is:
+
+1. Keep the existing internal role logic for now.
+2. Introduce the simplified surfaced assignments:
+   - `stage_near_target_city`
+   - `attack_target_city`
+   - `fallback_and_heal`
+   - `hold_position`
+3. Map each surfaced assignment into the existing internal role machinery behind the scenes.
+4. Remove the old detailed combat roles from the tactician-facing candidate surface.
+5. Only after the surface is simplified, revisit the lower heuristic behavior itself.
+
+This lets us improve the abstraction boundary first without having to rewrite the entire battle
+engine in the same pass.
+
+### Status of this simplification
+
+Pass 1 landed the public-surface translation:
+
+- replace the tactician-facing city-combat candidates with:
+  - `stage_near_target_city`
+  - `attack_target_city`
+  - `fallback_and_heal`
+  - `hold_position`
+- translate carried combat assignment labels in observation and prompt memory into the same
+  simpler vocabulary
+
+Pass 2 has now moved the stored and executed combat jobs onto the same simplified roles:
+
+- carried combat assignments are now persisted as:
+  - `stage_near_target_city`
+  - `attack_target_city`
+  - `fallback_and_heal`
+- the lower-level assignment runner now executes those simplified jobs directly instead of
+  auto-converting them through old hidden `reinforce_assault` / `assault_city_ring` /
+  `preserve_capture_unit` / `recover_then_rejoin` labels
+- `attack_target_city` no longer silently retasks itself into fallback behavior
+- `attack_target_city` no longer uses hidden HP-based second-line drift or captor-preservation
+  logic to soften frontline pressure
+- `fallback_and_heal` is now a finite recovery job that completes once the unit is healthy again
+
+This means the abstraction boundary is now much cleaner:
+
+- the tactician chooses the combat job
+- the lower layer chooses the exact approach / slot / attack / hold step inside that job
+- explicit retreat is owned by the tactician through `fallback_and_heal`, not by hidden
+  auto-retasking inside `attack_target_city`
+
+What is still left for later passes is tuning battlefield quality:
+
+- better target persistence when multiple rival cities are visible
+- stronger attack-pressure logic so units do not stall on merely "acceptable" ring tiles
+- safer recovery-tile selection under city fire
+
+### Always-assigned policy
+
+The next assignment refactor step is to make unit jobs behave more like city jobs:
+
+- every unit should end the turn with a current assignment
+- explicit tactician choices still win first
+- valid carried assignments persist second
+- any remaining jobless unit gets an explicit auto-filled assignment
+
+Current default auto-fill policy:
+
+- Scout:
+  - `auto_explore`
+  - fallback `hold_position`
+- Combat unit with surfaced war target:
+  - `attack_target_city`
+  - prewar fallback `stage_near_target_city`
+- Worker:
+  - `improve_tile` / `worker_reposition` if surfaced
+  - fallback `hold_position`
+- Settler:
+  - `settle_city_site` if surfaced
+  - fallback `hold_position`
+- Everything else:
+  - `hold_position`
+
+The important transparency rule is that every assignment now carries a source label:
+
+- `explicit`
+- `carried_forward`
+- `auto_filled`
+
+That keeps the system understandable even when the lower layer fills in missing jobs so no unit
+goes silently inert.
 
 ## Bottom line
 

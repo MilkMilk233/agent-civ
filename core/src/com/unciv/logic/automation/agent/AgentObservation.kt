@@ -138,6 +138,7 @@ data class UnitAssignmentProgressObservation(
     val targetX: Int? = null,
     val targetY: Int? = null,
     val detail: String? = null,
+    val assignmentSource: String,
     val assignmentCategory: String,
     val executionMode: String,
     val completionPolicy: String,

@@ -2752,6 +2752,7 @@ function StrategistUnitSnapshotsSection({
                   <div className="tag-list compact">
                     <span className="tag neutral">{humanizeKey(stringValue(progress.role) || "assignment")}</span>
                     <span className="tag neutral">{humanizeKey(stringValue(progress.status) || "unknown")}</span>
+                    <span className="tag neutral">{humanizeKey(stringValue(progress.assignmentSource) || "unknown")}</span>
                     <span className="tag neutral">{humanizeKey(stringValue(progress.executionMode) || "unknown")}</span>
                     <span className="tag neutral">{humanizeKey(stringValue(progress.completionPolicy) || "unknown")}</span>
                     <span className="tag neutral">Switch {humanizeKey(stringValue(progress.switchCost) || "unknown")}</span>
@@ -2762,6 +2763,7 @@ function StrategistUnitSnapshotsSection({
 
                 {progress ? (
                   <div className="mini-metric-grid">
+                    <MiniMetric label="Assignment source" value={humanizeKey(stringValue(progress.assignmentSource) || "unknown")} />
                     <MiniMetric label="Assignment target" value={assignmentTarget} />
                     <MiniMetric label="Last progress turn" value={nullableNumberText(progress.lastProgressTurn)} />
                     <MiniMetric label="Stale after" value={nullableNumberText(progress.staleAfterTurn)} />
@@ -3561,6 +3563,7 @@ function UnitHighlightsSection({ title, units }: { title: string; units: Record<
                   <div className="tag-list compact">
                     <span className="tag neutral">{humanizeKey(stringValue(progress.role) || "assignment")}</span>
                     <span className="tag neutral">{humanizeKey(stringValue(progress.status) || "unknown")}</span>
+                    <span className="tag neutral">{humanizeKey(stringValue(progress.assignmentSource) || "unknown")}</span>
                     <span className="tag neutral">{humanizeKey(stringValue(progress.executionMode) || "unknown")}</span>
                     <span className="tag neutral">{humanizeKey(stringValue(progress.completionPolicy) || "unknown")}</span>
                     <span className="tag neutral">Switch {humanizeKey(stringValue(progress.switchCost) || "unknown")}</span>
@@ -3571,6 +3574,7 @@ function UnitHighlightsSection({ title, units }: { title: string; units: Record<
 
                 {progress ? (
                   <div className="mini-metric-grid">
+                    <MiniMetric label="Assignment source" value={humanizeKey(stringValue(progress.assignmentSource) || "unknown")} />
                     <MiniMetric label="Assignment target" value={assignmentTarget} />
                     <MiniMetric label="Last progress turn" value={nullableNumberText(progress.lastProgressTurn)} />
                     <MiniMetric label="Stale after" value={nullableNumberText(progress.staleAfterTurn)} />

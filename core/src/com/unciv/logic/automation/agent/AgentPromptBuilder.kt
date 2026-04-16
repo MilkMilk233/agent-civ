@@ -95,7 +95,7 @@ object AgentPromptBuilder {
             - campaignContext is the factual rival/frontier packet for this turn. objectiveTarget is the resolved current target from that packet. If current visibility is incomplete but campaignContext still includes a last-known rival city or capital, use that to keep pressure moving in the right direction instead of resetting into broad blind scouting.
             - objectiveTheater is the surfaced battlefield around the current decisive objective. Treat it as the current operational map: those units and support cities are the ones that can materially affect the objective now, while the rest of the empire is compacted into reserves.
             - captureReadiness is the conversion read around the current objective. Use it to judge whether the current force package can actually take or hold the objective soon, especially whether healthy capture-capable melee are missing, worn down, or ready.
-            - Some surfaced unit options are ongoing operational assignments rather than single-turn tile tactics. Options such as stage outside a border, reinforce an assault, assault a city ring, recover then rejoin, or preserve a capture unit hand the unit to a multi-turn heuristic that keeps advancing that role until you switch it.
+            - Some surfaced unit options are ongoing combat assignments rather than single-turn tile tactics. Options such as stage near a target city, attack a target city, or fallback and heal hand the unit to a multi-turn heuristic that keeps advancing that role until you switch it.
             - Treat unit control as assignment-only. Your job is to choose the right surfaced unit assignment for this turn, not to micro exact unit tiles or raw engine verbs.
             - campaignControl is the companion control scaffold for the active campaign. Use it to understand how committed the empire already is, whether the battle package looks not_ready / nearly_ready / ready / overextended, whether supply looks healthy or strained, and what checkpoint should convert next.
             - Read campaignControl together with captureReadiness. If battleReadiness is low and supplyHealth is strained, do not keep growing a vanity army. If battleReadiness is ready and supplyHealth is still healthy, more passive staging becomes suspicious.
@@ -121,11 +121,12 @@ object AgentPromptBuilder {
             - Treat select_unit_option as a complete candidate-based plan for that unit this turn. Do not issue more than one select_unit_option for the same unit.
             - If a unit has assignmentProgress, prefer finishing the current assignment over chasing a new local opportunity unless there is a clearly stronger strategic reason to switch. A clear strategist frame toward war, marching, declaring, or an immediate city tempo pivot is such a stronger reason.
             - Treat assignmentProgress as a real ongoing assignment, not just a note about last turn. If you leave that unit untouched, the lower heuristic may keep advancing the assignment after planning.
+            - assignmentProgress.assignmentSource tells you whether the current unit job was assigned explicitly, carried forward from earlier turns, or auto-filled because the unit would otherwise be jobless.
             - assignmentProgress.executionMode tells you whether the assignment is pure notebook residue, a deferred heuristic that will step after planning, or a native engine automation mode. assignmentProgress.completionPolicy tells you whether it finishes on arrival, persists until switched, or lasts until invalidated.
             - If you explicitly touch a unit with a different order, treat that as replacing the old assignment rather than layering a second hidden job on top of it.
-            - Read operational military unit options literally. stage outside border means durable prewar staging near the target. reinforce assault means keep marching toward the active battlefield as the second line. assault city ring means keep stepping into useful surround or firing slots and attack when the trade is good. recover then rejoin means fall back to heal while staying on the objective axis, then push back in. preserve capture unit means keep one healthy melee close enough to take the city later instead of trading it away early.
-            - If captureReadiness says healthy capture-capable melee are thin, value preserve capture unit and reinforce assault more than another low-value chip attack or idle posture.
-            - If frontline units are damaged but the campaign still points at the same city, prefer recover then rejoin over sleeping in place on an exposed frontline tile.
+            - Read surfaced combat assignments literally. stage near target city means gather as close as safely possible before the real attack. attack target city means keep approaching and attacking that city package until you retask the unit. fallback and heal means cancel the active attack job, disengage, and recover on a safer tile.
+            - If captureReadiness says healthy capture-capable melee are thin, value keeping healthy melee on the target-city attack package more than another low-value chip attack or idle posture.
+            - If frontline units are damaged but the campaign still points at the same city, prefer fallback and heal over leaving them to sleep in place on an exposed frontline tile.
             - For workers, choose surfaced worker assignment candidates rather than inventing low-level worker commands, and do not default to Sleep, Skip, or Automate when a real worker job is available.
             - In a peaceful opener, prioritize worker tempo, capital growth, and safe expansion. Do not spend the turn only on passive unit posture when strong city or expansion choices exist.
             - In the mid and late game, do not float large gold reserves when meaningful purchases, upgrades, or other tempo gains are available.
@@ -141,7 +142,7 @@ object AgentPromptBuilder {
             - When preserve-progress instincts conflict with concrete frontline state, rival pressure, or better city tempo choices visible in the brief, trust the visible state and the strategist briefing over inertia.
             - If campaignContext shows a last-known rival target and the strategist memo or memoryContext is pressuring that rival, march combat units toward that axis even if exact sight dropped this turn.
             - When objectiveTheater is present, prefer using the surfaced objective-theater units and support cities before unrelated rear-area micro. Off-axis reserves matter mainly as reinforcements.
-            - When captureReadiness says healthy capture units are thin or missing, treat melee buys, melee builds, and preserving existing capture units as higher priority than extra ranged chip or side-target cleanup.
+            - When captureReadiness says healthy capture units are thin or missing, treat melee buys, melee builds, and keeping healthy melee on the target-city attack package as higher priority than extra ranged chip or side-target cleanup.
             - If a safe civilian capture is available with a melee unit in the objective theater, prefer capturing that unit over merely killing it with ranged damage.
             - If campaignControl holdingCosts say the empire is carrying a ready army, a ready Settler, or a stalled one-city military package, make this turn reduce that holding cost instead of preserving it.
             - Use strategistRefreshRequest only for a real strategic emergency: the strategist memo assumptions are broken by war, a critical rival surge, a collapse in the current plan, or another major shift that should trigger an immediate strategist review.
@@ -189,6 +190,8 @@ object AgentPromptBuilder {
             " -> (${assignment.targetX}, ${assignment.targetY})"
         } else ""
         val detailPart = assignment.detail?.let { " [$it]" } ?: ""
-        return "${assignment.unitName} #${assignment.unitId} (${assignment.role})$targetPart$detailPart"
+        return "${assignment.unitName} #${assignment.unitId} (${publicAssignmentRole(assignment.role)}, ${assignment.assignmentSource})$targetPart$detailPart"
     }
+
+    private fun publicAssignmentRole(role: String): String = role
 }
