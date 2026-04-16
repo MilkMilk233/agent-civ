@@ -5,6 +5,7 @@ import com.unciv.logic.automation.unit.CityLocationTileRanker
 import com.unciv.logic.battle.AttackableTile
 import com.unciv.logic.battle.Battle
 import com.unciv.logic.battle.BattleDamage
+import com.unciv.logic.battle.CityCombatant
 import com.unciv.logic.battle.MapUnitCombatant
 import com.unciv.logic.battle.TargetHelper
 import com.unciv.logic.civilization.Civilization
@@ -63,6 +64,97 @@ object AgentUnitOptionBuilder {
             candidates = candidates,
             observationsByUnitId = observationsByUnitId,
         )
+    }
+
+    internal fun isAssignmentOnTarget(
+        unit: MapUnit,
+        assignment: UnitAssignmentMemory,
+    ): Boolean {
+        val targetX = assignment.targetX
+        val targetY = assignment.targetY
+        return when (assignment.role) {
+            "auto_explore" -> unit.isExploring()
+            "stage_outside_border" -> {
+                resolveAssignmentObjective(unit, assignment)?.let { currentTileMatchesOperationalRole(unit, it, assignment.role) } == true
+            }
+            "reinforce_assault" -> {
+                resolveAssignmentObjective(unit, assignment)?.let { currentTileMatchesOperationalRole(unit, it, assignment.role) } == true
+            }
+            "assault_city_ring" -> {
+                resolveAssignmentObjective(unit, assignment)?.let { currentTileMatchesOperationalRole(unit, it, assignment.role) } == true
+            }
+            "recover_then_rejoin" -> {
+                resolveAssignmentObjective(unit, assignment)?.let { currentTileMatchesOperationalRole(unit, it, assignment.role) } == true
+            }
+            "preserve_capture_unit" -> {
+                resolveAssignmentObjective(unit, assignment)?.let { currentTileMatchesOperationalRole(unit, it, assignment.role) } == true
+            }
+            else -> targetX != null &&
+                targetY != null &&
+                unit.getTile().position.x == targetX &&
+                unit.getTile().position.y == targetY
+        }
+    }
+
+    internal fun hasGroundedAssignmentStep(
+        unit: MapUnit,
+        assignment: UnitAssignmentMemory,
+    ): Boolean {
+        val activeAssignment = refreshOperationalAssignment(unit, assignment) ?: return false
+        return when (activeAssignment.role) {
+            "auto_explore" -> unit.isExploring() || canInvokeAction(unit, UnitActionType.Explore)
+            "move_to_tile" -> findAssignmentTargetTile(unit, activeAssignment)?.let { canAdvanceToward(unit, it) } == true
+            "settle_city_site" -> {
+                val targetTile = findAssignmentTargetTile(unit, activeAssignment) ?: return false
+                if (unit.getTile() == targetTile) canInvokeAction(unit, UnitActionType.FoundCity) else canAdvanceToward(unit, targetTile)
+            }
+            "stage_outside_border" -> resolveAssignmentObjective(unit, activeAssignment)?.let { findStageOutsideBorderDestination(unit, it) != null } == true
+            "reinforce_assault" -> resolveAssignmentObjective(unit, activeAssignment)?.let { hasReinforceAssaultStep(unit, it) } == true
+            "assault_city_ring" -> resolveAssignmentObjective(unit, activeAssignment)?.let { hasAssaultCityStep(unit, it) } == true
+            "recover_then_rejoin" -> resolveAssignmentObjective(unit, activeAssignment)?.let { hasRecoverThenRejoinStep(unit, it) } == true
+            "preserve_capture_unit" -> resolveAssignmentObjective(unit, activeAssignment)?.let { hasPreserveCaptureStep(unit, it) } == true
+            else -> false
+        }
+    }
+
+    internal fun executeDeferredAssignmentStep(
+        unit: MapUnit,
+        assignment: UnitAssignmentMemory,
+        reservationTracker: TheaterReservationTracker? = null,
+    ): Boolean {
+        if (!unit.hasMovement()) return false
+        val activeAssignment = refreshOperationalAssignment(unit, assignment) ?: return false
+        return when (activeAssignment.role) {
+            "auto_explore" -> advanceAutoExploreAssignment(unit)
+            "move_to_tile" -> {
+                val targetTile = findAssignmentTargetTile(unit, activeAssignment) ?: return false
+                moveTowardTile(unit, targetTile)
+            }
+            "settle_city_site" -> {
+                val targetTile = findAssignmentTargetTile(unit, activeAssignment) ?: return false
+                if (unit.getTile() == targetTile) {
+                    UnitActions.invokeUnitAction(unit, UnitActionType.FoundCity)
+                } else {
+                    moveTowardTile(unit, targetTile)
+                }
+            }
+            "stage_outside_border" -> resolveAssignmentObjective(unit, activeAssignment)?.let { objective ->
+                findStageOutsideBorderDestination(unit, objective, reservationTracker)?.let { moveTowardTile(unit, it) }
+            } ?: false
+            "reinforce_assault" -> resolveAssignmentObjective(unit, activeAssignment)?.let { objective ->
+                executeReinforceAssaultStep(unit, objective, reservationTracker)
+            } ?: false
+            "assault_city_ring" -> resolveAssignmentObjective(unit, activeAssignment)?.let { objective ->
+                executeAssaultCityStep(unit, objective, preserveCaptor = false, reservationTracker = reservationTracker)
+            } ?: false
+            "recover_then_rejoin" -> resolveAssignmentObjective(unit, activeAssignment)?.let { objective ->
+                executeRecoverThenRejoinStep(unit, objective, reservationTracker)
+            } ?: false
+            "preserve_capture_unit" -> resolveAssignmentObjective(unit, activeAssignment)?.let { objective ->
+                executePreserveCaptureStep(unit, objective, reservationTracker)
+            } ?: false
+            else -> false
+        }
     }
 
     private fun buildAttackCandidates(
@@ -175,8 +267,8 @@ object AgentUnitOptionBuilder {
             observation = UnitOptionCandidateObservation(
                 candidateId = candidateId,
                 category = "operation",
-                title = "${unit.name} #${unit.id} stage outside $objectiveLabel",
-                detail = "Move toward a safe staging tile outside $objectiveLabel so the army can wait near the border before war.",
+                title = "${unit.name} #${unit.id} assign: stage outside $objectiveLabel",
+                detail = "Set an ongoing prewar staging assignment outside $objectiveLabel. If left alone, this unit will keep moving toward a safe border-ring slot until switched or war changes the mode.",
             ),
             validate = { currentCiv ->
                 val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id }
@@ -190,12 +282,9 @@ object AgentUnitOptionBuilder {
             },
             execute = { currentCiv ->
                 val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id } ?: return@AgentUnitRuntimeCandidate false
-                val destination = findStageOutsideBorderDestination(liveUnit, objective) ?: return@AgentUnitRuntimeCandidate false
-                val beforePosition = liveUnit.getTile().position
-                liveUnit.movement.headTowards(destination)
-                liveUnit.getTile().position != beforePosition
+                executeOperationalAssignmentStep(liveUnit, buildOperationalAssignment("stage_outside_border", objective, unit), allowAutoTransitions = true)
             },
-            successMessage = "${unit.name} moved toward a prewar staging tile",
+            successMessage = "${unit.name} assigned to prewar staging outside $objectiveLabel",
         )
     }
 
@@ -209,8 +298,8 @@ object AgentUnitOptionBuilder {
             observation = UnitOptionCandidateObservation(
                 candidateId = candidateId,
                 category = "operation",
-                title = "${unit.name} #${unit.id} reinforce $objectiveLabel assault",
-                detail = "March toward $objectiveLabel to join the assault line and be ready to replace losses at the front.",
+                title = "${unit.name} #${unit.id} assign: reinforce $objectiveLabel assault",
+                detail = "Set an ongoing reinforcement assignment toward $objectiveLabel. If left alone, this unit will keep marching to the assault axis and fill the line when it can.",
             ),
             validate = { currentCiv ->
                 val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id }
@@ -224,12 +313,9 @@ object AgentUnitOptionBuilder {
             },
             execute = { currentCiv ->
                 val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id } ?: return@AgentUnitRuntimeCandidate false
-                val destination = findReinforceAssaultDestination(liveUnit, objective) ?: return@AgentUnitRuntimeCandidate false
-                val beforePosition = liveUnit.getTile().position
-                liveUnit.movement.headTowards(destination)
-                liveUnit.getTile().position != beforePosition
+                executeOperationalAssignmentStep(liveUnit, buildOperationalAssignment("reinforce_assault", objective, unit), allowAutoTransitions = true)
             },
-            successMessage = "${unit.name} moved to reinforce the assault axis",
+            successMessage = "${unit.name} assigned to reinforce the $objectiveLabel assault",
         )
     }
 
@@ -243,8 +329,8 @@ object AgentUnitOptionBuilder {
             observation = UnitOptionCandidateObservation(
                 candidateId = candidateId,
                 category = "operation",
-                title = "${unit.name} #${unit.id} assault $objectiveLabel ring",
-                detail = "Move into the active assault ring around $objectiveLabel so this unit can help surround or fire on the city.",
+                title = "${unit.name} #${unit.id} assign: assault $objectiveLabel",
+                detail = "Set an ongoing city-assault assignment on $objectiveLabel. If left alone, this unit will keep stepping into useful ring tiles and attack when the heuristic finds a good trade.",
             ),
             validate = { currentCiv ->
                 val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id }
@@ -258,12 +344,9 @@ object AgentUnitOptionBuilder {
             },
             execute = { currentCiv ->
                 val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id } ?: return@AgentUnitRuntimeCandidate false
-                val destination = findAssaultCityRingDestination(liveUnit, objective) ?: return@AgentUnitRuntimeCandidate false
-                val beforePosition = liveUnit.getTile().position
-                liveUnit.movement.headTowards(destination)
-                liveUnit.getTile().position != beforePosition
+                executeOperationalAssignmentStep(liveUnit, buildOperationalAssignment("assault_city_ring", objective, unit), allowAutoTransitions = true)
             },
-            successMessage = "${unit.name} moved into the assault ring",
+            successMessage = "${unit.name} assigned to assault $objectiveLabel",
         )
     }
 
@@ -277,8 +360,8 @@ object AgentUnitOptionBuilder {
             observation = UnitOptionCandidateObservation(
                 candidateId = candidateId,
                 category = "operation",
-                title = "${unit.name} #${unit.id} recover then rejoin $objectiveLabel",
-                detail = "Pull back to a safer tile near $objectiveLabel, heal, and stay close enough to rejoin the assault once healthy.",
+                title = "${unit.name} #${unit.id} assign: recover then rejoin $objectiveLabel",
+                detail = "Set an ongoing recovery assignment near $objectiveLabel. If left alone, this unit will fall back, heal, and return toward the assault once healthy enough.",
             ),
             validate = { currentCiv ->
                 val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id }
@@ -292,12 +375,9 @@ object AgentUnitOptionBuilder {
             },
             execute = { currentCiv ->
                 val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id } ?: return@AgentUnitRuntimeCandidate false
-                val destination = findRecoverThenRejoinDestination(liveUnit, objective) ?: return@AgentUnitRuntimeCandidate false
-                val beforePosition = liveUnit.getTile().position
-                liveUnit.movement.headTowards(destination)
-                liveUnit.getTile().position != beforePosition
+                executeOperationalAssignmentStep(liveUnit, buildOperationalAssignment("recover_then_rejoin", objective, unit), allowAutoTransitions = true)
             },
-            successMessage = "${unit.name} fell back to recover near the assault axis",
+            successMessage = "${unit.name} assigned to recover then rejoin near $objectiveLabel",
         )
     }
 
@@ -311,8 +391,8 @@ object AgentUnitOptionBuilder {
             observation = UnitOptionCandidateObservation(
                 candidateId = candidateId,
                 category = "operation",
-                title = "${unit.name} #${unit.id} preserve as $objectiveLabel captor",
-                detail = "Keep this melee unit healthy and close enough to capture $objectiveLabel once the assault opens a safe city-take window.",
+                title = "${unit.name} #${unit.id} assign: preserve as $objectiveLabel captor",
+                detail = "Set an ongoing captor-preserve assignment near $objectiveLabel. If left alone, this unit will stay healthy and close enough to take the city when the heuristic sees a safe capture window.",
             ),
             validate = { currentCiv ->
                 val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id }
@@ -326,12 +406,9 @@ object AgentUnitOptionBuilder {
             },
             execute = { currentCiv ->
                 val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id } ?: return@AgentUnitRuntimeCandidate false
-                val destination = findPreserveCaptureDestination(liveUnit, objective) ?: return@AgentUnitRuntimeCandidate false
-                val beforePosition = liveUnit.getTile().position
-                liveUnit.movement.headTowards(destination)
-                liveUnit.getTile().position != beforePosition
+                executeOperationalAssignmentStep(liveUnit, buildOperationalAssignment("preserve_capture_unit", objective, unit), allowAutoTransitions = true)
             },
-            successMessage = "${unit.name} moved into a capture-ready reserve slot",
+            successMessage = "${unit.name} assigned as the preserved captor for $objectiveLabel",
         )
     }
 
@@ -587,184 +664,714 @@ object AgentUnitOptionBuilder {
     private fun findStageOutsideBorderDestination(
         unit: MapUnit,
         objective: ResolvedObjective,
+        reservationTracker: TheaterReservationTracker? = null,
     ): Tile? {
-        val objectiveTile = unit.civ.gameInfo.tileMap[HexCoord(objective.x, objective.y)]
-        val objectiveOwner = objectiveTile.getOwner()
-        return unit.movement.getDistanceToTiles().keys
-            .asSequence()
-            .filter { tile -> tile != unit.getTile() }
-            .filter { tile -> unit.getDamageFromTerrain(tile) <= 0 }
-            .filter { tile -> unit.civ.threatManager.getDistanceToClosestEnemyUnit(tile, 3) > 2 }
-            .filter { tile -> !tile.isCityCenter() }
-            .filter { tile ->
-                objectiveOwner == null || tile.getOwner() != objectiveOwner
-            }
-            .filter { tile ->
-                val distance = axialDistance(tile.position.x, tile.position.y, objective.x, objective.y)
-                distance in 2..4
-            }
-            .maxByOrNull { tile ->
-                var score = 0
-                val distance = axialDistance(tile.position.x, tile.position.y, objective.x, objective.y)
-                score += when (distance) {
-                    2 -> 90
-                    3 -> 75
-                    4 -> 55
-                    else -> 0
-                }
-                if (tile.getOwner() == unit.civ) score += 20
-                if (tile.getOwner() == null) score += 10
-                score += tile.tileHeight * 3
-                score -= unit.getTile().aerialDistanceTo(tile)
-                score
-            }
+        return selectTheaterDestination(
+            unit,
+            objective,
+            preferredKinds = setOf(BattleTheaterSlotKind.Staging),
+            reservationTracker = reservationTracker,
+        )
     }
 
     private fun findReinforceAssaultDestination(
         unit: MapUnit,
         objective: ResolvedObjective,
+        reservationTracker: TheaterReservationTracker? = null,
     ): Tile? {
-        val currentDistance = axialDistance(unit.getTile().position.x, unit.getTile().position.y, objective.x, objective.y)
-        val desiredRange = if (unit.baseUnit.isRanged()) 2..3 else 1..2
-        if (currentDistance in desiredRange) return null
-        return unit.movement.getDistanceToTiles().keys
-            .asSequence()
-            .filter { tile -> tile != unit.getTile() }
-            .filter { tile -> unit.getDamageFromTerrain(tile) <= 0 }
-            .filter { tile -> unit.civ.threatManager.getDistanceToClosestEnemyUnit(tile, 3) > 1 || currentDistance <= 4 }
-            .filter { tile -> !tile.isCityCenter() || (tile.position.x == objective.x && tile.position.y == objective.y) }
-            .maxByOrNull { tile ->
-                val distance = axialDistance(tile.position.x, tile.position.y, objective.x, objective.y)
-                var score = 100 - distance * 18
-                if (distance in desiredRange) score += 60
-                if (unit.baseUnit.isRanged() && distance == 1) score -= 60
-                if (!unit.baseUnit.isRanged() && distance == 0) score -= 120
-                if (tile.getOwner() == unit.civ) score += 8
-                if (tile.getOwner() == null) score += 4
-                score += tile.tileHeight * 2
-                score
-            }
+        return selectTheaterDestination(
+            unit,
+            objective,
+            preferredKinds = setOf(BattleTheaterSlotKind.Reserve),
+            fallbackKinds = setOf(primaryAssaultSlotKind(unit, objective)),
+            reservationTracker = reservationTracker,
+        )
     }
 
     private fun findAssaultCityRingDestination(
         unit: MapUnit,
         objective: ResolvedObjective,
+        reservationTracker: TheaterReservationTracker? = null,
     ): Tile? {
-        val objectiveTile = unit.civ.gameInfo.tileMap[HexCoord(objective.x, objective.y)]
-        val targetCity = objectiveTile.getCity()
-        val currentDistance = axialDistance(unit.getTile().position.x, unit.getTile().position.y, objective.x, objective.y)
-        val preferSecondRingForMelee = targetCity != null &&
-            (unit.health < 85 || targetCity.health > targetCity.getMaxHealth() / 2)
-        val desiredRange = when {
-            unit.baseUnit.isRanged() -> 2..3
-            preferSecondRingForMelee -> 2..2
-            else -> 1..2
-        }
-        if (currentDistance in desiredRange) return null
-        val exactTiles = unit.movement.getDistanceToTiles().keys
-            .asSequence()
-            .filter { tile -> tile != unit.getTile() }
-            .filter { tile -> !tile.isCityCenter() }
-            .filter { tile -> unit.getDamageFromTerrain(tile) <= 0 }
-            .filter { tile ->
-                val distance = axialDistance(tile.position.x, tile.position.y, objective.x, objective.y)
-                distance in desiredRange
-            }
-            .toList()
-        val fallbackTiles = if (exactTiles.isEmpty()) {
-            unit.movement.getDistanceToTiles().keys
-                .asSequence()
-                .filter { tile -> tile != unit.getTile() }
-                .filter { tile -> !tile.isCityCenter() }
-                .filter { tile -> unit.getDamageFromTerrain(tile) <= 0 }
-                .filter { tile ->
-                    axialDistance(tile.position.x, tile.position.y, objective.x, objective.y) < currentDistance
-                }
-                .toList()
-        } else {
-            emptyList()
-        }
-        return (exactTiles + fallbackTiles)
-            .asSequence()
-            .maxByOrNull { tile ->
-                val distance = axialDistance(tile.position.x, tile.position.y, objective.x, objective.y)
-                var score = 100 - distance * 12
-                if (distance in desiredRange) score += 70
-                if (unit.baseUnit.isRanged() && distance == 2) score += 40
-                if (unit.baseUnit.isRanged() && distance == 1) score -= 80
-                if (unit.baseUnit.isMelee() && !preferSecondRingForMelee && distance == 1) score += 35
-                if (unit.baseUnit.isMelee() && preferSecondRingForMelee && distance == 2) score += 30
-                if (tile.getOwner() == unit.civ) score += 8
-                if (tile.getOwner() == null) score += 4
-                score += tile.tileHeight * if (unit.baseUnit.isRanged()) 3 else 1
-                score
-            }
+        return selectTheaterDestination(
+            unit,
+            objective,
+            preferredKinds = setOf(primaryAssaultSlotKind(unit, objective)),
+            fallbackKinds = setOf(BattleTheaterSlotKind.Reserve),
+            reservationTracker = reservationTracker,
+        )
     }
 
     private fun findRecoverThenRejoinDestination(
         unit: MapUnit,
         objective: ResolvedObjective,
+        reservationTracker: TheaterReservationTracker? = null,
     ): Tile? {
-        val currentDistance = axialDistance(unit.getTile().position.x, unit.getTile().position.y, objective.x, objective.y)
-        return unit.movement.getDistanceToTiles().keys
-            .asSequence()
-            .filter { tile -> tile != unit.getTile() }
-            .filter { tile -> !tile.isCityCenter() }
-            .filter { tile -> unit.getDamageFromTerrain(tile) <= 0 }
-            .filter { tile ->
-                val distance = axialDistance(tile.position.x, tile.position.y, objective.x, objective.y)
-                distance in 3..5 && distance >= currentDistance
-            }
-            .filter { tile ->
-                unit.civ.threatManager.getDistanceToClosestEnemyUnit(tile, 3) > 2 || tile.getOwner() == unit.civ
-            }
-            .maxByOrNull { tile ->
-                val distance = axialDistance(tile.position.x, tile.position.y, objective.x, objective.y)
-                var score = 100
-                score += if (distance == 3) 40 else if (distance == 4) 25 else 10
-                if (tile.getOwner() == unit.civ) score += 22
-                if (tile.getOwner() == null) score += 10
-                score += unit.civ.threatManager.getDistanceToClosestEnemyUnit(tile, 4) * 6
-                score += tile.tileHeight * 2
-                score
-            }
+        return selectTheaterDestination(
+            unit,
+            objective,
+            preferredKinds = setOf(BattleTheaterSlotKind.Recovery),
+            fallbackKinds = setOf(BattleTheaterSlotKind.Reserve),
+            reservationTracker = reservationTracker,
+        )
     }
 
     private fun findPreserveCaptureDestination(
         unit: MapUnit,
         objective: ResolvedObjective,
+        reservationTracker: TheaterReservationTracker? = null,
     ): Tile? {
         if (!unit.baseUnit.isMelee()) return null
-        val objectiveTile = unit.civ.gameInfo.tileMap[HexCoord(objective.x, objective.y)]
-        val targetCity = objectiveTile.getCity() ?: return null
-        val currentDistance = axialDistance(unit.getTile().position.x, unit.getTile().position.y, objective.x, objective.y)
-        val cityWeak = targetCity.health <= targetCity.getMaxHealth() / 3
-        val desiredRange = if (cityWeak && unit.health >= 85) 1..2 else 2..3
-        if (currentDistance in desiredRange) return null
-        return unit.movement.getDistanceToTiles().keys
+        return selectTheaterDestination(
+            unit,
+            objective,
+            preferredKinds = setOf(BattleTheaterSlotKind.Captor),
+            fallbackKinds = setOf(BattleTheaterSlotKind.MeleeAssault, BattleTheaterSlotKind.Reserve),
+            reservationTracker = reservationTracker,
+        )
+    }
+
+    private fun selectTheaterDestination(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+        preferredKinds: Set<BattleTheaterSlotKind>,
+        fallbackKinds: Set<BattleTheaterSlotKind> = emptySet(),
+        reservationTracker: TheaterReservationTracker? = null,
+    ): Tile? {
+        val allSlots = buildBattleTheaterSlots(unit, objective)
+        val candidateSlots = allSlots.filter { it.kind in preferredKinds }
+            .ifEmpty { allSlots.filter { it.kind in fallbackKinds } }
+        if (candidateSlots.isEmpty()) return null
+
+        val currentTile = unit.getTile()
+        val reachableTiles = unit.movement.getDistanceToTiles().keys
             .asSequence()
-            .filter { tile -> tile != unit.getTile() }
+            .filter { tile -> tile != currentTile }
             .filter { tile -> !tile.isCityCenter() }
             .filter { tile -> unit.getDamageFromTerrain(tile) <= 0 }
-            .filter { tile ->
-                val distance = axialDistance(tile.position.x, tile.position.y, objective.x, objective.y)
-                distance in desiredRange
+            .toList()
+        val orderedSlots = candidateSlots.sortedByDescending { slot ->
+            scoreTargetTheaterSlot(unit, objective, slot, reservationTracker)
+        }
+
+        for (slot in orderedSlots) {
+            if (slot.tile == currentTile) {
+                reservationTracker?.reserve(objective.x, objective.y, currentTile)
+                return null
             }
-            .maxByOrNull { tile ->
-                val distance = axialDistance(tile.position.x, tile.position.y, objective.x, objective.y)
-                var score = 100
-                score += when {
-                    cityWeak && distance == 1 -> 50
-                    !cityWeak && distance == 2 -> 55
-                    distance == 2 -> 40
-                    else -> 15
+            if (slot.tile in reachableTiles) {
+                reservationTracker?.reserve(objective.x, objective.y, slot.tile)
+                return slot.tile
+            }
+            val bestStep = reachableTiles
+                .maxByOrNull { step -> scoreStepTowardTheaterSlot(unit, objective, step, slot, reservationTracker) }
+                ?.takeIf { step -> scoreStepTowardTheaterSlot(unit, objective, step, slot, reservationTracker) > 0 }
+            if (bestStep != null) {
+                reservationTracker?.reserve(objective.x, objective.y, slot.tile)
+                return bestStep
+            }
+        }
+        return null
+    }
+
+    private fun buildBattleTheaterSlots(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+    ): List<BattleTheaterSlot> {
+        val objectiveTile = unit.civ.gameInfo.tileMap[HexCoord(objective.x, objective.y)]
+        return objectiveTile.getTilesInDistance(5)
+            .flatMap { tile -> buildBattleTheaterSlotsForTile(unit, objective, tile) }
+            .toList()
+    }
+
+    private fun buildBattleTheaterSlotsForTile(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+        tile: Tile,
+    ): List<BattleTheaterSlot> {
+        if (tile.position.x == objective.x && tile.position.y == objective.y) return emptyList()
+        if (tile.isCityCenter()) return emptyList()
+        if (unit.getDamageFromTerrain(tile) > 0) return emptyList()
+
+        val slots = arrayListOf<BattleTheaterSlot>()
+        val objectiveTile = unit.civ.gameInfo.tileMap[HexCoord(objective.x, objective.y)]
+        val objectiveOwner = objectiveTile.getOwner()
+        val targetCity = objectiveTile.getCity()
+        val distance = axialDistance(tile.position.x, tile.position.y, objective.x, objective.y)
+        val threatDistance = unit.civ.threatManager.getDistanceToClosestEnemyUnit(tile, 4)
+        val owner = tile.getOwner()
+        val preferSecondRingForMelee = targetCity != null &&
+            (unit.health < 85 || targetCity.health > targetCity.getMaxHealth() / 2)
+        val cityWeak = targetCity != null && targetCity.health <= targetCity.getMaxHealth() / 3
+
+        if (distance in 2..4 && (objectiveOwner == null || owner != objectiveOwner) && threatDistance > 2) {
+            var score = when (distance) {
+                2 -> 100
+                3 -> 82
+                4 -> 60
+                else -> 0
+            }
+            if (owner == unit.civ) score += 18
+            if (owner == null) score += 10
+            score += tile.tileHeight * 3
+            slots += BattleTheaterSlot(tile, BattleTheaterSlotKind.Staging, score)
+        }
+
+        val reserveCenter = if (unit.baseUnit.isRanged()) 3 else 2
+        if (distance in 2..4 && (owner == unit.civ || owner == null || threatDistance > 1)) {
+            var score = 110 - kotlin.math.abs(distance - reserveCenter) * 18
+            if (owner == unit.civ) score += 12
+            if (owner == null) score += 6
+            score += tile.tileHeight * if (unit.baseUnit.isRanged()) 2 else 1
+            slots += BattleTheaterSlot(tile, BattleTheaterSlotKind.Reserve, score)
+        }
+
+        if (distance in 3..5 && (threatDistance > 2 || owner == unit.civ)) {
+            var score = when (distance) {
+                3 -> 115
+                4 -> 96
+                5 -> 78
+                else -> 0
+            }
+            if (owner == unit.civ) score += 20
+            if (owner == null) score += 8
+            score += tile.tileHeight * 2
+            score += threatDistance * 4
+            slots += BattleTheaterSlot(tile, BattleTheaterSlotKind.Recovery, score)
+        }
+
+        if (unit.baseUnit.isRanged() && distance in 2..3) {
+            var score = if (distance == 2) 160 else 135
+            if (owner == unit.civ) score += 8
+            if (owner == null) score += 4
+            score += tile.tileHeight * 4
+            slots += BattleTheaterSlot(tile, BattleTheaterSlotKind.RangedAssault, score)
+        }
+
+        if (unit.baseUnit.isMelee()) {
+            if ((!preferSecondRingForMelee && distance in 1..2) || (preferSecondRingForMelee && distance == 2)) {
+                var score = when {
+                    !preferSecondRingForMelee && distance == 1 -> 170
+                    distance == 2 -> 145
+                    else -> 120
                 }
-                if (tile.getOwner() == unit.civ) score += 16
-                if (tile.getOwner() == null) score += 8
-                score += unit.civ.threatManager.getDistanceToClosestEnemyUnit(tile, 4) * 4
+                if (owner == unit.civ) score += 6
+                if (owner == null) score += 3
                 score += tile.tileHeight
-                score
+                slots += BattleTheaterSlot(tile, BattleTheaterSlotKind.MeleeAssault, score)
             }
+
+            val captorRange = if (cityWeak && unit.health >= 85) 1..2 else 2..3
+            if (unit.health >= 70 && distance in captorRange) {
+                var score = when {
+                    cityWeak && distance == 1 -> 175
+                    cityWeak && distance == 2 -> 150
+                    distance == 2 -> 160
+                    distance == 3 -> 132
+                    else -> 100
+                }
+                if (owner == unit.civ) score += 12
+                if (owner == null) score += 8
+                score += tile.tileHeight
+                slots += BattleTheaterSlot(tile, BattleTheaterSlotKind.Captor, score)
+            }
+        }
+
+        return slots
+    }
+
+    private fun scoreDirectTheaterSlot(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+        slot: BattleTheaterSlot,
+    ): Int {
+        var score = slot.score
+        val currentDistanceToObjective = axialDistance(unit.getTile().position.x, unit.getTile().position.y, objective.x, objective.y)
+        val slotDistanceToObjective = axialDistance(slot.tile.position.x, slot.tile.position.y, objective.x, objective.y)
+        score += (currentDistanceToObjective - slotDistanceToObjective) * 14
+        score -= unit.getTile().aerialDistanceTo(slot.tile) * 3
+        return score
+    }
+
+    private fun scoreTargetTheaterSlot(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+        slot: BattleTheaterSlot,
+        reservationTracker: TheaterReservationTracker?,
+    ): Int {
+        val currentTile = unit.getTile()
+        var score = scoreDirectTheaterSlot(unit, objective, slot)
+        val currentDistToSlot = axialDistance(currentTile.position.x, currentTile.position.y, slot.tile.position.x, slot.tile.position.y)
+        score -= currentDistToSlot * 7
+        if (reservationTracker?.isReserved(objective.x, objective.y, slot.tile) == true) score -= 220
+        return score
+    }
+
+    private fun scoreStepTowardTheaterSlot(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+        step: Tile,
+        slot: BattleTheaterSlot,
+        reservationTracker: TheaterReservationTracker?,
+    ): Int {
+        val currentTile = unit.getTile()
+        val currentDistanceToObjective = axialDistance(currentTile.position.x, currentTile.position.y, objective.x, objective.y)
+        val nextDistanceToObjective = axialDistance(step.position.x, step.position.y, objective.x, objective.y)
+        val currentDistToSlot = axialDistance(currentTile.position.x, currentTile.position.y, slot.tile.position.x, slot.tile.position.y)
+        val nextDistToSlot = axialDistance(step.position.x, step.position.y, slot.tile.position.x, slot.tile.position.y)
+        var score = slot.score
+        score += (currentDistToSlot - nextDistToSlot) * 40
+        score -= nextDistToSlot * 9
+        score -= currentTile.aerialDistanceTo(step) * 4
+        if (step.getOwner() == unit.civ) score += 8
+        if (step.getOwner() == null) score += 4
+        score += step.tileHeight * if (unit.baseUnit.isRanged()) 2 else 1
+        score += when {
+            slot.kind == BattleTheaterSlotKind.Recovery && nextDistanceToObjective >= currentDistanceToObjective -> 16
+            slot.kind != BattleTheaterSlotKind.Recovery && nextDistanceToObjective < currentDistanceToObjective -> 18
+            else -> -12
+        }
+        if (reservationTracker?.isReserved(objective.x, objective.y, slot.tile) == true) score -= 180
+        return score
+    }
+
+    private fun currentTileMatchesOperationalRole(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+        role: String,
+    ): Boolean {
+        val slotKinds = buildBattleTheaterSlotsForTile(unit, objective, unit.getTile()).map { it.kind }.toSet()
+        return when (role) {
+            "stage_outside_border" -> BattleTheaterSlotKind.Staging in slotKinds
+            "reinforce_assault" -> BattleTheaterSlotKind.Reserve in slotKinds || primaryAssaultSlotKind(unit, objective) in slotKinds
+            "assault_city_ring" -> primaryAssaultSlotKind(unit, objective) in slotKinds
+            "recover_then_rejoin" -> BattleTheaterSlotKind.Recovery in slotKinds
+            "preserve_capture_unit" -> BattleTheaterSlotKind.Captor in slotKinds
+            else -> false
+        }
+    }
+
+    private fun primaryAssaultSlotKind(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+    ): BattleTheaterSlotKind {
+        if (unit.baseUnit.isRanged()) return BattleTheaterSlotKind.RangedAssault
+        val objectiveTile = unit.civ.gameInfo.tileMap[HexCoord(objective.x, objective.y)]
+        val targetCity = objectiveTile.getCity()
+        val preferSecondRingForMelee = targetCity != null &&
+            (unit.health < 85 || targetCity.health > targetCity.getMaxHealth() / 2)
+        return if (preferSecondRingForMelee) BattleTheaterSlotKind.Reserve else BattleTheaterSlotKind.MeleeAssault
+    }
+
+    private fun buildOperationalAssignment(
+        role: String,
+        objective: ResolvedObjective,
+        sourceUnit: MapUnit,
+    ): UnitAssignmentMemory {
+        return UnitAssignmentMemory(
+            unitId = sourceUnit.id,
+            unitName = sourceUnit.name,
+            role = role,
+            targetX = objective.x,
+            targetY = objective.y,
+            detail = objective.cityName?.let { "$role around $it" } ?: role,
+            executionMode = "deferred_heuristic",
+            completionPolicy = "until_switched",
+            lastProgressTurn = sourceUnit.civ.gameInfo.turns,
+            staleAfterTurn = sourceUnit.civ.gameInfo.turns + 6,
+        )
+    }
+
+    private fun refreshOperationalAssignment(
+        unit: MapUnit,
+        assignment: UnitAssignmentMemory,
+    ): UnitAssignmentMemory? {
+        val objective = resolveAssignmentObjective(unit, assignment) ?: return null
+        val objectiveTile = unit.civ.gameInfo.tileMap[HexCoord(objective.x, objective.y)]
+        val objectiveOwner = objectiveTile.getOwner()
+        if (objectiveOwner == unit.civ) return null
+
+        val atWarWithObjective = objectiveOwner != null && unit.civ.isAtWarWith(objectiveOwner)
+        val currentDistance = axialDistance(unit.getTile().position.x, unit.getTile().position.y, objective.x, objective.y)
+
+        return when (assignment.role) {
+            "stage_outside_border" -> {
+                if (atWarWithObjective) {
+                    assignment.copy(role = "reinforce_assault", detail = "Converted from staging into reinforcement")
+                } else {
+                    assignment
+                }
+            }
+            "reinforce_assault" -> when {
+                !atWarWithObjective -> assignment.copy(role = "stage_outside_border", detail = "Converted back to prewar staging")
+                unit.health < 45 -> assignment.copy(role = "recover_then_rejoin", detail = "Fallback to recovery because the frontline unit is damaged")
+                currentDistance <= if (unit.baseUnit.isRanged()) 3 else 2 ->
+                    assignment.copy(role = "assault_city_ring", detail = "Close enough to join the assault ring")
+                else -> assignment
+            }
+            "assault_city_ring" -> when {
+                !atWarWithObjective -> assignment.copy(role = "stage_outside_border", detail = "War context ended; revert to prewar staging")
+                unit.health < 45 -> assignment.copy(role = "recover_then_rejoin", detail = "Fall back to recover before rejoining the assault")
+                unit.baseUnit.isMelee() && unit.health >= 80 && shouldPreserveHealthyCaptor(unit, objective) ->
+                    assignment.copy(role = "preserve_capture_unit", detail = "Healthy melee promoted into preserved captor role")
+                else -> assignment
+            }
+            "recover_then_rejoin" -> when {
+                !atWarWithObjective -> assignment.copy(role = "stage_outside_border", detail = "War context ended while recovering")
+                unit.health >= 85 -> assignment.copy(role = "reinforce_assault", detail = "Recovered enough to rejoin the assault")
+                else -> assignment
+            }
+            "preserve_capture_unit" -> when {
+                !atWarWithObjective -> assignment.copy(role = "stage_outside_border", detail = "War context ended; captor reserve no longer needed")
+                unit.health < 60 -> assignment.copy(role = "recover_then_rejoin", detail = "Preserved captor is too damaged and must recover")
+                else -> assignment
+            }
+            else -> assignment
+        }
+    }
+
+    private fun executeOperationalAssignmentStep(
+        unit: MapUnit,
+        assignment: UnitAssignmentMemory,
+        allowAutoTransitions: Boolean,
+        reservationTracker: TheaterReservationTracker? = null,
+    ): Boolean {
+        if (!unit.hasMovement()) return false
+        val activeAssignment = (if (allowAutoTransitions) refreshOperationalAssignment(unit, assignment) else assignment)
+            ?: return false
+        return when (activeAssignment.role) {
+            "stage_outside_border" -> resolveAssignmentObjective(unit, activeAssignment)?.let { objective ->
+                val destination = findStageOutsideBorderDestination(unit, objective, reservationTracker)
+                when {
+                    destination != null -> moveTowardTile(unit, destination)
+                    isAssignmentOnTarget(unit, activeAssignment) -> executeHoldAssignmentStep(unit)
+                    else -> false
+                }
+            } ?: false
+            "reinforce_assault" -> resolveAssignmentObjective(unit, activeAssignment)?.let { objective ->
+                executeReinforceAssaultStep(unit, objective, reservationTracker)
+            } ?: false
+            "assault_city_ring" -> resolveAssignmentObjective(unit, activeAssignment)?.let { objective ->
+                executeAssaultCityStep(unit, objective, preserveCaptor = false, reservationTracker = reservationTracker)
+            } ?: false
+            "recover_then_rejoin" -> resolveAssignmentObjective(unit, activeAssignment)?.let { objective ->
+                executeRecoverThenRejoinStep(unit, objective, reservationTracker)
+            } ?: false
+            "preserve_capture_unit" -> resolveAssignmentObjective(unit, activeAssignment)?.let { objective ->
+                executePreserveCaptureStep(unit, objective, reservationTracker)
+            } ?: false
+            else -> executeDeferredAssignmentStep(unit, activeAssignment)
+        }
+    }
+
+    private fun hasReinforceAssaultStep(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+    ): Boolean {
+        return findBestOperationalAttack(unit, objective, preserveCaptor = false) != null ||
+            findReinforceAssaultDestination(unit, objective) != null ||
+            findAssaultCityRingDestination(unit, objective) != null ||
+            isWithinObjectiveBand(unit, objective, if (unit.baseUnit.isRanged()) 2..3 else 1..2)
+    }
+
+    private fun hasAssaultCityStep(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+    ): Boolean {
+        return findBestOperationalAttack(unit, objective, preserveCaptor = false) != null ||
+            findAssaultCityRingDestination(unit, objective) != null ||
+            isWithinObjectiveBand(unit, objective, if (unit.baseUnit.isRanged()) 2..3 else 1..2)
+    }
+
+    private fun hasRecoverThenRejoinStep(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+    ): Boolean {
+        return if (unit.health >= 85) {
+            hasReinforceAssaultStep(unit, objective)
+        } else {
+            findRecoverThenRejoinDestination(unit, objective) != null ||
+                canInvokeAction(unit, UnitActionType.FortifyUntilHealed) ||
+                canInvokeAction(unit, UnitActionType.SleepUntilHealed) ||
+                canInvokeAction(unit, UnitActionType.Fortify) ||
+                canInvokeAction(unit, UnitActionType.Sleep)
+        }
+    }
+
+    private fun hasPreserveCaptureStep(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+    ): Boolean {
+        return if (unit.health < 70) {
+            hasRecoverThenRejoinStep(unit, objective)
+        } else {
+            findBestOperationalAttack(unit, objective, preserveCaptor = true) != null ||
+                findPreserveCaptureDestination(unit, objective) != null ||
+                isWithinObjectiveBand(unit, objective, 1..3)
+        }
+    }
+
+    private fun executeReinforceAssaultStep(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+        reservationTracker: TheaterReservationTracker? = null,
+    ): Boolean {
+        if (unit.health < 45) return executeRecoverThenRejoinStep(unit, objective, reservationTracker)
+        findBestOperationalAttack(unit, objective, preserveCaptor = false)?.let { attack ->
+            return executeOperationalAttack(unit, attack)
+        }
+        val destination = findReinforceAssaultDestination(unit, objective, reservationTracker)
+            ?: findAssaultCityRingDestination(unit, objective, reservationTracker)
+        return when {
+            destination != null -> moveTowardTile(unit, destination)
+            isWithinObjectiveBand(unit, objective, if (unit.baseUnit.isRanged()) 2..3 else 1..2) ->
+                executeHoldAssignmentStep(unit)
+            else -> false
+        }
+    }
+
+    private fun executeAssaultCityStep(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+        preserveCaptor: Boolean,
+        reservationTracker: TheaterReservationTracker? = null,
+    ): Boolean {
+        findBestOperationalAttack(unit, objective, preserveCaptor)?.let { attack ->
+            return executeOperationalAttack(unit, attack)
+        }
+        val destination = if (preserveCaptor) {
+            findPreserveCaptureDestination(unit, objective, reservationTracker) ?: findAssaultCityRingDestination(unit, objective, reservationTracker)
+        } else {
+            findAssaultCityRingDestination(unit, objective, reservationTracker)
+        }
+        return when {
+            destination != null -> moveTowardTile(unit, destination)
+            isWithinObjectiveBand(unit, objective, if (unit.baseUnit.isRanged()) 2..3 else 1..3) ->
+                executeHoldAssignmentStep(unit)
+            else -> false
+        }
+    }
+
+    private fun executeRecoverThenRejoinStep(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+        reservationTracker: TheaterReservationTracker? = null,
+    ): Boolean {
+        if (unit.health >= 85) return executeReinforceAssaultStep(unit, objective, reservationTracker)
+        val destination = findRecoverThenRejoinDestination(unit, objective, reservationTracker)
+        return when {
+            destination != null -> moveTowardTile(unit, destination)
+            else -> executeRecoveryAssignmentStep(unit)
+        }
+    }
+
+    private fun executePreserveCaptureStep(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+        reservationTracker: TheaterReservationTracker? = null,
+    ): Boolean {
+        if (unit.health < 70) return executeRecoverThenRejoinStep(unit, objective, reservationTracker)
+        findBestOperationalAttack(unit, objective, preserveCaptor = true)?.let { attack ->
+            return executeOperationalAttack(unit, attack)
+        }
+        val destination = findPreserveCaptureDestination(unit, objective, reservationTracker)
+            ?: findAssaultCityRingDestination(unit, objective, reservationTracker)
+        return when {
+            destination != null -> moveTowardTile(unit, destination)
+            isWithinObjectiveBand(unit, objective, 1..3) -> executeHoldAssignmentStep(unit)
+            else -> false
+        }
+    }
+
+    private fun findBestOperationalAttack(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+        preserveCaptor: Boolean,
+    ): AttackableTile? {
+        val attacker = MapUnitCombatant(unit)
+        val attackContext = AttackConversionContext(
+            objectivePressure = true,
+            frontlineShortage = preserveCaptor || unit.baseUnit.isMelee(),
+            objective = objective,
+        )
+        return TargetHelper.getAttackableEnemies(unit, unit.movement.getDistanceToTiles())
+            .filter { attack ->
+                val defender = attack.combatant ?: return@filter false
+                val distanceToObjective = axialDistance(
+                    attack.tileToAttack.position.x,
+                    attack.tileToAttack.position.y,
+                    objective.x,
+                    objective.y,
+                )
+                distanceToObjective <= 2 || defender is CityCombatant
+            }
+            .maxByOrNull { attack ->
+                scoreOperationalAttackCandidate(attacker, attack, attackContext, preserveCaptor)
+            }
+            ?.takeIf {
+                scoreOperationalAttackCandidate(attacker, it, attackContext, preserveCaptor) > 30
+            }
+    }
+
+    private fun scoreOperationalAttackCandidate(
+        attacker: MapUnitCombatant,
+        attackableTile: AttackableTile,
+        attackContext: AttackConversionContext,
+        preserveCaptor: Boolean,
+    ): Int {
+        val defender = attackableTile.combatant ?: return Int.MIN_VALUE
+        val damageToDefender = BattleDamage.calculateDamageToDefender(attacker, defender, attackableTile.tileToAttackFrom)
+        val damageToAttacker = BattleDamage.calculateDamageToAttacker(attacker, defender, attackableTile.tileToAttackFrom)
+        var score = scoreAttackCandidate(attacker, attackableTile, attackContext)
+
+        if (attacker.isMelee()) {
+            if (damageToAttacker >= attacker.getHealth()) score -= 500
+            if (attacker.getHealth() - damageToAttacker < 25) score -= 140
+        }
+
+        val objective = attackContext.objective
+        if (objective != null) {
+            val distanceToObjective = axialDistance(
+                attackableTile.tileToAttack.position.x,
+                attackableTile.tileToAttack.position.y,
+                objective.x,
+                objective.y,
+            )
+            score += when {
+                attackableTile.tileToAttack.position.x == objective.x &&
+                    attackableTile.tileToAttack.position.y == objective.y -> 180
+                distanceToObjective == 1 -> 55
+                distanceToObjective == 2 -> 20
+                else -> 0
+            }
+        }
+
+        if (!preserveCaptor) return score
+
+        if (!attacker.isMelee()) return score - 180
+
+        return when {
+            defender is CityCombatant -> {
+                val safeCapture = defender.getHealth() <= damageToDefender && attacker.getHealth() - damageToAttacker >= 35
+                if (safeCapture) score + 240 else score - 220
+            }
+            defender.isCivilian() -> {
+                val safeCapture = attacker.getHealth() - damageToAttacker >= 45
+                if (safeCapture) score + 120 else score - 120
+            }
+            else -> score - 180
+        }
+    }
+
+    private fun executeOperationalAttack(
+        unit: MapUnit,
+        attackableTile: AttackableTile,
+    ): Boolean {
+        val beforeAttacks = unit.attacksThisTurn
+        val beforePosition = unit.getTile().position
+        val beforeHealth = unit.health
+        Battle.moveAndAttack(MapUnitCombatant(unit), attackableTile)
+        return unit.isDestroyed ||
+            unit.attacksThisTurn > beforeAttacks ||
+            unit.getTile().position != beforePosition ||
+            unit.health != beforeHealth
+    }
+
+    private fun executeRecoveryAssignmentStep(unit: MapUnit): Boolean {
+        return when {
+            canInvokeAction(unit, UnitActionType.FortifyUntilHealed) -> UnitActions.invokeUnitAction(unit, UnitActionType.FortifyUntilHealed)
+            canInvokeAction(unit, UnitActionType.SleepUntilHealed) -> UnitActions.invokeUnitAction(unit, UnitActionType.SleepUntilHealed)
+            canInvokeAction(unit, UnitActionType.Fortify) -> UnitActions.invokeUnitAction(unit, UnitActionType.Fortify)
+            canInvokeAction(unit, UnitActionType.Sleep) -> UnitActions.invokeUnitAction(unit, UnitActionType.Sleep)
+            else -> false
+        }
+    }
+
+    private fun executeHoldAssignmentStep(unit: MapUnit): Boolean {
+        return when {
+            canInvokeAction(unit, UnitActionType.Fortify) -> UnitActions.invokeUnitAction(unit, UnitActionType.Fortify)
+            canInvokeAction(unit, UnitActionType.Sleep) -> UnitActions.invokeUnitAction(unit, UnitActionType.Sleep)
+            else -> false
+        }
+    }
+
+    private fun shouldPreserveHealthyCaptor(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+    ): Boolean {
+        if (!unit.baseUnit.isMelee() || unit.health < 80) return false
+        val objectiveTile = unit.civ.gameInfo.tileMap[HexCoord(objective.x, objective.y)]
+        val targetCity = objectiveTile.getCity() ?: return false
+        return targetCity.health <= targetCity.getMaxHealth() / 2
+    }
+
+    private fun isWithinObjectiveBand(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+        desiredRange: IntRange,
+    ): Boolean {
+        val distance = axialDistance(unit.getTile().position.x, unit.getTile().position.y, objective.x, objective.y)
+        return distance in desiredRange
+    }
+
+    private fun resolveAssignmentObjective(
+        unit: MapUnit,
+        assignment: UnitAssignmentMemory,
+    ): ResolvedObjective? {
+        val targetX = assignment.targetX ?: return null
+        val targetY = assignment.targetY ?: return null
+        val targetCoord = HexCoord(targetX, targetY)
+        if (targetCoord !in unit.civ.gameInfo.tileMap) return null
+        val targetTile = unit.civ.gameInfo.tileMap[targetCoord]
+        val targetCity = targetTile.getCity()
+        return ResolvedObjective(
+            x = targetX,
+            y = targetY,
+            cityName = targetCity?.name,
+            preferCapital = targetCity?.isCapital() == true,
+        )
+    }
+
+    private fun findAssignmentTargetTile(
+        unit: MapUnit,
+        assignment: UnitAssignmentMemory,
+    ): Tile? {
+        val targetX = assignment.targetX ?: return null
+        val targetY = assignment.targetY ?: return null
+        val targetCoord = HexCoord(targetX, targetY)
+        if (targetCoord !in unit.civ.gameInfo.tileMap) return null
+        return unit.civ.gameInfo.tileMap[targetCoord]
+    }
+
+    private fun canAdvanceToward(unit: MapUnit, targetTile: Tile): Boolean {
+        if (unit.getTile() == targetTile) return true
+        return unit.movement.canReach(targetTile) || unit.movement.getShortestPath(targetTile).isNotEmpty()
+    }
+
+    private fun moveTowardTile(unit: MapUnit, targetTile: Tile): Boolean {
+        if (unit.getTile() == targetTile) return false
+        if (!canAdvanceToward(unit, targetTile)) return false
+        val before = unit.getTile().position
+        unit.movement.headTowards(targetTile)
+        return unit.getTile().position != before
+    }
+
+    private fun canInvokeAction(unit: MapUnit, actionType: UnitActionType): Boolean {
+        return UnitActions.getUnitActions(unit, actionType).any { it.action != null } ||
+            UnitActions.getUnitActions(unit).any { it.action != null && it.type == actionType }
+    }
+
+    private fun advanceAutoExploreAssignment(unit: MapUnit): Boolean {
+        val beforePosition = unit.getTile().position
+        val beforeAction = unit.action
+        if (unit.isExploring()) {
+            unit.doAction()
+        } else {
+            if (!UnitActions.invokeUnitAction(unit, UnitActionType.Explore)) return false
+        }
+        if (unit.isDestroyed) return true
+        val afterPosition = unit.getTile().position
+        return afterPosition != beforePosition || beforeAction != unit.action
     }
 
     private fun buildRepairCandidate(
@@ -1165,6 +1772,38 @@ object AgentUnitOptionBuilder {
         val frontlineShortage: Boolean,
         val objective: ResolvedObjective? = null,
     )
+
+    private enum class BattleTheaterSlotKind {
+        Staging,
+        Reserve,
+        Recovery,
+        RangedAssault,
+        MeleeAssault,
+        Captor,
+    }
+
+    private data class BattleTheaterSlot(
+        val tile: Tile,
+        val kind: BattleTheaterSlotKind,
+        val score: Int,
+    )
+
+    internal class TheaterReservationTracker {
+        private val reservedTilesByObjective = linkedMapOf<String, LinkedHashSet<HexCoord>>()
+
+        internal fun reserve(objectiveX: Int, objectiveY: Int, tile: Tile) {
+            val reservations = reservedTilesByObjective.getOrPut("$objectiveX,$objectiveY") { linkedSetOf() }
+            reservations += HexCoord(tile.position.x, tile.position.y)
+        }
+
+        internal fun isReserved(objectiveX: Int, objectiveY: Int, tile: Tile): Boolean {
+            return HexCoord(tile.position.x, tile.position.y) in (reservedTilesByObjective["$objectiveX,$objectiveY"] ?: return false)
+        }
+
+        internal fun reservedObjectivesCount(): Int = reservedTilesByObjective.size
+
+        internal fun reservedSlotsCount(): Int = reservedTilesByObjective.values.sumOf { it.size }
+    }
 
     private data class ResolvedObjective(
         val x: Int,

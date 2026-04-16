@@ -25,9 +25,6 @@ object AgentTurnAutomation {
         }
 
         AgentCityProjectPolicy.enforceSingleProject(civInfo)
-        val startTurnExploringUnitIds = civInfo.units.getCivUnits()
-            .filter { it.isExploring() }
-            .mapTo(linkedSetOf()) { it.id }
         val touchedUnitIds = linkedSetOf<Int>()
         val seedMemory = civInfo.agentMemory.clone()
         val initialObservation = AgentObservationBuilder.build(civInfo, seedMemory)
@@ -86,6 +83,8 @@ object AgentTurnAutomation {
                 )
             }
         }
+
+        val startTurnUnitAssignments = ArrayList(memory.unitAssignments.map { it.copy() })
 
         var observationJson = ""
         var empireObservationJson = ""
@@ -458,7 +457,7 @@ object AgentTurnAutomation {
 
         if (validation.status == AgentActionExecutor.ValidationStatus.NoOp) {
             touchedUnitIds += touchedUnitIds(selectedPlan)
-            advanceDeferredAutoExploreUnits(civInfo, startTurnExploringUnitIds, touchedUnitIds)
+            advanceDeferredUnitAssignments(civInfo, startTurnUnitAssignments, touchedUnitIds)
             val updatedMemory = AgentMemoryManager.updateAfterTurn(
                 civInfo = civInfo,
                 observation = observation,
@@ -760,7 +759,7 @@ object AgentTurnAutomation {
             }
         }
 
-        advanceDeferredAutoExploreUnits(civInfo, startTurnExploringUnitIds, touchedUnitIds)
+        advanceDeferredUnitAssignments(civInfo, startTurnUnitAssignments, touchedUnitIds)
         val updatedMemory = AgentMemoryManager.updateAfterTurn(
             civInfo = civInfo,
             observation = observation,
@@ -795,39 +794,90 @@ object AgentTurnAutomation {
         )
     }
 
-    private fun advanceDeferredAutoExploreUnits(
+    private fun advanceDeferredUnitAssignments(
         civInfo: Civilization,
-        startTurnExploringUnitIds: Set<Int>,
+        startTurnAssignments: List<UnitAssignmentMemory>,
         touchedUnitIds: Set<Int>,
     ) {
-        val exploringUnits = civInfo.units.getCivUnits()
-            .filter { it.id in startTurnExploringUnitIds && it.id !in touchedUnitIds && it.isExploring() && it.hasMovement() }
+        val assignmentsByUnitId = startTurnAssignments.associateBy { it.unitId }
+        val assignmentUnits = civInfo.units.getCivUnits()
+            .mapNotNull { unit ->
+                val assignment = assignmentsByUnitId[unit.id] ?: return@mapNotNull null
+                if (unit.id in touchedUnitIds || !unit.hasMovement() || assignment.executionMode == "memory_only") return@mapNotNull null
+                unit to assignment
+            }
+            .sortedWith(
+                compareBy<Pair<com.unciv.logic.map.mapunit.MapUnit, UnitAssignmentMemory>>(
+                    { assignmentTheaterBucket(it.second) },
+                    { assignmentExecutionPriority(it.second.role) },
+                    { assignmentObjectiveDistance(it.first, it.second) },
+                    { it.first.id },
+                )
+            )
             .toList()
-        if (exploringUnits.isEmpty()) return
+        if (assignmentUnits.isEmpty()) return
 
-        var movedUnits = 0
-        for (unit in exploringUnits) {
-            val beforeX = unit.getTile().position.x
-            val beforeY = unit.getTile().position.y
-            val beforeAction = unit.action
-            unit.doAction()
-            if (unit.isDestroyed) continue
-            val afterTile = unit.getTile().position
-            if (afterTile.x != beforeX || afterTile.y != beforeY || beforeAction != unit.action) {
-                movedUnits += 1
+        val theaterReservations = AgentUnitOptionBuilder.TheaterReservationTracker()
+        var changedUnits = 0
+        var autoExploreUnits = 0
+        var heuristicUnits = 0
+        val roleCounts = linkedMapOf<String, Int>()
+        val changedRoleCounts = linkedMapOf<String, Int>()
+        for ((unit, assignment) in assignmentUnits) {
+            roleCounts[assignment.role] = (roleCounts[assignment.role] ?: 0) + 1
+            if (assignment.executionMode == "engine_auto") autoExploreUnits += 1 else heuristicUnits += 1
+            val changed = AgentUnitOptionBuilder.executeDeferredAssignmentStep(unit, assignment, theaterReservations)
+            if (changed) {
+                changedUnits += 1
+                changedRoleCounts[assignment.role] = (changedRoleCounts[assignment.role] ?: 0) + 1
             }
         }
 
         AgentObservability.record(
-            type = "auto_explore_tick",
-            message = "Advanced untouched auto-explore units after planning",
+            type = "unit_assignment_tick",
+            message = "Advanced untouched unit assignments after planning",
             civName = civInfo.civName,
             turn = civInfo.gameInfo.turns,
             details = mapOf(
-                "candidateUnits" to exploringUnits.size.toString(),
-                "stateChangedUnits" to movedUnits.toString(),
+                "candidateUnits" to assignmentUnits.size.toString(),
+                "stateChangedUnits" to changedUnits.toString(),
+                "engineAutoUnits" to autoExploreUnits.toString(),
+                "heuristicUnits" to heuristicUnits.toString(),
+                "reservedObjectives" to theaterReservations.reservedObjectivesCount().toString(),
+                "reservedSlots" to theaterReservations.reservedSlotsCount().toString(),
+                "roleCounts" to roleCounts.entries.joinToString(",") { "${it.key}:${it.value}" },
+                "changedRoleCounts" to changedRoleCounts.entries.joinToString(",") { "${it.key}:${it.value}" },
             ),
         )
+    }
+
+    private fun assignmentTheaterBucket(assignment: UnitAssignmentMemory): String {
+        val x = assignment.targetX
+        val y = assignment.targetY
+        return if (x != null && y != null) "$x,$y" else "zz:${assignment.role}"
+    }
+
+    private fun assignmentExecutionPriority(role: String): Int {
+        return when (role) {
+            "recover_then_rejoin" -> 0
+            "preserve_capture_unit" -> 1
+            "assault_city_ring" -> 2
+            "reinforce_assault" -> 3
+            "stage_outside_border" -> 4
+            "settle_city_site" -> 5
+            "move_to_tile" -> 6
+            "auto_explore" -> 7
+            else -> 8
+        }
+    }
+
+    private fun assignmentObjectiveDistance(
+        unit: com.unciv.logic.map.mapunit.MapUnit,
+        assignment: UnitAssignmentMemory,
+    ): Int {
+        val targetX = assignment.targetX ?: return Int.MAX_VALUE
+        val targetY = assignment.targetY ?: return Int.MAX_VALUE
+        return axialDistance(unit.getTile().position.x, unit.getTile().position.y, targetX, targetY)
     }
 
     private fun touchedUnitIds(plan: AgentActionPlan): Set<Int> {

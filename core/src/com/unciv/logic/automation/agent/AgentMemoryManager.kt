@@ -165,13 +165,13 @@ object AgentMemoryManager {
         val newCityIntents = deriveCityIntents(observation, plan, turn)
         val newUnitAssignments = deriveUnitAssignments(observation, plan, turn)
         val plannedCityKeys = newCityIntents.map { cityKey(it.cityX, it.cityY) }.toSet()
-        val plannedUnitIds = newUnitAssignments.map { it.unitId }.toSet()
+        val touchedUnitIds = extractTouchedUnitIds(plan)
 
         val preservedCityIntents = intentReconciliation.cityIntents
             .filter { it.staleAfterTurn >= turn && cityKey(it.cityX, it.cityY) !in plannedCityKeys }
             .map { it.copy(reasons = ArrayList(it.reasons)) }
         val preservedUnitAssignments = intentReconciliation.unitAssignments
-            .filter { it.staleAfterTurn >= turn && it.unitId !in plannedUnitIds }
+            .filter { it.staleAfterTurn >= turn && it.unitId !in touchedUnitIds }
             .map { it.copy() }
 
         val tacticianEntry = buildTacticianTurnLogEntry(
@@ -1196,7 +1196,7 @@ object AgentMemoryManager {
                 assignment.targetY != null &&
                 liveUnit.getTile().position.x == assignment.targetX &&
                 liveUnit.getTile().position.y == assignment.targetY
-            if (targetReached) {
+            if (targetReached && assignment.completionPolicy == "until_arrival") {
                 completed += "${assignment.unitName.ifBlank { "Unit #${assignment.unitId}" }} reached (${assignment.targetX}, ${assignment.targetY}), so that carry-over is complete."
                 continue
             }
@@ -1898,6 +1898,7 @@ object AgentMemoryManager {
         val normalized = actionType?.trim().orEmpty()
         val lower = normalized.lowercase()
         val role = when {
+            normalized.isBlank() && targetX != null && targetY != null -> "move_to_tile"
             normalized.isBlank() -> "reposition"
             lower == "skip" -> "transient_wait"
             lower == "foundcity" -> "settle_city_site"
@@ -1905,20 +1906,19 @@ object AgentMemoryManager {
             "automate" in lower -> "automation_change"
             "fortify" in lower || "sleep" in lower || "guard" in lower ->
                 if ((unit?.health ?: 100) < 100) "heal_and_hold" else "hold_position"
-            "explore" in lower || "recon" in lower -> "explore"
+            "explore" in lower || "recon" in lower -> "auto_explore"
             "attack" in lower || "bombard" in lower -> "attack_target"
             else -> "execute_action"
         }
 
-        return UnitAssignmentMemory(
+        return buildUnitAssignmentMemory(
             unitId = unit?.id ?: 0,
             unitName = unit?.name ?: "",
             role = role,
             targetX = targetX,
             targetY = targetY,
             detail = normalized.ifBlank { if (targetX != null && targetY != null) "Move to ($targetX, $targetY)" else null },
-            lastProgressTurn = turn,
-            staleAfterTurn = turn + unitAssignmentHorizonTurns,
+            turn = turn,
         )
     }
 
@@ -1997,85 +1997,77 @@ object AgentMemoryManager {
         val unit = unitById[parsed.unitId]
         val observation = candidateObservations[candidateId]
         val assignment = when (parsed.kind) {
-            "unitattack" -> UnitAssignmentMemory(
+            "unitattack" -> buildUnitAssignmentMemory(
                 unitId = parsed.unitId,
                 unitName = unit?.name ?: "",
                 role = "attack_target",
                 targetX = parsed.targetX,
                 targetY = parsed.targetY,
                 detail = observation?.detail ?: "Grounded attack option",
-                lastProgressTurn = turn,
-                staleAfterTurn = turn + unitAssignmentHorizonTurns,
+                turn = turn,
             )
-            "unitsettle" -> UnitAssignmentMemory(
+            "unitsettle" -> buildUnitAssignmentMemory(
                 unitId = parsed.unitId,
                 unitName = unit?.name ?: "",
                 role = "settle_city_site",
                 targetX = parsed.targetX,
                 targetY = parsed.targetY,
                 detail = observation?.detail ?: "Grounded city-site option",
-                lastProgressTurn = turn,
-                staleAfterTurn = turn + unitAssignmentHorizonTurns,
+                turn = turn,
             )
-            "unitworkerimprove", "unitworkerreposition" -> UnitAssignmentMemory(
+            "unitworkerimprove", "unitworkerreposition" -> buildUnitAssignmentMemory(
                 unitId = parsed.unitId,
                 unitName = unit?.name ?: "",
                 role = "improve_tile",
                 targetX = parsed.targetX,
                 targetY = parsed.targetY,
                 detail = observation?.detail ?: observation?.title ?: "Grounded worker job",
-                lastProgressTurn = turn,
-                staleAfterTurn = turn + unitAssignmentHorizonTurns,
+                turn = turn,
             )
-            "unitstage" -> UnitAssignmentMemory(
+            "unitstage" -> buildUnitAssignmentMemory(
                 unitId = parsed.unitId,
                 unitName = unit?.name ?: "",
                 role = "stage_outside_border",
                 targetX = parsed.targetX,
                 targetY = parsed.targetY,
                 detail = observation?.detail ?: "Prewar staging assignment",
-                lastProgressTurn = turn,
-                staleAfterTurn = turn + unitAssignmentHorizonTurns,
+                turn = turn,
             )
-            "unitreinforce" -> UnitAssignmentMemory(
+            "unitreinforce" -> buildUnitAssignmentMemory(
                 unitId = parsed.unitId,
                 unitName = unit?.name ?: "",
                 role = "reinforce_assault",
                 targetX = parsed.targetX,
                 targetY = parsed.targetY,
                 detail = observation?.detail ?: "Frontline reinforcement assignment",
-                lastProgressTurn = turn,
-                staleAfterTurn = turn + unitAssignmentHorizonTurns,
+                turn = turn,
             )
-            "unitassault" -> UnitAssignmentMemory(
+            "unitassault" -> buildUnitAssignmentMemory(
                 unitId = parsed.unitId,
                 unitName = unit?.name ?: "",
                 role = "assault_city_ring",
                 targetX = parsed.targetX,
                 targetY = parsed.targetY,
                 detail = observation?.detail ?: "City assault ring assignment",
-                lastProgressTurn = turn,
-                staleAfterTurn = turn + unitAssignmentHorizonTurns,
+                turn = turn,
             )
-            "unitrecoverrejoin" -> UnitAssignmentMemory(
+            "unitrecoverrejoin" -> buildUnitAssignmentMemory(
                 unitId = parsed.unitId,
                 unitName = unit?.name ?: "",
                 role = "recover_then_rejoin",
                 targetX = parsed.targetX,
                 targetY = parsed.targetY,
                 detail = observation?.detail ?: "Recover and rejoin assignment",
-                lastProgressTurn = turn,
-                staleAfterTurn = turn + unitAssignmentHorizonTurns,
+                turn = turn,
             )
-            "unitcaptorpreserve" -> UnitAssignmentMemory(
+            "unitcaptorpreserve" -> buildUnitAssignmentMemory(
                 unitId = parsed.unitId,
                 unitName = unit?.name ?: "",
                 role = "preserve_capture_unit",
                 targetX = parsed.targetX,
                 targetY = parsed.targetY,
                 detail = observation?.detail ?: "Capture reserve assignment",
-                lastProgressTurn = turn,
-                staleAfterTurn = turn + unitAssignmentHorizonTurns,
+                turn = turn,
             )
             "unitspecial" -> classifyAssignment(unit, parsed.actionType, unit?.x, unit?.y, turn)
                 .copy(unitId = parsed.unitId, unitName = unit?.name ?: "")
@@ -2083,6 +2075,73 @@ object AgentMemoryManager {
         }
         val actionType = parsed.actionType
         return assignment.takeIf { shouldPersistUnitAssignment(unit, actionType, it) }
+    }
+
+    private fun buildUnitAssignmentMemory(
+        unitId: Int,
+        unitName: String,
+        role: String,
+        targetX: Int?,
+        targetY: Int?,
+        detail: String?,
+        turn: Int,
+    ): UnitAssignmentMemory {
+        return UnitAssignmentMemory(
+            unitId = unitId,
+            unitName = unitName,
+            role = role,
+            targetX = targetX,
+            targetY = targetY,
+            detail = detail,
+            executionMode = defaultUnitAssignmentExecutionMode(role),
+            completionPolicy = defaultUnitAssignmentCompletionPolicy(role),
+            lastProgressTurn = turn,
+            staleAfterTurn = turn + unitAssignmentHorizonTurns,
+        )
+    }
+
+    private fun defaultUnitAssignmentExecutionMode(role: String): String = when (role) {
+        "auto_explore" -> "engine_auto"
+        "move_to_tile",
+        "settle_city_site",
+        "stage_outside_border",
+        "reinforce_assault",
+        "assault_city_ring",
+        "recover_then_rejoin",
+        "preserve_capture_unit",
+        -> "deferred_heuristic"
+        else -> "memory_only"
+    }
+
+    private fun defaultUnitAssignmentCompletionPolicy(role: String): String = when (role) {
+        "move_to_tile",
+        "settle_city_site",
+        "improve_tile",
+        "attack_target",
+        -> "until_arrival"
+        "auto_explore",
+        "stage_outside_border",
+        "reinforce_assault",
+        "assault_city_ring",
+        "recover_then_rejoin",
+        "preserve_capture_unit",
+        "hold_position",
+        "heal_and_hold",
+        -> "until_switched"
+        else -> "until_stale"
+    }
+
+    private fun extractTouchedUnitIds(plan: AgentActionPlan): Set<Int> {
+        val touched = linkedSetOf<Int>()
+        for (action in plan.actions) {
+            when (action) {
+                is AgentActionCommand.SelectUnitOption -> parseUnitOptionCandidateId(action.candidateId)?.unitId?.let(touched::add)
+                is AgentActionCommand.UnitMove -> touched += action.unitId
+                is AgentActionCommand.UnitAction -> touched += action.unitId
+                else -> Unit
+            }
+        }
+        return touched
     }
 
     private fun cityKey(x: Int, y: Int): String = "$x,$y"

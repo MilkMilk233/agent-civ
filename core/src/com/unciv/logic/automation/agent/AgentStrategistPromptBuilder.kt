@@ -121,6 +121,7 @@ object AgentStrategistPromptBuilder {
             - Do not label battleReadiness as ready unless the current visible package looks capable of actually converting the next checkpoint soon.
             - Do not label supplyHealth as healthy if treasury, happiness, science, or city count are already showing that the campaign is expensive to hold.
             - citySnapshots and unitSnapshots cover the current empire in compact form. rivalCities, rivalUnits, and campaignPicture describe the known enemy-side and frontier situation. Use them to understand where the empire really stands and what the tactician needs to know next.
+            - unitSnapshots may include assignmentProgress when a unit is already carrying an ongoing role. Read role and status as the current operational job, and executionMode / completionPolicy as whether that job is real continuing automation or just notebook residue.
             - Your memo is not just for record-keeping. It is the tactician's high-level briefing. Write it so a fresh downstream teammate can quickly understand what changed, what matters now, and what should guide local choices over the next few turns.
             - Consolidate the tactician delta log into a cleaner current report. If the old memo told the tactician to finish a Scout, found a city, or keep a project, but the delta log shows that instruction is already completed or obsolete, do not repeat it as if it were still live.
             - Optimize for decision-useful clarity, not for sounding formal, exhaustive, or machine-like.

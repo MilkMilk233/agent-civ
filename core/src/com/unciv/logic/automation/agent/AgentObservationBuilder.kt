@@ -1056,16 +1056,19 @@ object AgentObservationBuilder {
         unitOptionCandidates: List<UnitOptionCandidateObservation>,
     ): UnitAssignmentProgressObservation? {
         val assignment = findUnitAssignment(memory, unit.id) ?: return null
-        val onTarget = isAssignmentOnTarget(unit, assignment)
+        val onTarget = AgentUnitOptionBuilder.isAssignmentOnTarget(unit, assignment)
         val matchingCandidate = unitOptionCandidates.any { candidateMatchesAssignment(it.candidateId, assignment) }
+        val groundedStep = AgentUnitOptionBuilder.hasGroundedAssignmentStep(unit, assignment)
         val readyToFinish = unitOptionCandidates.any { candidate ->
             candidate.candidateId.startsWith("unitworkerimprove:${unit.id}:${assignment.targetX},${assignment.targetY}:") ||
                 candidate.candidateId == "unitsettle:${unit.id}:${assignment.targetX},${assignment.targetY}" ||
                 candidate.candidateId.startsWith("unitspecial:${unit.id}:")
         }
         val status = when {
+            assignment.role == "auto_explore" && unit.isExploring() -> "automation_active"
             onTarget && readyToFinish -> "ready_to_finish"
             onTarget -> "on_target"
+            groundedStep && assignment.executionMode != "memory_only" -> "moving_to_target"
             matchingCandidate -> "moving_to_target"
             else -> "assignment_at_risk"
         }
@@ -1073,6 +1076,8 @@ object AgentObservationBuilder {
         val switchCost = when {
             assignment.role in setOf("improve_tile", "settle_city_site") && status != "assignment_at_risk" -> "high"
             assignment.role in setOf(
+                "auto_explore",
+                "move_to_tile",
                 "attack_target",
                 "heal_and_hold",
                 "hold_position",
@@ -1089,6 +1094,10 @@ object AgentObservationBuilder {
             targetX = assignment.targetX,
             targetY = assignment.targetY,
             detail = assignment.detail,
+            executionMode = assignment.executionMode,
+            completionPolicy = assignment.completionPolicy,
+            lastProgressTurn = assignment.lastProgressTurn,
+            staleAfterTurn = assignment.staleAfterTurn,
             status = status,
             progressNote = progressNote,
             switchCost = switchCost,
@@ -1100,11 +1109,6 @@ object AgentObservationBuilder {
             candidateId.startsWith("unitworkerimprove:${assignment.unitId}:${assignment.targetX},${assignment.targetY}:") -> true
             candidateId == "unitworkerreposition:${assignment.unitId}:${assignment.targetX},${assignment.targetY}" -> true
             candidateId == "unitsettle:${assignment.unitId}:${assignment.targetX},${assignment.targetY}" -> true
-            candidateId == "unitstage:${assignment.unitId}:${assignment.targetX},${assignment.targetY}" -> true
-            candidateId == "unitreinforce:${assignment.unitId}:${assignment.targetX},${assignment.targetY}" -> true
-            candidateId == "unitassault:${assignment.unitId}:${assignment.targetX},${assignment.targetY}" -> true
-            candidateId == "unitrecoverrejoin:${assignment.unitId}:${assignment.targetX},${assignment.targetY}" -> true
-            candidateId == "unitcaptorpreserve:${assignment.unitId}:${assignment.targetX},${assignment.targetY}" -> true
             candidateId.startsWith("unitattack:${assignment.unitId}:") &&
                 assignment.targetX != null &&
                 assignment.targetY != null &&
@@ -1114,44 +1118,16 @@ object AgentObservationBuilder {
         }
     }
 
-    private fun isAssignmentOnTarget(
-        unit: MapUnit,
-        assignment: UnitAssignmentMemory,
-    ): Boolean {
-        val targetX = assignment.targetX ?: return false
-        val targetY = assignment.targetY ?: return false
-        return when (assignment.role) {
-            "stage_outside_border" -> {
-                val targetTile = unit.civ.gameInfo.tileMap[com.unciv.logic.map.HexCoord(targetX, targetY)]
-                val targetOwner = targetTile.getOwner()
-                val distance = axialDistance(unit.getTile().position.x, unit.getTile().position.y, targetX, targetY)
-                distance in 2..4 && (targetOwner == null || unit.getTile().getOwner() != targetOwner)
-            }
-            "reinforce_assault" -> {
-                val distance = axialDistance(unit.getTile().position.x, unit.getTile().position.y, targetX, targetY)
-                distance <= 4
-            }
-            "assault_city_ring" -> {
-                val distance = axialDistance(unit.getTile().position.x, unit.getTile().position.y, targetX, targetY)
-                if (unit.baseUnit.isRanged()) distance in 2..3 else distance in 1..2
-            }
-            "recover_then_rejoin" -> {
-                val distance = axialDistance(unit.getTile().position.x, unit.getTile().position.y, targetX, targetY)
-                distance in 3..5 && unit.civ.threatManager.getDistanceToClosestEnemyUnit(unit.getTile(), 3) > 2
-            }
-            "preserve_capture_unit" -> {
-                val distance = axialDistance(unit.getTile().position.x, unit.getTile().position.y, targetX, targetY)
-                unit.baseUnit.isMelee() && unit.health >= 70 && distance in 1..3
-            }
-            else -> unit.getTile().position.x == targetX && unit.getTile().position.y == targetY
-        }
-    }
-
     private fun assignmentProgressNote(
         status: String,
         assignment: UnitAssignmentMemory,
     ): String {
         return when (assignment.role) {
+            "auto_explore" -> when (status) {
+                "automation_active" -> "This unit is currently auto-exploring and will keep scouting unless the tactician retasks it."
+                "moving_to_target" -> "This unit still has a grounded way to resume auto-explore if left alone."
+                else -> "This unit used to be on auto-explore, but that automation no longer looks healthy."
+            }
             "stage_outside_border" -> when (status) {
                 "on_target" -> "This unit is already staged outside the target border and should hold that prewar slot unless a stronger tactical reason appears."
                 "moving_to_target" -> "This unit is marching toward a prewar staging slot outside the target border."

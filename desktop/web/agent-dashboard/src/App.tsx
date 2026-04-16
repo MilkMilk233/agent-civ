@@ -2770,6 +2770,9 @@ function StrategistUnitSnapshotsSection({
             const progress = asRecord(unit.assignmentProgress);
             const reasons = stringList(unit.reasons);
             const localFacts = stringList(unit.localFacts);
+            const assignmentTarget = progress
+              ? formatCoordinateText(numberValue(progress.targetX), numberValue(progress.targetY))
+              : "—";
 
             return (
               <article key={`${stringValue(unit.name)}-${numberValue(unit.id) ?? index}`} className="structured-item">
@@ -2806,11 +2809,28 @@ function StrategistUnitSnapshotsSection({
                   <div className="tag-list compact">
                     <span className="tag neutral">{humanizeKey(stringValue(progress.role) || "assignment")}</span>
                     <span className="tag neutral">{humanizeKey(stringValue(progress.status) || "unknown")}</span>
+                    <span className="tag neutral">{humanizeKey(stringValue(progress.executionMode) || "unknown")}</span>
+                    <span className="tag neutral">{humanizeKey(stringValue(progress.completionPolicy) || "unknown")}</span>
                     <span className="tag neutral">Switch {humanizeKey(stringValue(progress.switchCost) || "unknown")}</span>
                   </div>
                 ) : null}
 
                 {progress ? <p className="card-paragraph">{stringValue(progress.progressNote)}</p> : null}
+
+                {progress ? (
+                  <div className="mini-metric-grid">
+                    <MiniMetric label="Assignment target" value={assignmentTarget} />
+                    <MiniMetric label="Last progress turn" value={nullableNumberText(progress.lastProgressTurn)} />
+                    <MiniMetric label="Stale after" value={nullableNumberText(progress.staleAfterTurn)} />
+                  </div>
+                ) : null}
+
+                {progress && stringValue(progress.detail) ? (
+                  <>
+                    <SectionLabel text="Assignment detail" />
+                    <p className="card-paragraph">{stringValue(progress.detail)}</p>
+                  </>
+                ) : null}
 
                 {reasons.length ? (
                   <>
@@ -3570,6 +3590,9 @@ function UnitHighlightsSection({ title, units }: { title: string; units: Record<
             const reachableTiles = objectArray(unit.reachableTiles)
               .map((tile) => formatCoordinateText(numberValue(tile.x), numberValue(tile.y)))
               .filter((label) => label !== "—");
+            const assignmentTarget = progress
+              ? formatCoordinateText(numberValue(progress.targetX), numberValue(progress.targetY))
+              : "—";
 
             return (
               <article key={`${stringValue(unit.name)}-${numberValue(unit.id) ?? index}`} className="structured-item">
@@ -3601,11 +3624,28 @@ function UnitHighlightsSection({ title, units }: { title: string; units: Record<
                   <div className="tag-list compact">
                     <span className="tag neutral">{humanizeKey(stringValue(progress.role) || "assignment")}</span>
                     <span className="tag neutral">{humanizeKey(stringValue(progress.status) || "unknown")}</span>
+                    <span className="tag neutral">{humanizeKey(stringValue(progress.executionMode) || "unknown")}</span>
+                    <span className="tag neutral">{humanizeKey(stringValue(progress.completionPolicy) || "unknown")}</span>
                     <span className="tag neutral">Switch {humanizeKey(stringValue(progress.switchCost) || "unknown")}</span>
                   </div>
                 ) : null}
 
                 {progress ? <p className="card-paragraph">{stringValue(progress.progressNote)}</p> : null}
+
+                {progress ? (
+                  <div className="mini-metric-grid">
+                    <MiniMetric label="Assignment target" value={assignmentTarget} />
+                    <MiniMetric label="Last progress turn" value={nullableNumberText(progress.lastProgressTurn)} />
+                    <MiniMetric label="Stale after" value={nullableNumberText(progress.staleAfterTurn)} />
+                  </div>
+                ) : null}
+
+                {progress && stringValue(progress.detail) ? (
+                  <>
+                    <SectionLabel text="Assignment detail" />
+                    <p className="card-paragraph">{stringValue(progress.detail)}</p>
+                  </>
+                ) : null}
 
                 {detailReasons.length ? (
                   <>
