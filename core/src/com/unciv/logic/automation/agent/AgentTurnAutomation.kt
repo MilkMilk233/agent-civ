@@ -2,7 +2,6 @@ package com.unciv.logic.automation.agent
 
 import com.unciv.logic.automation.civilization.NextTurnAutomation
 import com.unciv.logic.civilization.Civilization
-import com.unciv.models.UnitActionType
 import com.unciv.utils.Log
 import kotlin.math.max
 
@@ -889,8 +888,6 @@ object AgentTurnAutomation {
                     val unitId = parts.getOrNull(1)?.toIntOrNull()
                     if (unitId != null) touched += unitId
                 }
-                is AgentActionCommand.UnitMove -> touched += action.unitId
-                is AgentActionCommand.UnitAction -> touched += action.unitId
                 else -> Unit
             }
         }
@@ -988,8 +985,6 @@ object AgentTurnAutomation {
         return when {
             outcome.commandType == "select_unit_option" &&
                 outcome.reason == "Unit option rejected: frontier move is no longer attractive or reachable" -> true
-            outcome.commandType == "unit_move" &&
-                outcome.reason == "Unit move rejected: movement produced no position change" -> true
             action is AgentActionCommand.SelectUnitOption &&
                 hasCriticalAction &&
                 outcome.reason in setOf(
@@ -1021,9 +1016,6 @@ object AgentTurnAutomation {
             action.candidateId.startsWith("citybuild:") || action.candidateId.startsWith("citypurchase:")
         is AgentActionCommand.SelectUnitOption ->
             action.candidateId.startsWith("unitsettle:")
-        is AgentActionCommand.UnitAction ->
-            action.actionType == UnitActionType.FoundCity.name
-        is AgentActionCommand.UnitMove,
         is AgentActionCommand.EndTurn -> false
     }
 
@@ -1068,10 +1060,6 @@ object AgentTurnAutomation {
             outcome.commandType == "select_city_option" && action.candidateId == outcome.candidateId
         is AgentActionCommand.SelectUnitOption ->
             outcome.commandType == "select_unit_option" && action.candidateId == outcome.candidateId
-        is AgentActionCommand.UnitMove ->
-            outcome.commandType == "unit_move" && action.unitId == outcome.unitId
-        is AgentActionCommand.UnitAction ->
-            outcome.commandType == "unit_action" && action.unitId == outcome.unitId && action.actionType == outcome.actionType
         is AgentActionCommand.EndTurn -> false
     }
 

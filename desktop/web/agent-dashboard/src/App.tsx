@@ -850,6 +850,7 @@ function TurnDetail({
 }: {
   turn: TurnRecord;
 }) {
+  const strategistInferenceRan = hasStrategistInference(turn);
   const observation = asRecord(turn.observation);
   const empireObservation = asRecord(turn.empireObservation);
   const worldFacts = asRecord(turn.worldFacts);
@@ -920,41 +921,6 @@ function TurnDetail({
     }),
     [turn.civName, worldFacts, worldFactsCivs],
   );
-  const quickScanCards = [
-    {
-      label: "Strategist thesis",
-      text: firstNonEmptyText(
-        stringValue(strategistMemo?.thesis),
-        stringValue(strategy?.thesis),
-        turn.synopsis,
-      ) || "No strategist thesis recorded.",
-    },
-    {
-      label: "Priority window",
-      text: firstNonEmptyText(
-        stringValue(asRecord(strategy?.decisionFrame)?.whyNow),
-        stringValue(asRecord(strategy?.decisionFrame)?.nextCheckpoint),
-        stringValue(strategistMemo?.futurePlan),
-      ) || "No active priority window was surfaced.",
-    },
-    {
-      label: "Campaign focus",
-      text: firstNonEmptyText(
-        stringValue(campaignMemory?.summary),
-        stringValue(memoryContext?.campaignSummary),
-        stringValue(campaignContext?.primaryRivalCiv),
-      ) || "No campaign summary was carried into this turn.",
-    },
-    {
-      label: "This turn in one line",
-      text: firstNonEmptyText(
-        stringValue(parsedPlan?.notes),
-        stringValue(latestTerminalEvent?.message),
-        turn.turnSummary?.notes,
-      ) || "No compact action summary was recorded.",
-    },
-  ];
-
   return (
     <div className="detail-stack">
       {worldFactsOpen && worldFactsView ? (
@@ -1050,21 +1016,7 @@ function TurnDetail({
             value={turnMetrics.fallback ? "Fallback" : turnMetrics.blocked ? "Blocked" : "Stable"}
             note={`illegal ${formatPercent(turnMetrics.illegalActionRate)}`}
           />
-          <SummaryStat
-            label="Memory carried in"
-            value={`${formatNumber(memoryCityIntents)} city · ${formatNumber(memoryUnitAssignments)} unit`}
-            note={`${formatNumber(memoryRecentFailures)} recent failures`}
-          />
           <SummaryStat label="Latest event" value={formatRelative(turn.latestEpochMs)} />
-        </div>
-
-        <div className="quick-scan-grid">
-          {quickScanCards.map((item) => (
-            <article key={item.label} className="quick-scan-card">
-              <span>{item.label}</span>
-              <p>{item.text}</p>
-            </article>
-          ))}
         </div>
       </Card>
 
@@ -1090,23 +1042,6 @@ function TurnDetail({
         body="This is the shared notebook carried into the turn before any new strategist or tactical inference. It shows the durable world model, campaign notes, campaign-control state, and carried intents/failures."
       >
         <div className="compact-card-grid">
-          <Card className="full-span" title="Memory overview" subtitle="High-level shape of the notebook the agent brought into this turn.">
-            <div className="summary-grid compact">
-              <SummaryStat label="World notes" value={formatNumber(worldModelNotes.length)} note={`${formatNumber(worldModelAnchors.length)} anchors`} />
-              <SummaryStat label="Campaign notes" value={formatNumber(campaignNotes.length)} note={`${formatNumber(stringList(campaignMemory?.doNotDo).length)} cautions`} />
-              <SummaryStat label="Empire notes" value={formatNumber(empirePlanNotes.length)} />
-              <SummaryStat label="Recent changes" value={formatNumber(recentChangesMemory.length)} />
-              <SummaryStat label="Lessons" value={formatNumber(lessonsMemory.length)} />
-              <SummaryStat label="Tactician log" value={formatNumber(tacticianTurnLogMemory.length)} />
-              <SummaryStat label="Campaign holding costs" value={formatNumber(stringList(memoryCampaignControl?.holdingCosts).length)} />
-              <SummaryStat label="Campaign pivot triggers" value={formatNumber(stringList(memoryCampaignControl?.pivotTriggers).length)} />
-              <SummaryStat label="City intents" value={formatNumber(cityIntentsMemory.length)} />
-              <SummaryStat label="Unit assignments" value={formatNumber(unitAssignmentsMemory.length)} />
-              <SummaryStat label="Recent failures" value={formatNumber(recentFailuresMemory.length)} />
-              <SummaryStat label="Last memo review" value={formatNumber(numberValue(lastStrategistMemoMemory?.lastReviewedTurn))} />
-            </div>
-          </Card>
-
           <Card title="World model" subtitle="What the agent currently believes about the map and board-level reality across turns.">
             {worldModelMemory ? (
               <>
@@ -1217,21 +1152,25 @@ function TurnDetail({
         title="What the strategist saw"
         body="This is the strategist's input space: broad current state, the previous memo, factual changes since then, and compact city/unit snapshots."
       >
-        <div className="compact-card-grid">
-          <div className="full-span">
-            <StrategistContextSection
-              title="Strategist inputs"
-              brief={strategistBrief}
-              campaignControl={strategistCampaignControl}
-              threats={strategistRivalThreats}
-              campaignPicture={strategistCampaignPicture}
-            />
+        {strategistInferenceRan ? (
+          <div className="compact-card-grid">
+            <div className="full-span">
+              <StrategistContextSection
+                title="Strategist inputs"
+                brief={strategistBrief}
+                campaignControl={strategistCampaignControl}
+                threats={strategistRivalThreats}
+                campaignPicture={strategistCampaignPicture}
+              />
+            </div>
+            <StrategistRivalCitiesSection title="Visible rival cities" cities={strategistRivalCities} />
+            <StrategistRivalUnitsSection title="Visible rival units" units={strategistRivalUnits} />
+            <StrategistCitySnapshotsSection title="Strategist city snapshots" cities={strategistCitySnapshots} />
+            <StrategistUnitSnapshotsSection title="Strategist unit snapshots" units={strategistUnitSnapshots} />
           </div>
-          <StrategistRivalCitiesSection title="Visible rival cities" cities={strategistRivalCities} />
-          <StrategistRivalUnitsSection title="Visible rival units" units={strategistRivalUnits} />
-          <StrategistCitySnapshotsSection title="Strategist city snapshots" cities={strategistCitySnapshots} />
-          <StrategistUnitSnapshotsSection title="Strategist unit snapshots" units={strategistUnitSnapshots} />
-        </div>
+        ) : (
+          <p className="muted-text">There&apos;s no strategist inference at current turn.</p>
+        )}
       </SectionShell>
 
       <SectionShell
@@ -1240,68 +1179,72 @@ function TurnDetail({
         title="What the strategist output"
         body="This section contains only the strategist-generated memo and notebook handoff. It is kept separate from strategist inputs so you can compare what the strategist saw against what it concluded."
       >
-        <Card title="Strategist memo" subtitle="A compact report with fixed Past / Now / Future subtitles.">
-          {strategistMemo ? (
-            <>
-              <div className="summary-grid compact">
-                <SummaryStat label="Win path" value={stringValue(strategistMemo.winPath)} />
-                <SummaryStat label="Stage" value={stringValue(strategistMemo.campaignStage)} />
-                <SummaryStat label="Decisive objective" value={stringValue(strategistMemo.decisiveObjective)} />
-                <SummaryStat label="Strategist pass" value={strategistArtifacts ? "Ran this turn" : "Carried memo"} />
-                <SummaryStat
-                  label="Review max age"
-                  value={(numberValue(asRecord(strategistMemo.reviewContract)?.maxAgeTurns) ?? 0) > 0
-                    ? formatNumber(numberValue(asRecord(strategistMemo.reviewContract)?.maxAgeTurns))
-                    : "—"}
-                />
-                <SummaryStat label="Created" value={memoCreatedTurn === null ? "Unknown" : `Turn ${formatNumber(memoCreatedTurn)}`} />
-                <SummaryStat label="Last reviewed" value={memoLastReviewedTurn === null ? "Unknown" : `Turn ${formatNumber(memoLastReviewedTurn)}`} />
-              </div>
-              <p className="mini-note">
-                {strategistArtifacts
-                  ? "A fresh strategist LLM pass ran on this turn. Use the literal artifacts section below to inspect the exact request, raw response, and parsed strategist plan."
-                  : "No strategist LLM pass ran on this turn. The memo shown here was carried forward from earlier turns, and the tactician relied on current observation plus memory deltas."}
-              </p>
-              <p className="card-paragraph">{stringValue(strategistMemo.thesis) || "No strategist thesis recorded."}</p>
-              {stringValue(strategistMemo.conversionBlocker) ? (
-                <>
-                  <SectionLabel text="Conversion blocker" />
-                  <p className="card-paragraph">{stringValue(strategistMemo.conversionBlocker)}</p>
-                </>
-              ) : null}
-              <DecisionFrameBlock frame={asRecord(strategistMemo.decisionFrame)} />
-              <ControlLanesBlock lanes={asRecord(strategistMemo.controlLanes)} />
-              <ReviewContractBlock contract={asRecord(strategistMemo.reviewContract)} />
-              <CampaignControlLabelsBlock labels={asRecord(strategistMemo.campaignControl)} />
-              {stringValue(strategistMemo.pastSummary) ? (
-                <>
-                  <SectionLabel text="Past" />
-                  <p className="card-paragraph">{stringValue(strategistMemo.pastSummary)}</p>
-                </>
-              ) : null}
-              {stringValue(strategistMemo.currentSituation) ? (
-                <>
-                  <SectionLabel text="Now" />
-                  <p className="card-paragraph">{stringValue(strategistMemo.currentSituation)}</p>
-                </>
-              ) : null}
-              {stringValue(strategistMemo.futurePlan) ? (
-                <>
-                  <SectionLabel text="Future" />
-                  <p className="card-paragraph">{stringValue(strategistMemo.futurePlan)}</p>
-                </>
-              ) : null}
-              {stringValue(strategistMemo.tacticianHandoff) ? (
-                <>
-                  <SectionLabel text="Tactician handoff" />
-                  <p className="card-paragraph">{stringValue(strategistMemo.tacticianHandoff)}</p>
-                </>
-              ) : null}
-            </>
-          ) : (
-            <p className="muted-text">No strategist memo was recorded for this turn.</p>
-          )}
-        </Card>
+        {strategistInferenceRan ? (
+          <Card title="Strategist memo" subtitle="A compact report with fixed Past / Now / Future subtitles.">
+            {strategistMemo ? (
+              <>
+                <div className="summary-grid compact">
+                  <SummaryStat label="Win path" value={stringValue(strategistMemo.winPath)} />
+                  <SummaryStat label="Stage" value={stringValue(strategistMemo.campaignStage)} />
+                  <SummaryStat label="Decisive objective" value={stringValue(strategistMemo.decisiveObjective)} />
+                  <SummaryStat label="Strategist pass" value={strategistArtifacts ? "Ran this turn" : "Carried memo"} />
+                  <SummaryStat
+                    label="Review max age"
+                    value={(numberValue(asRecord(strategistMemo.reviewContract)?.maxAgeTurns) ?? 0) > 0
+                      ? formatNumber(numberValue(asRecord(strategistMemo.reviewContract)?.maxAgeTurns))
+                      : "—"}
+                  />
+                  <SummaryStat label="Created" value={memoCreatedTurn === null ? "Unknown" : `Turn ${formatNumber(memoCreatedTurn)}`} />
+                  <SummaryStat label="Last reviewed" value={memoLastReviewedTurn === null ? "Unknown" : `Turn ${formatNumber(memoLastReviewedTurn)}`} />
+                </div>
+                <p className="mini-note">
+                  {strategistArtifacts
+                    ? "A fresh strategist LLM pass ran on this turn. Use the literal artifacts section below to inspect the exact request, raw response, and parsed strategist plan."
+                    : "No strategist LLM pass ran on this turn. The memo shown here was carried forward from earlier turns, and the tactician relied on current observation plus memory deltas."}
+                </p>
+                <p className="card-paragraph">{stringValue(strategistMemo.thesis) || "No strategist thesis recorded."}</p>
+                {stringValue(strategistMemo.conversionBlocker) ? (
+                  <>
+                    <SectionLabel text="Conversion blocker" />
+                    <p className="card-paragraph">{stringValue(strategistMemo.conversionBlocker)}</p>
+                  </>
+                ) : null}
+                <DecisionFrameBlock frame={asRecord(strategistMemo.decisionFrame)} />
+                <ControlLanesBlock lanes={asRecord(strategistMemo.controlLanes)} />
+                <ReviewContractBlock contract={asRecord(strategistMemo.reviewContract)} />
+                <CampaignControlLabelsBlock labels={asRecord(strategistMemo.campaignControl)} />
+                {stringValue(strategistMemo.pastSummary) ? (
+                  <>
+                    <SectionLabel text="Past" />
+                    <p className="card-paragraph">{stringValue(strategistMemo.pastSummary)}</p>
+                  </>
+                ) : null}
+                {stringValue(strategistMemo.currentSituation) ? (
+                  <>
+                    <SectionLabel text="Now" />
+                    <p className="card-paragraph">{stringValue(strategistMemo.currentSituation)}</p>
+                  </>
+                ) : null}
+                {stringValue(strategistMemo.futurePlan) ? (
+                  <>
+                    <SectionLabel text="Future" />
+                    <p className="card-paragraph">{stringValue(strategistMemo.futurePlan)}</p>
+                  </>
+                ) : null}
+                {stringValue(strategistMemo.tacticianHandoff) ? (
+                  <>
+                    <SectionLabel text="Tactician handoff" />
+                    <p className="card-paragraph">{stringValue(strategistMemo.tacticianHandoff)}</p>
+                  </>
+                ) : null}
+              </>
+            ) : (
+              <p className="muted-text">No strategist memo was recorded for this turn.</p>
+            )}
+          </Card>
+        ) : (
+          <p className="muted-text">There&apos;s no strategist inference at current turn.</p>
+        )}
       </SectionShell>
 
       <SectionShell
@@ -3584,12 +3527,7 @@ function UnitHighlightsSection({ title, units }: { title: string; units: Record<
             const reasons = stringList(unit.reasons);
             const localFacts = stringList(unit.localFacts);
             const detailReasons = stringList(unit.detailReasons);
-            const rawUnitActions = stringList(unit.unitActions);
             const unitOptionCandidates = objectArray(unit.unitOptionCandidates).map(formatUnitOptionCandidateLabel).filter(Boolean);
-            const legalActionCandidates = objectArray(unit.legalActionCandidates).map(formatLegalActionCandidateLabel).filter(Boolean);
-            const reachableTiles = objectArray(unit.reachableTiles)
-              .map((tile) => formatCoordinateText(numberValue(tile.x), numberValue(tile.y)))
-              .filter((label) => label !== "—");
             const assignmentTarget = progress
               ? formatCoordinateText(numberValue(progress.targetX), numberValue(progress.targetY))
               : "—";
@@ -3617,7 +3555,6 @@ function UnitHighlightsSection({ title, units }: { title: string; units: Record<
                 <div className="mini-metric-grid">
                   <MiniMetric label="Nearby hostile units" value={formatNumber(numberValue(unit.nearbyHostileUnits))} />
                   <MiniMetric label="Nearby hostile cities" value={formatNumber(numberValue(unit.nearbyHostileCities))} />
-                  <MiniMetric label="Reachable tiles" value={formatNumber(reachableTiles.length)} />
                 </div>
 
                 {progress ? (
@@ -3668,31 +3605,10 @@ function UnitHighlightsSection({ title, units }: { title: string; units: Record<
                   </>
                 ) : null}
 
-                {rawUnitActions.length ? (
-                  <>
-                    <SectionLabel text="Raw unit actions" />
-                    <TagList values={rawUnitActions} />
-                  </>
-                ) : null}
-
                 {unitOptionCandidates.length ? (
                   <>
                     <SectionLabel text="Surfaced unit options" />
                     <TagList values={unitOptionCandidates} tone="accent" />
-                  </>
-                ) : null}
-
-                {legalActionCandidates.length ? (
-                  <>
-                    <SectionLabel text="Legal action candidates" />
-                    <TagList values={legalActionCandidates} tone="accent" />
-                  </>
-                ) : null}
-
-                {reachableTiles.length ? (
-                  <>
-                    <SectionLabel text="Reachable tiles for raw unit_move" />
-                    <TagList values={reachableTiles} />
                   </>
                 ) : null}
               </article>
@@ -4347,17 +4263,6 @@ function formatEmpireChoiceCandidateLabel(candidate: Record<string, unknown>): s
   return detail ? `${prefix} — ${detail}` : prefix;
 }
 
-function formatLegalActionCandidateLabel(candidate: Record<string, unknown>): string {
-  const title = stringValue(candidate.title) || stringValue(candidate.actionType) || "Unnamed legal action";
-  const rationale = stringValue(candidate.rationale);
-  const moveDestination = formatCoordinateText(numberValue(candidate.moveDestinationX), numberValue(candidate.moveDestinationY));
-  const target = formatCoordinateText(numberValue(candidate.targetX), numberValue(candidate.targetY));
-  const parts = [title];
-  if (moveDestination !== "—") parts.push(`move ${moveDestination}`);
-  if (target !== "—") parts.push(`target ${target}`);
-  return rationale ? `${parts.join(" · ")} — ${rationale}` : parts.join(" · ");
-}
-
 function formatUnitOptionCandidateLabel(candidate: Record<string, unknown>): string {
   const title = stringValue(candidate.title) || stringValue(candidate.candidateId) || "Unnamed unit option";
   const category = stringValue(candidate.category);
@@ -4426,10 +4331,6 @@ function describeAction(action: Record<string, unknown>, candidateLookup: Record
       return candidate ? `City choice: ${candidate.title}` : `Select city option ${candidateId}`;
     case "select_unit_option":
       return candidate ? `Unit choice: ${candidate.title}` : `Select unit option ${candidateId}`;
-    case "unit_move":
-      return `Move unit ${formatNumber(numberValue(action.unitId))} to (${formatNumber(numberValue(action.destinationX))}, ${formatNumber(numberValue(action.destinationY))})`;
-    case "unit_action":
-      return `Use ${stringValue(action.actionType)} with unit ${formatNumber(numberValue(action.unitId))}`;
     case "end_turn":
       return "End the turn";
     default:
@@ -4448,10 +4349,6 @@ function describeActionDetail(action: Record<string, unknown>, candidateLookup: 
       return candidate
         ? `${candidate.detail || "Chosen from the surfaced legal options."} Source: ${candidate.source}. Candidate ID: ${candidateId}.`
         : `Candidate ${candidateId} was chosen from the surfaced legal options.`;
-    case "unit_move":
-      return "Pure movement action selected for this unit.";
-    case "unit_action":
-      return "Direct unit command selected from current legal actions.";
     case "end_turn":
       return "Planner decided the turn could safely end after higher-priority actions.";
     default:

@@ -124,10 +124,7 @@ data class AgentUnitObservation(
     val strength: Int? = null,
     val rangedStrength: Int? = null,
     val range: Int? = null,
-    val unitActions: List<String>,
-    val legalActionCandidates: List<LegalActionCandidateObservation> = emptyList(),
     val unitOptionCandidates: List<UnitOptionCandidateObservation> = emptyList(),
-    val reachableTiles: List<TileRef>,
     val nearbyHostileUnits: Int,
     val nearbyHostileCities: Int,
     val reasons: List<String>,
@@ -141,6 +138,7 @@ data class UnitAssignmentProgressObservation(
     val targetX: Int? = null,
     val targetY: Int? = null,
     val detail: String? = null,
+    val assignmentCategory: String,
     val executionMode: String,
     val completionPolicy: String,
     val lastProgressTurn: Int? = null,
@@ -148,17 +146,6 @@ data class UnitAssignmentProgressObservation(
     val status: String,
     val progressNote: String,
     val switchCost: String,
-)
-
-@Serializable
-data class LegalActionCandidateObservation(
-    val actionType: String,
-    val title: String,
-    val moveDestinationX: Int? = null,
-    val moveDestinationY: Int? = null,
-    val targetX: Int? = null,
-    val targetY: Int? = null,
-    val rationale: String? = null,
 )
 
 @Serializable
@@ -191,12 +178,6 @@ data class PerceptionSummaryObservation(
     val totalUnits: Int,
     val expandedUnits: Int,
     val visibleTargets: Int,
-)
-
-@Serializable
-data class TileRef(
-    val x: Int,
-    val y: Int,
 )
 
 fun AgentCityObservation.allActionCandidates(): List<AgentCityActionCandidateObservation> = actions.allCandidates()

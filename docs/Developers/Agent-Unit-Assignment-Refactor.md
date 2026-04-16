@@ -518,6 +518,375 @@ That is a very favorable architecture for heuristic quality.
    - chosen attacks
    - blocked units and fallback behavior
 
+## Next refactor: assignment-only unit surface
+
+The assignment engine is now healthy enough that the next major cleanup should not be another
+small tactical patch. It should be a contract cleanup:
+
+- the tactician should choose unit assignments only
+- the lower heuristic should own all concrete unit execution
+- raw unit micromanagement should stop being part of the normal tactician API
+
+This is a different goal from the battle-theater planner work above.
+
+- the theater planner improves how assignments execute
+- the assignment-only refactor improves what the tactician is allowed to choose
+
+Both matter, but they solve different problems.
+
+### Why the mixed surface is still a problem
+
+Even after the assignment-engine work, the current unit surface is still split across:
+
+- assignment-like candidates
+- raw `unit_move`
+- raw `unit_action`
+- raw `unitActions`
+- raw `legalActionCandidates`
+- raw `reachableTiles`
+- leftover memory roles that only exist because older raw paths still exist
+
+That mixed surface creates three recurring problems:
+
+1. It makes the tactician contract harder to understand.
+   - Sometimes the model is choosing a multi-turn job.
+   - Sometimes it is choosing an exact tile.
+   - Sometimes it is choosing a raw engine verb.
+
+2. It makes validation and retries brittle.
+   - Assignment-type choices and one-turn micro orders obey different rules.
+   - Retry logic has to reason about both.
+
+3. It keeps stale implementation categories alive.
+   - Some memory roles only exist as bookkeeping for the mixed interface rather than as
+     meaningful unit jobs.
+
+The cleaner end state is:
+
+- every meaningful unit choice is an assignment choice
+- some assignments are one-shot
+- some assignments are finite
+- some assignments are persistent
+- all assignments are allowed to switch midstream
+
+### Canonical assignment taxonomy
+
+The long-term unit API should revolve around one small canonical list.
+
+#### Persistent assignments
+
+- `auto_explore`
+- `hold_position`
+- `heal_and_hold`
+- `stage_outside_border`
+- `reinforce_assault`
+- `assault_city_ring`
+- `recover_then_rejoin`
+- `preserve_capture_unit`
+
+These remain active until switched or invalidated.
+
+#### Finite assignments
+
+- `move_to_tile`
+- `settle_city_site`
+- `improve_tile`
+- `attack_target`
+
+These complete when their target condition is met.
+
+#### One-shot assignments
+
+- `stop_auto_explore`
+- `upgrade_self`
+- `pillage_here`
+- `use_special_ability`
+
+These are still assignments in the API sense, but they resolve immediately and then clear.
+
+### Roles that should be removed rather than preserved
+
+The following roles should not survive as part of the public assignment model:
+
+- `reposition`
+- `automation_change`
+- `execute_action`
+- `transient_wait`
+
+These are residual bridge categories from the older mixed control path.
+
+Their functionality should be absorbed into canonical assignments:
+
+- vague repositioning should become `move_to_tile` or a real operational role
+- automation switches should become explicit assignments like `auto_explore` or
+  `stop_auto_explore`
+- generic execute-action buckets should be replaced by one-shot semantic assignments
+- transient wait should not be treated as a real carried assignment
+
+This should be a replacement, not a compatibility layer.
+
+### What the tactician should see after this refactor
+
+For each unit, the tactician should only see:
+
+- current assignment
+- assignment category
+- assignment status
+- surfaced assignment candidates
+
+It should not normally see:
+
+- raw reachable tiles for freeform `unit_move`
+- raw engine action names as primary commands
+- direct `unit_action` plumbing
+
+The main tactician question should become:
+
+- what job should this unit have now?
+
+not:
+
+- which exact tile or engine verb should I click?
+
+### What validation should mean after this refactor
+
+Assignment validation should stay shallow and semantic.
+
+The validator should check:
+
+- the unit still exists
+- the assignment candidate still exists
+- the target or objective is still meaningful
+- the unit is compatible with that assignment family
+
+It should not reject the whole plan because:
+
+- this exact turn has no immediate good move
+- the unit is blocked for one turn
+- the lower heuristic chooses to hold instead of stepping
+
+That is execution behavior, not assignment invalidity.
+
+### What execution should mean after this refactor
+
+Once the tactician assigns a unit:
+
+- one-shot assignments resolve immediately and clear
+- finite assignments persist until complete
+- persistent assignments continue until switched or invalidated
+
+The lower heuristic should own:
+
+- pathing
+- exact tile choice
+- attack timing
+- temporary holds
+- fallback behavior when blocked
+- auto-transitions like recover -> rejoin
+
+This preserves the intended division of labor:
+
+- tactician chooses intent
+- heuristics choose execution
+
+### How many passes this should take
+
+This should be done in 4 focused passes.
+
+That is enough to replace the old design cleanly without trying to squeeze the entire migration
+into one risky patch.
+
+#### Pass A: Canonicalize memory and roles
+
+Scope:
+
+- remove residual unit-assignment role categories from memory
+- normalize all unit-assignment derivation onto the canonical taxonomy
+- introduce explicit assignment category semantics:
+  - one-shot
+  - finite
+  - persistent
+- make assignment memory the only real source of truth for unit jobs
+
+Why this pass comes first:
+
+- if memory still carries stale categories, the rest of the migration stays muddy
+- observation, validation, and UI all depend on this taxonomy being stable
+
+Status:
+
+- Completed.
+
+Notes:
+
+- `UnitAssignmentMemory` now carries an explicit assignment category field so the canonical
+  distinction between persistent, finite, and one-shot assignments exists in the data model
+  rather than only in surrounding code comments.
+- Fresh turn derivation no longer produces the residual role buckets:
+  - `reposition`
+  - `automation_change`
+  - `execute_action`
+  - `transient_wait`
+- Semantic direct-action carry-over is now normalized into canonical roles such as:
+  - `auto_explore`
+  - `stop_auto_explore`
+  - `upgrade_self`
+  - `pillage_here`
+  - `use_special_ability`
+- Existing carried unit assignments are now reconciled back through the canonical role defaults,
+  so execution mode, completion policy, and assignment category stay aligned even when old
+  serialized memory survives across turns.
+- Old strategic scoring branches that still referenced the legacy `explore` / `reposition`
+  wording were removed so the governor logic now speaks the canonical role vocabulary.
+
+Success bar:
+
+- `UnitAssignmentMemory` only uses canonical roles
+- no new turns create `reposition`, `automation_change`, `execute_action`, or
+  `transient_wait`
+
+#### Pass B: Convert the unit surface to assignment-only candidates
+
+Scope:
+
+- remove raw unit-control concepts from the tactician-facing observation
+- stop surfacing raw `reachableTiles`, `unitActions`, and `legalActionCandidates` as the
+  main unit interface
+- convert remaining meaningful direct unit choices into assignment-form candidates
+- ensure every surfaced unit choice maps to a canonical assignment
+
+Why this is its own pass:
+
+- this is the true API migration
+- it changes what the tactician sees and therefore what the LLM can emit
+
+Status:
+
+- Completed.
+
+Notes:
+
+- The tactician-facing unit observation no longer surfaces raw unit-control lists in practice:
+  - `unitActions`
+  - `legalActionCandidates`
+  - `reachableTiles`
+  are now emitted as empty lists for the planner packet.
+- Remaining semantic direct unit choices are now surfaced as explicit assignment-style candidates
+  instead of generic `unitspecial` actions, including:
+  - `unitautoexplore`
+  - `unitstopautoexplore`
+  - `unitheal`
+  - `unithold`
+  - `unitupgrade`
+  - `unitpillage`
+  - `unitability`
+- Assignment carry-over and assignment progress matching were updated to understand the new
+  explicit candidate IDs instead of the old generic direct-action bucket.
+- Strategist/governor heuristics that previously used raw unit-action visibility for settlement
+  or exploration cues now read assignment/candidate semantics instead.
+
+Success bar:
+
+- the tactician chooses unit jobs only
+- there is no longer a mixed unit surface
+
+#### Pass C: Remove raw unit commands from prompt, action plan, and executor
+
+Scope:
+
+- remove `unit_move` and `unit_action` from the tactician plan schema
+- update prompt instructions so unit control is assignment-only
+- simplify executor logic so unit plans resolve through assignment candidates only
+- remove unit-level mixed-command conflict rules that only existed because raw and assignment
+  paths coexisted
+
+Why this pass is separate:
+
+- prompt, schema, and executor must change together or the surface becomes inconsistent
+
+Status:
+
+- Completed.
+
+Notes:
+
+- `unit_move` and `unit_action` were removed from the tactician action schema.
+- The tactician prompt now describes unit control as assignment-only and no longer teaches raw
+  unit micromanagement as part of the supported planning contract.
+- The unit executor path now accepts unit plans through `select_unit_option` only.
+- The old mixed-command conflict logic was removed because there is no longer a raw unit-command
+  path for tactician plans to mix with assignment candidates.
+- Assignment derivation, touched-unit tracking, retry matching, and domain diagnostics were all
+  updated to remove the dead raw-command branches rather than preserving compatibility shims.
+
+Success bar:
+
+- unit planning uses `select_unit_option` only
+- executor no longer needs raw unit command handling for tactician plans
+
+#### Pass D: Clean frontend, observability, and old compatibility paths
+
+Scope:
+
+- remove raw unit-control sections from the dashboard
+- make the dashboard show only assignment state and assignment candidates
+- update observability and trace rendering to match the new assignment-only unit contract
+- remove leftover compatibility wording and dead backend branches that only existed for the old
+  mixed design
+
+Why this pass is worth doing explicitly:
+
+- otherwise the code may be clean while the UI and traces still teach the old model
+
+Status:
+
+- Completed.
+
+Notes:
+
+- The unit observation schema no longer includes the dead raw-control fields that only existed for
+  the previous mixed unit interface.
+- The dashboard no longer renders raw unit-control sections such as:
+  - raw unit actions
+  - legal action candidates
+  - reachable tiles for raw unit movement
+- Action-plan rendering in the dashboard no longer describes the removed raw unit command types.
+- The rebuilt dashboard bundle now reflects the assignment-only unit surface end to end.
+
+Success bar:
+
+- the user-facing trace and dashboard speak the same assignment language as the backend
+- no meaningful backend compatibility shims remain for the previous mixed unit-control model
+
+### Things this refactor intentionally does not solve
+
+This refactor should not be overloaded with battle-quality goals.
+
+It is about making the unit control abstraction clean and stable.
+
+It does not by itself guarantee:
+
+- better theater coordination
+- better group attack ordering
+- smarter city conquest
+
+Those remain the job of the battle-theater planner work above.
+
+### Recommended execution order
+
+1. complete Pass A before touching prompt/schema
+2. complete Pass B before removing raw commands from the action plan
+3. complete Pass C before trusting retry behavior as representative
+4. complete Pass D immediately after the backend migration so UI and traces do not teach the
+   wrong abstraction
+
+If this order is followed, the resulting system should finally match the intended mental model:
+
+- tactician chooses assignments
+- heuristics execute them
+- assignments may be one-shot, finite, or persistent
+- any assignment may be switched when the turn demands it
+
 ## Bottom line
 
 The current assignment architecture is now strong enough that the next gains should come from

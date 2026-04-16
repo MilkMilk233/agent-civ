@@ -18,7 +18,7 @@ enum class AgentControlDomain(val wireName: String) {
         ): AgentControlDomain? = when (commandType) {
             "select_empire_option" -> fromEmpireCandidateId(candidateId)
             "select_city_option" -> City
-            "select_unit_option", "unit_move", "unit_action" -> Unit
+            "select_unit_option" -> Unit
             else -> null
         }
 

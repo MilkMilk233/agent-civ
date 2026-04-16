@@ -52,8 +52,6 @@ object AgentPromptBuilder {
                 {"type":"select_empire_option","priority":0,"candidateId":"research:Pottery"},
                 {"type":"select_city_option","priority":1,"candidateId":"citybuild:0,0:Granary"},
                 {"type":"select_unit_option","priority":2,"candidateId":"unitattack:7:3,6:4,6"},
-                {"type":"unit_move","priority":0,"unitId":123,"destinationX":0,"destinationY":0},
-                {"type":"unit_action","priority":3,"unitId":123,"actionType":"FoundCity"},
                 {"type":"end_turn","priority":999}
               ],
               "handoffToLegacyAI": false,
@@ -98,7 +96,7 @@ object AgentPromptBuilder {
             - objectiveTheater is the surfaced battlefield around the current decisive objective. Treat it as the current operational map: those units and support cities are the ones that can materially affect the objective now, while the rest of the empire is compacted into reserves.
             - captureReadiness is the conversion read around the current objective. Use it to judge whether the current force package can actually take or hold the objective soon, especially whether healthy capture-capable melee are missing, worn down, or ready.
             - Some surfaced unit options are ongoing operational assignments rather than single-turn tile tactics. Options such as stage outside a border, reinforce an assault, assault a city ring, recover then rejoin, or preserve a capture unit hand the unit to a multi-turn heuristic that keeps advancing that role until you switch it.
-            - When those operational assignment options match the strategist frame, prefer them over ad hoc unit_move. Use raw unit_move mainly for exact one-turn placement or when no surfaced assignment captures the intent cleanly.
+            - Treat unit control as assignment-only. Your job is to choose the right surfaced unit assignment for this turn, not to micro exact unit tiles or raw engine verbs.
             - campaignControl is the companion control scaffold for the active campaign. Use it to understand how committed the empire already is, whether the battle package looks not_ready / nearly_ready / ready / overextended, whether supply looks healthy or strained, and what checkpoint should convert next.
             - Read campaignControl together with captureReadiness. If battleReadiness is low and supplyHealth is strained, do not keep growing a vanity army. If battleReadiness is ready and supplyHealth is still healthy, more passive staging becomes suspicious.
             - Use campaignControl like a strong human would use campaign judgment: a campaign should be stable enough to execute for a short window, but not so sticky that it survives missed checkpoints forever.
@@ -121,8 +119,6 @@ object AgentPromptBuilder {
             - In peaceful or duel setups, city tempo usually matters more than passive military posture or focus micro.
             - Use select_unit_option only with candidateId values from unitHighlights.unitOptionCandidates.
             - Treat select_unit_option as a complete candidate-based plan for that unit this turn. Do not issue more than one select_unit_option for the same unit.
-            - Do not mix select_unit_option with unit_move or unit_action for the same unit in the same plan.
-            - If a unit includes legalActionCandidates, copy the actionType exactly. If a legalActionCandidate includes moveDestinationX/moveDestinationY, emit unit_move first and then unit_action.
             - If a unit has assignmentProgress, prefer finishing the current assignment over chasing a new local opportunity unless there is a clearly stronger strategic reason to switch. A clear strategist frame toward war, marching, declaring, or an immediate city tempo pivot is such a stronger reason.
             - Treat assignmentProgress as a real ongoing assignment, not just a note about last turn. If you leave that unit untouched, the lower heuristic may keep advancing the assignment after planning.
             - assignmentProgress.executionMode tells you whether the assignment is pure notebook residue, a deferred heuristic that will step after planning, or a native engine automation mode. assignmentProgress.completionPolicy tells you whether it finishes on arrival, persists until switched, or lasts until invalidated.
@@ -130,12 +126,11 @@ object AgentPromptBuilder {
             - Read operational military unit options literally. stage outside border means durable prewar staging near the target. reinforce assault means keep marching toward the active battlefield as the second line. assault city ring means keep stepping into useful surround or firing slots and attack when the trade is good. recover then rejoin means fall back to heal while staying on the objective axis, then push back in. preserve capture unit means keep one healthy melee close enough to take the city later instead of trading it away early.
             - If captureReadiness says healthy capture-capable melee are thin, value preserve capture unit and reinforce assault more than another low-value chip attack or idle posture.
             - If frontline units are damaged but the campaign still points at the same city, prefer recover then rejoin over sleeping in place on an exposed frontline tile.
-            - For workers, prefer grounded worker candidateIds over raw unit_action, never invent worker action names, and do not default to Sleep, Skip, or Automate when a real worker move or improvement option exists.
+            - For workers, choose surfaced worker assignment candidates rather than inventing low-level worker commands, and do not default to Sleep, Skip, or Automate when a real worker job is available.
             - In a peaceful opener, prioritize worker tempo, capital growth, and safe expansion. Do not spend the turn only on passive unit posture when strong city or expansion choices exist.
             - In the mid and late game, do not float large gold reserves when meaningful purchases, upgrades, or other tempo gains are available.
             - Avoid repeating actions that previously produced no state change unless the current brief shows a new reason they matter now.
             - Prefer robust plans over brittle ones. If you have a high-value action like founding a city, switching a key build, choosing research, or declaring war, do not risk the whole turn on speculative frontier micro that is not essential.
-            - Avoid exact unit_move commands when the same unit already has a reasonable surfaced candidate action or when the move is only a minor positioning tweak. If an exact move is uncertain or low-impact, omit it rather than risking an invalid plan.
             - When mustActNow is non-empty, do not spend the turn only on low-value scouting, fortify, or reposition actions unless the current brief shows immediate danger or another clearly stronger tactical opportunity.
             - If mustActNow includes a city that still needs a project choice, that choice usually deserves action before extra map-polishing moves.
             - If mustActNow includes a Settler that can found on its current tile and the strategist memo still wants that city, founding it usually outranks routine observation moves.

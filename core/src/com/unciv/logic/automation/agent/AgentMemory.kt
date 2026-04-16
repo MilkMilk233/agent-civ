@@ -191,12 +191,13 @@ data class UnitAssignmentMemory(
     var targetX: Int? = null,
     var targetY: Int? = null,
     var detail: String? = null,
+    var assignmentCategory: String = "persistent",
     var executionMode: String = "memory_only",
     var completionPolicy: String = "until_stale",
     var lastProgressTurn: Int = 0,
     var staleAfterTurn: Int = 0,
 ) : IsPartOfGameInfoSerialization {
-    constructor() : this(0, "", "", null, null, null, "memory_only", "until_stale", 0, 0)
+    constructor() : this(0, "", "", null, null, null, "persistent", "memory_only", "until_stale", 0, 0)
 }
 
 @Serializable

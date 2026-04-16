@@ -305,7 +305,12 @@ object AgentStrategistGovernor {
             "scout" -> 40
             else -> 30
         }
-        if (!contactComplete && unit.hasMovement && unit.unitActions.any { it == "Explore" || it == "StopExploration" }) {
+        val hasExplorationAssignmentSurface = unit.assignmentProgress?.role == "auto_explore" ||
+            unit.unitOptionCandidates.any { candidate ->
+                candidate.candidateId.startsWith("unitautoexplore:") ||
+                    candidate.candidateId.startsWith("unitstopautoexplore:")
+            }
+        if (!contactComplete && unit.hasMovement && hasExplorationAssignmentSurface) {
             score += if (unit.role == "scout") 80 else 45
         }
         if (unit.nearbyHostileUnits > 0 || unit.nearbyHostileCities > 0) score += 40

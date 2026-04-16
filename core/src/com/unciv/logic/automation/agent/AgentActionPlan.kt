@@ -52,23 +52,6 @@ sealed class AgentActionCommand {
     ) : AgentActionCommand()
 
     @Serializable
-    @SerialName("unit_move")
-    data class UnitMove(
-        override val priority: Int = 0,
-        val unitId: Int,
-        val destinationX: Int,
-        val destinationY: Int,
-    ) : AgentActionCommand()
-
-    @Serializable
-    @SerialName("unit_action")
-    data class UnitAction(
-        override val priority: Int = 0,
-        val unitId: Int,
-        val actionType: String,
-    ) : AgentActionCommand()
-
-    @Serializable
     @SerialName("end_turn")
     data class EndTurn(
         override val priority: Int = Int.MAX_VALUE,

@@ -7,7 +7,6 @@ import com.unciv.logic.city.City
 import com.unciv.logic.civilization.Civilization
 import com.unciv.logic.map.mapunit.MapUnit
 import com.unciv.logic.map.tile.Tile
-import com.unciv.models.UnitAction
 import com.unciv.models.UnitActionType
 import com.unciv.models.ruleset.tile.ResourceType
 import com.unciv.ui.screens.worldscreen.unit.actions.UnitActions
@@ -17,7 +16,6 @@ object AgentObservationBuilder {
     private const val maxPriorityFacts = 8
     private const val maxOpportunityFacts = 8
     private const val maxVisibleTargets = 8
-    private const val maxReachableTilesPerUnit = 14
     private const val maxLocalFactsPerEntity = 4
     private const val maxCompactFactsPerEntity = 2
 
@@ -80,34 +78,18 @@ object AgentObservationBuilder {
         }
         val units = unitCandidates.map { candidate ->
             val unit = candidate.unit
-            val availableActions = collectAvailableUnitActions(unit)
             val unitOptionCandidates = unitOptionContext.observationsByUnitId[unit.id] ?: emptyList()
             val assignmentProgress = buildUnitAssignmentProgress(
                 unit = unit,
                 memory = memory,
                 unitOptionCandidates = unitOptionCandidates,
             )
-            val legalActionCandidates = buildLegalActionCandidates(
-                unit = unit,
-                role = candidate.role,
-                availableActions = availableActions,
-                memory = memory,
-            )
             val detailReasons = buildUnitDetailReasons(
                 candidate = candidate,
                 unitOptionCandidates = unitOptionCandidates,
-                legalActionCandidates = legalActionCandidates,
                 assignmentProgress = assignmentProgress,
             )
             val expanded = detailReasons.isNotEmpty()
-            val unitActionTypes = if (expanded) {
-                availableActions
-                    .map { it.type.name }
-                    .distinct()
-                    .sorted()
-            } else {
-                emptyList()
-            }
             AgentUnitObservation(
                 detailLevel = if (expanded) "expanded" else "compact",
                 detailReasons = detailReasons,
@@ -122,10 +104,7 @@ object AgentObservationBuilder {
                 strength = candidate.strength,
                 rangedStrength = candidate.rangedStrength,
                 range = candidate.range,
-                unitActions = unitActionTypes,
-                legalActionCandidates = if (expanded) legalActionCandidates else emptyList(),
                 unitOptionCandidates = if (expanded) unitOptionCandidates else emptyList(),
-                reachableTiles = if (expanded) buildReachableTiles(unit) else emptyList(),
                 nearbyHostileUnits = candidate.nearbyHostileUnits,
                 nearbyHostileCities = candidate.nearbyHostileCities,
                 reasons = candidate.reasons.take(if (expanded) maxLocalFactsPerEntity else maxCompactFactsPerEntity),
@@ -808,8 +787,11 @@ object AgentObservationBuilder {
 
         val targetByCoord = selectedTargets.associateBy { "${it.x},${it.y}" }
         for ((index, unitObservation) in selectedUnits.withIndex()) {
-            val hostileReachableTargets = unitObservation.reachableTiles
-                .mapNotNull { tileRef -> targetByCoord["${tileRef.x},${tileRef.y}"] }
+            val hostileReachableTargets = unitObservation.unitOptionCandidates
+                .mapNotNull { candidate ->
+                    val targetCoord = extractAttackTargetCoord(candidate.candidateId) ?: return@mapNotNull null
+                    targetByCoord["${targetCoord.first},${targetCoord.second}"]
+                }
                 .filter { it.relation == "war" || it.relation == "barbarian" }
             if (hostileReachableTargets.isNotEmpty()) {
                 val bestTarget = hostileReachableTargets.first()
@@ -817,8 +799,8 @@ object AgentObservationBuilder {
                     priority = 115 - index,
                     category = "war",
                     severity = if (bestTarget.kind == "unit" && bestTarget.facts.any { it == "Civilian" }) "warning" else "info",
-                    headline = "${unitObservation.name} #${unitObservation.id} can reach a visible target",
-                    detail = "A reachable hostile ${bestTarget.kind} is already in the unit's known movement map at (${bestTarget.x}, ${bestTarget.y}).",
+                    headline = "${unitObservation.name} #${unitObservation.id} has a grounded attack option",
+                    detail = "A surfaced attack-target assignment already points at the visible hostile ${bestTarget.kind} at (${bestTarget.x}, ${bestTarget.y}).",
                 )
             }
         }
@@ -854,13 +836,12 @@ object AgentObservationBuilder {
     private fun buildUnitDetailReasons(
         candidate: UnitCandidate,
         unitOptionCandidates: List<UnitOptionCandidateObservation>,
-        legalActionCandidates: List<LegalActionCandidateObservation>,
         assignmentProgress: UnitAssignmentProgressObservation?,
     ): List<String> {
         val reasons = linkedSetOf<String>()
         val unit = candidate.unit
         if (unit.hasMovement()) reasons += "free_to_act"
-        if (unitOptionCandidates.isNotEmpty() || legalActionCandidates.isNotEmpty()) reasons += "has_grounded_options"
+        if (unitOptionCandidates.isNotEmpty()) reasons += "has_grounded_options"
         if (candidate.nearbyHostileUnits > 0 || candidate.nearbyHostileCities > 0) reasons += "local_threat"
         if (assignmentProgress?.status in setOf("ready_to_finish", "on_target", "assignment_at_risk")) {
             reasons += "assignment_requires_review"
@@ -905,83 +886,23 @@ object AgentObservationBuilder {
         return civInfo.cities.size <= 2
     }
 
-    private fun collectAvailableUnitActions(unit: MapUnit): List<UnitAction> {
-        return UnitActions.getUnitActions(unit)
-            .asSequence()
-            .filter { it.action != null }
-            .toList()
-    }
-
-    private fun buildLegalActionCandidates(
-        unit: MapUnit,
-        role: String,
-        availableActions: List<UnitAction>,
-        memory: AgentMemory,
-    ): List<LegalActionCandidateObservation> {
-        if (role != "worker") return emptyList()
-
-        val preferredCurrentAction = AgentWorkerJobPlanner.preferredCurrentAction(availableActions)
-
-        return AgentWorkerJobPlanner.findWorkerJobs(unit, currentAssignment = findUnitAssignment(memory, unit.id))
-            .mapNotNull { job ->
-                val isCurrentTile = unit.getTile().position.x == job.tileX && unit.getTile().position.y == job.tileY
-                when {
-                    isCurrentTile && job.isRepair -> LegalActionCandidateObservation(
-                        actionType = UnitActionType.Repair.name,
-                        title = if (job.isInProgress) "Continue repair" else "Repair current tile",
-                        targetX = job.tileX,
-                        targetY = job.tileY,
-                        rationale = job.description,
-                    )
-                    isCurrentTile && job.improvementName != null -> LegalActionCandidateObservation(
-                        actionType = UnitActionType.ConstructImprovement.name,
-                        title = if (job.isInProgress) {
-                            "Continue [${job.improvementName}]"
-                        } else {
-                            "Start [${job.improvementName}]"
-                        },
-                        targetX = job.tileX,
-                        targetY = job.tileY,
-                        rationale = job.description,
-                    )
-                    isCurrentTile && preferredCurrentAction != null -> LegalActionCandidateObservation(
-                        actionType = preferredCurrentAction.type.name,
-                        title = preferredCurrentAction.title,
-                        targetX = job.tileX,
-                        targetY = job.tileY,
-                        rationale = job.description,
-                    )
-                    else -> null
-                }
-            }
-            .distinctBy {
-                listOf(
-                    it.actionType,
-                    it.title,
-                    it.moveDestinationX,
-                    it.moveDestinationY,
-                    it.targetX,
-                    it.targetY,
-                ).joinToString("|")
-            }
-            .take(4)
-    }
-
-    private fun buildReachableTiles(unit: MapUnit): List<TileRef> {
-        return unit.movement.getDistanceToTiles().keys
-            .asSequence()
-            .map { TileRef(it.position.x, it.position.y) }
-            .distinct()
-            .take(maxReachableTilesPerUnit)
-            .toList()
-    }
-
     private fun findCityIntent(memory: AgentMemory, city: City): CityIntentMemory? {
         return memory.cityIntents.firstOrNull { it.cityX == city.location.x && it.cityY == city.location.y }
     }
 
     private fun findUnitAssignment(memory: AgentMemory, unitId: Int): UnitAssignmentMemory? {
         return memory.unitAssignments.firstOrNull { it.unitId == unitId }
+    }
+
+    private fun extractAttackTargetCoord(candidateId: String): Pair<Int, Int>? {
+        if (!candidateId.startsWith("unitattack:")) return null
+        val target = candidateId.substringAfterLast(':', "")
+        val coords = target.split(",", limit = 2)
+        if (coords.size != 2) return null
+        return Pair(
+            coords[0].toIntOrNull() ?: return null,
+            coords[1].toIntOrNull() ?: return null,
+        )
     }
 
     private fun buildProjectObservation(
@@ -1062,7 +983,7 @@ object AgentObservationBuilder {
         val readyToFinish = unitOptionCandidates.any { candidate ->
             candidate.candidateId.startsWith("unitworkerimprove:${unit.id}:${assignment.targetX},${assignment.targetY}:") ||
                 candidate.candidateId == "unitsettle:${unit.id}:${assignment.targetX},${assignment.targetY}" ||
-                candidate.candidateId.startsWith("unitspecial:${unit.id}:")
+                candidateMatchesAssignment(candidate.candidateId, assignment)
         }
         val status = when {
             assignment.role == "auto_explore" && unit.isExploring() -> "automation_active"
@@ -1094,6 +1015,7 @@ object AgentObservationBuilder {
             targetX = assignment.targetX,
             targetY = assignment.targetY,
             detail = assignment.detail,
+            assignmentCategory = assignment.assignmentCategory,
             executionMode = assignment.executionMode,
             completionPolicy = assignment.completionPolicy,
             lastProgressTurn = assignment.lastProgressTurn,
@@ -1113,7 +1035,13 @@ object AgentObservationBuilder {
                 assignment.targetX != null &&
                 assignment.targetY != null &&
                 candidateId.endsWith(":${assignment.targetX},${assignment.targetY}") -> true
-            candidateId.startsWith("unitspecial:${assignment.unitId}:") -> assignment.targetX == null && assignment.targetY == null
+            candidateId == "unitautoexplore:${assignment.unitId}" -> assignment.role == "auto_explore"
+            candidateId == "unitstopautoexplore:${assignment.unitId}" -> assignment.role == "stop_auto_explore"
+            candidateId.startsWith("unitheal:${assignment.unitId}:") -> assignment.role == "heal_and_hold"
+            candidateId.startsWith("unithold:${assignment.unitId}:") -> assignment.role == "hold_position"
+            candidateId.startsWith("unitupgrade:${assignment.unitId}:") -> assignment.role == "upgrade_self"
+            candidateId.startsWith("unitpillage:${assignment.unitId}:") -> assignment.role == "pillage_here"
+            candidateId.startsWith("unitability:${assignment.unitId}:") -> assignment.role == "use_special_ability"
             else -> false
         }
     }

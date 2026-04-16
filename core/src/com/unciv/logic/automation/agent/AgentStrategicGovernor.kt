@@ -203,11 +203,10 @@ object AgentStrategicGovernor {
         val settlersReadyToFound = observation.units
             .filter { unit ->
                 unit.role == "settler" &&
-                    (unit.unitActions.contains("FoundCity") ||
-                        unit.unitOptionCandidates.any { candidate ->
-                            candidate.candidateId.startsWith("unitsettle:") &&
-                                candidate.title.contains("found city here", ignoreCase = true)
-                        })
+                    unit.unitOptionCandidates.any { candidate ->
+                        candidate.candidateId.startsWith("unitsettle:") &&
+                            candidate.title.contains("found city here", ignoreCase = true)
+                    }
             }
         if (settlersReadyToFound.isNotEmpty()) {
             items += AgentPlannerMustActObservation(
@@ -709,7 +708,7 @@ object AgentStrategicGovernor {
         unitHighlights
             .mapNotNull { unit ->
                 unit.assignmentProgress?.let { assignment ->
-                    if (warLikeContext && assignment.role in setOf("explore", "reposition")) return@let null
+                    if (warLikeContext && assignment.role == "auto_explore") return@let null
                     AgentPlannerProgressObservation(
                         category = "unit",
                         label = "${unit.name} #${unit.id}",
@@ -847,7 +846,12 @@ object AgentStrategicGovernor {
             "scout" -> if (gameContext.contactComplete) if (warLikeContext) -10 else 5 else 40
             else -> 30
         }
-        if (!gameContext.contactComplete && unit.hasMovement && unit.unitActions.any { it == "Explore" || it == "StopExploration" }) {
+        val hasExplorationAssignmentSurface = unit.assignmentProgress?.role == "auto_explore" ||
+            unit.unitOptionCandidates.any { candidate ->
+                candidate.candidateId.startsWith("unitautoexplore:") ||
+                    candidate.candidateId.startsWith("unitstopautoexplore:")
+            }
+        if (!gameContext.contactComplete && unit.hasMovement && hasExplorationAssignmentSurface) {
             score += if (unit.role == "scout") 70 else 40
         }
         if (unit.unitOptionCandidates.any { it.candidateId.startsWith("unitattack:") }) score += 40
@@ -856,7 +860,7 @@ object AgentStrategicGovernor {
         if (unit.detailLevel == "expanded") score += 20
         val assignment = unit.assignmentProgress
         if (assignment != null) {
-            if (warLikeContext && assignment.role in setOf("explore", "reposition")) {
+            if (warLikeContext && assignment.role == "auto_explore") {
                 score -= 25
             } else {
                 if (assignment.status == "on_target") score += 20
@@ -869,7 +873,7 @@ object AgentStrategicGovernor {
             score += (40 - distance * 4).coerceAtLeast(0)
             if (unit.hasMovement) score += 10
         }
-        if (unit.hasMovement && unit.unitActions.any { it == "Explore" } && !gameContext.contactComplete) score += 10
+        if (unit.hasMovement && hasExplorationAssignmentSurface && !gameContext.contactComplete) score += 10
         return score
     }
 
