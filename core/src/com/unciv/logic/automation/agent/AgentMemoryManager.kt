@@ -55,10 +55,12 @@ object AgentMemoryManager {
                     .filter { it.staleAfterTurn >= turn && cityKey(it.cityX, it.cityY) in validCities }
                     .map { it.copy(reasons = ArrayList(it.reasons)) }
             ),
-            unitAssignments = ArrayList(
+            unitAssignments = reconcileLiveUnitAssignments(
                 existing.unitAssignments
                     .filter { it.staleAfterTurn >= turn && it.unitId in validUnits }
-                    .map { it.copy() }
+                    .map { it.copy() },
+                validUnits.values,
+                turn,
             ),
             recentFailures = ArrayList(
                 existing.recentFailures
@@ -557,6 +559,51 @@ object AgentMemoryManager {
             unitAssignments = ArrayList(memory.unitAssignments.map { it.copy() }),
             recentFailures = ArrayList(memory.recentFailures.map { it.copy() }),
         )
+    }
+
+    private fun reconcileLiveUnitAssignments(
+        assignments: List<UnitAssignmentMemory>,
+        liveUnits: Collection<MapUnit>,
+        turn: Int,
+    ): ArrayList<UnitAssignmentMemory> {
+        val unitsById = liveUnits.associateBy { it.id }
+        val reconciled = linkedMapOf<Int, UnitAssignmentMemory>()
+
+        for (assignment in assignments) {
+            val unit = unitsById[assignment.unitId] ?: continue
+            if (assignment.role == "auto_explore" && !unit.isExploring()) continue
+            reconciled[assignment.unitId] = if (assignment.role == "auto_explore") {
+                assignment.copy(
+                    unitName = unit.name,
+                    targetX = unit.getTile().position.x,
+                    targetY = unit.getTile().position.y,
+                    detail = assignment.detail ?: "Auto-explore active",
+                    executionMode = "engine_auto",
+                    completionPolicy = "until_switched",
+                    lastProgressTurn = turn,
+                    staleAfterTurn = turn + unitAssignmentHorizonTurns,
+                )
+            } else {
+                assignment.copy(unitName = unit.name)
+            }
+        }
+
+        for (unit in liveUnits) {
+            if (!unit.isExploring()) continue
+            val existing = reconciled[unit.id]
+            if (existing != null && existing.role != "auto_explore") continue
+            reconciled[unit.id] = buildUnitAssignmentMemory(
+                unitId = unit.id,
+                unitName = unit.name,
+                role = "auto_explore",
+                targetX = unit.getTile().position.x,
+                targetY = unit.getTile().position.y,
+                detail = "Auto-explore active",
+                turn = turn,
+            )
+        }
+
+        return ArrayList(reconciled.values)
     }
 
     private data class CampaignControlSnapshot(
