@@ -94,7 +94,6 @@ data class AgentEvaluationTurnSummary(
     val illegalActionRate: Double = 0.0,
     val notes: String? = null,
     val topConcern: String? = null,
-    val screenshotFileName: String? = null,
 )
 
 @Serializable
@@ -129,7 +128,6 @@ object AgentEvaluationStore {
     private const val eventsFile = "events.jsonl"
     private const val configFile = "config.json"
     private const val finalSaveFile = "final-game.uncivsave"
-    private const val screenshotsDirName = "screenshots"
     private const val staleRunThresholdMs = 3 * 60 * 1000L
 
     fun rootDir(): Path = Paths.get(
@@ -139,8 +137,6 @@ object AgentEvaluationStore {
     fun batchDir(batchId: String): Path = rootDir().resolve(batchesDirName).resolve(batchId)
 
     fun matchDir(batchId: String, matchId: String): Path = batchDir(batchId).resolve("matches").resolve(matchId)
-
-    fun screenshotsDir(batchId: String, matchId: String): Path = matchDir(batchId, matchId).resolve(screenshotsDirName)
 
     fun writeBatchSummary(summary: AgentEvaluationBatchSummary) {
         writeJson(batchDir(summary.batchId).resolve(batchSummaryFile), summary)
@@ -186,38 +182,6 @@ object AgentEvaluationStore {
         return path.fileName.toString()
     }
 
-    fun writeTurnScreenshot(batchId: String, matchId: String, civName: String, turn: Int, pngBytes: ByteArray): String {
-        val fileName = turnScreenshotFileName(civName, turn)
-        val path = screenshotsDir(batchId, matchId).resolve(fileName)
-        ensureParent(path)
-        Files.write(
-            path,
-            pngBytes,
-            StandardOpenOption.CREATE,
-            StandardOpenOption.TRUNCATE_EXISTING,
-            StandardOpenOption.WRITE,
-        )
-        return fileName
-    }
-
-    fun turnScreenshotFileName(civName: String, turn: Int): String {
-        return "${sanitizeForFileName(civName)}-turn-${turn.toString().padStart(4, '0')}.png"
-    }
-
-    fun findTurnScreenshotFileName(batchId: String, matchId: String, civName: String, turn: Int): String? {
-        val fileName = turnScreenshotFileName(civName, turn)
-        val path = screenshotsDir(batchId, matchId).resolve(fileName)
-        return fileName.takeIf { path.exists() }
-    }
-
-    fun loadTurnScreenshot(batchId: String, matchId: String, fileName: String): ByteArray? {
-        val path = screenshotsDir(batchId, matchId).resolve(fileName).normalize()
-        val screenshotsRoot = screenshotsDir(batchId, matchId).normalize()
-        if (!path.startsWith(screenshotsRoot)) return null
-        if (!path.exists()) return null
-        return runCatching { Files.readAllBytes(path) }.getOrNull()
-    }
-
     fun reconcileStaleRunningEntries(
         activeBatchId: String? = null,
         nowEpochMs: Long = System.currentTimeMillis(),
@@ -259,18 +223,7 @@ object AgentEvaluationStore {
     }
 
     fun loadTurnSummaries(batchId: String, matchId: String): List<AgentEvaluationTurnSummary> {
-        return (readJsonOrNull<List<AgentEvaluationTurnSummary>>(matchDir(batchId, matchId).resolve(turnSummaryFile)) ?: emptyList())
-            .map { summary ->
-                if (summary.screenshotFileName != null) summary
-                else summary.copy(
-                    screenshotFileName = findTurnScreenshotFileName(
-                        batchId = batchId,
-                        matchId = matchId,
-                        civName = summary.civName,
-                        turn = summary.turn,
-                    ),
-                )
-            }
+        return readJsonOrNull<List<AgentEvaluationTurnSummary>>(matchDir(batchId, matchId).resolve(turnSummaryFile)) ?: emptyList()
     }
 
     fun loadEvents(batchId: String, matchId: String): List<AgentObservabilityEvent> {
@@ -327,15 +280,6 @@ object AgentEvaluationStore {
     private fun ensureParent(path: Path) {
         Files.createDirectories(path.parent)
     }
-
-    private fun sanitizeForFileName(value: String): String {
-        return value
-            .lowercase()
-            .replace(Regex("[^a-z0-9]+"), "-")
-            .trim('-')
-            .ifBlank { "civ" }
-    }
-
     private fun abortBatch(summary: AgentEvaluationBatchSummary, finishedAtEpochMs: Long) {
         val matches = listMatches(summary.batchId).map { matchSummary ->
             if (matchSummary.status == "running") abortMatch(matchSummary) else matchSummary

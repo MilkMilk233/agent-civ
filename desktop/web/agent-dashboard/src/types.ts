@@ -89,7 +89,6 @@ export interface TurnSummary {
   illegalActionRate: number;
   notes?: string | null;
   topConcern?: string | null;
-  screenshotFileName?: string | null;
 }
 
 export interface ReplayResponse {

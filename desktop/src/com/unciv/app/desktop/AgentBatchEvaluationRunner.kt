@@ -7,7 +7,6 @@ import com.unciv.json.fromJsonFile
 import com.unciv.json.json
 import com.unciv.logic.GameStarter
 import com.unciv.logic.automation.agent.AgentObservability
-import com.unciv.logic.map.tile.Tile
 import com.unciv.logic.civilization.PlayerType
 import com.unciv.logic.map.MapParameters
 import com.unciv.models.metadata.GameParameters
@@ -17,11 +16,8 @@ import com.unciv.models.metadata.Player
 import com.unciv.models.ruleset.RulesetCache
 import com.unciv.models.skins.SkinCache
 import com.unciv.models.tilesets.TileSetCache
-import com.unciv.ui.components.tilegroups.TileGroupMap
-import com.unciv.utils.Concurrency
 import com.unciv.utils.Log
 import java.util.concurrent.CancellationException
-import kotlin.math.min
 import kotlin.time.ExperimentalTime
 
 data class AgentEvaluationConfig(
@@ -253,27 +249,13 @@ object AgentBatchEvaluationRunner {
 
             println("Running ${initialSummary.label}")
             throwIfCancelled()
-            val supportsBattlefieldSnapshots = AgentBatchEvaluationEnvironment.isRenderCapable()
-            if (supportsBattlefieldSnapshots) {
-                runTurnByTurnMatch(
-                    batchId = batchId,
-                    matchId = matchId,
-                    gameInfo = gameInfo,
-                    agentCivName = agentCivNameValue,
-                    maxTurns = config.maxTurns,
-                    capturedEvents = capturedEvents,
-                    shouldCancel = shouldCancel,
-                )
-            } else {
-                gameInfo.simulateUntilWin = true
-                gameInfo.simulateMaxTurns = config.maxTurns
-                gameInfo.nextTurn()
-            }
+            gameInfo.simulateUntilWin = true
+            gameInfo.simulateMaxTurns = config.maxTurns
+            gameInfo.nextTurn()
             throwIfCancelled()
 
             val finishedAt = System.currentTimeMillis()
             val turnSummaries = AgentEvaluationAnalyzer.analyzeTurns(capturedEvents, agentCivNameValue)
-                .withReplayScreenshots(batchId, matchId)
             AgentEvaluationStore.writeTurnSummaries(batchId, matchId, turnSummaries)
             var matchSummary = AgentEvaluationAnalyzer.buildMatchSummary(
                 batchId = batchId,
@@ -309,7 +291,7 @@ object AgentBatchEvaluationRunner {
         } catch (ex: CancellationException) {
             val finishedAt = System.currentTimeMillis()
             val turnSummaries = agentCivName
-                ?.let { AgentEvaluationAnalyzer.analyzeTurns(capturedEvents, it).withReplayScreenshots(batchId, matchId) }
+                ?.let { AgentEvaluationAnalyzer.analyzeTurns(capturedEvents, it) }
                 ?: emptyList()
             AgentEvaluationStore.writeTurnSummaries(batchId, matchId, turnSummaries)
 
@@ -380,164 +362,6 @@ object AgentBatchEvaluationRunner {
         } finally {
             listenerId?.let(AgentObservability::removeListener)
             traceWriter?.close()
-        }
-    }
-
-    private fun runTurnByTurnMatch(
-        batchId: String,
-        matchId: String,
-        gameInfo: com.unciv.logic.GameInfo,
-        agentCivName: String,
-        maxTurns: Int,
-        capturedEvents: List<com.unciv.logic.automation.agent.AgentObservabilityEvent>,
-        shouldCancel: () -> Boolean,
-    ) {
-        val capturedTurns = mutableSetOf<Int>()
-        gameInfo.simulateUntilWin = true
-        gameInfo.simulateMaxTurns = maxTurns
-
-        while (gameInfo.simulateUntilWin && gameInfo.turns < maxTurns) {
-            if (shouldCancel() || Thread.currentThread().isInterrupted) {
-                throw CancellationException("Batch cancelled by user")
-            }
-
-            val nextStopTurn = gameInfo.turns + 1
-            gameInfo.simulateMaxTurns = nextStopTurn
-            UncivGame.Current.gameInfo = gameInfo
-            gameInfo.nextTurn()
-
-            val resolvedTurn = capturedEvents
-                .lastOrNull { event ->
-                    event.civName == agentCivName &&
-                        event.type in setOf("plan_applied", "fallback_legacy", "plan_missing")
-                }
-                ?.turn
-
-            if (resolvedTurn != null && capturedTurns.add(resolvedTurn)) {
-                captureBattlefieldSnapshot(batchId, matchId, agentCivName, resolvedTurn, gameInfo)
-            }
-        }
-    }
-
-    private fun captureBattlefieldSnapshot(
-        batchId: String,
-        matchId: String,
-        civName: String,
-        turn: Int,
-        gameInfo: com.unciv.logic.GameInfo,
-    ) {
-        runCatching {
-            val originalShowTutorials = runCatching { UncivGame.Current.settings.showTutorials }.getOrDefault(true)
-            val originalShowSettlerSuggestions = runCatching {
-                UncivGame.Current.settings.showSettlersSuggestedCityLocations
-            }.getOrDefault(true)
-            val liveGameInfo = gameInfo
-            val displayGameInfo = gameInfo.clone()
-            displayGameInfo.tileMap.mapParameters = displayGameInfo.tileMap.mapParameters.clone().apply {
-                worldWrap = false
-            }
-            displayGameInfo.currentPlayer = civName
-            displayGameInfo.setTransients()
-            val viewingCiv = displayGameInfo.getCivilization(civName)
-            viewingCiv.popupAlerts.clear()
-            viewingCiv.tradeRequests.clear()
-            viewingCiv.greatPeople.freeGreatPeople = 0
-            viewingCiv.flagsCountdown.remove("ShowDiplomaticVotingResults")
-
-            UncivGame.Current.settings.showTutorials = false
-            UncivGame.Current.settings.showSettlersSuggestedCityLocations = false
-            try {
-                Concurrency.runBlocking("agent-dashboard-load-turn-$turn") {
-                    UncivGame.Current.loadGame(displayGameInfo)
-                }
-
-                UncivGame.Current.worldScreen?.clearSelectionForCapture()
-
-                focusWorldScreenForScreenshot(civName)
-                val pngBytes = AgentLiveScreenshotService.capturePng()
-                AgentLiveTurnScreenshotStore.save(AgentObservability.currentGeneration(), civName, turn, pngBytes)
-                AgentEvaluationStore.writeTurnScreenshot(batchId, matchId, civName, turn, pngBytes)
-            } finally {
-                runCatching {
-                    Concurrency.runBlocking("agent-dashboard-restore-live-game-$turn") {
-                        UncivGame.Current.loadGame(liveGameInfo)
-                    }
-                }.onFailure { restoreError ->
-                    Log.debug("Agent dashboard failed to restore live game after screenshot capture for %s turn %s", civName, turn)
-                    Log.debug(restoreError.toString())
-                }
-                UncivGame.Current.settings.showTutorials = originalShowTutorials
-                UncivGame.Current.settings.showSettlersSuggestedCityLocations = originalShowSettlerSuggestions
-            }
-        }.onFailure { error ->
-            Log.debug("Agent dashboard screenshot capture failed for %s turn %s", civName, turn)
-            Log.debug(error.toString())
-        }
-    }
-
-    private fun focusWorldScreenForScreenshot(civName: String) {
-        val worldScreen = UncivGame.Current.worldScreen ?: return
-        val mapHolder = worldScreen.mapHolder
-        val viewingCiv = worldScreen.gameInfo.getCivilization(civName)
-
-        val interestTiles = LinkedHashSet<Tile>()
-        interestTiles.addAll(viewingCiv.cities.map { it.getCenterTile() })
-        interestTiles.addAll(viewingCiv.units.getCivUnits().map { it.getTile() })
-        interestTiles.addAll(
-            viewingCiv.viewableTiles.filter { tile ->
-                tile.isCityCenter() && tile.getCity()?.civ != viewingCiv
-            },
-        )
-        interestTiles.addAll(
-            viewingCiv.viewableTiles
-                .flatMap { tile ->
-                    tile.getUnits().filter { unit ->
-                        unit.civ != viewingCiv
-                    }.map { it.getTile() }
-                },
-        )
-
-        if (interestTiles.isEmpty()) {
-            viewingCiv.getCapital()?.getCenterTile()?.let(interestTiles::add)
-            viewingCiv.units.getCivUnits().firstOrNull()?.getTile()?.let(interestTiles::add)
-        }
-
-        val interestGroups = interestTiles.mapNotNull(mapHolder.tileGroups::get).distinct()
-        if (interestGroups.isEmpty()) return
-
-        val padding = TileGroupMap.groupSize * 2f
-        val minX = interestGroups.minOf { it.x } - padding
-        val maxX = interestGroups.maxOf { it.x + it.width } + padding
-        val minY = interestGroups.minOf { it.y } - padding
-        val maxY = interestGroups.maxOf { it.y + it.height } + padding
-
-        val desiredWidth = maxX - minX
-        val desiredHeight = maxY - minY
-        val targetZoom = min(
-            (mapHolder.width * mapHolder.scaleX) / desiredWidth,
-            (mapHolder.height * mapHolder.scaleY) / desiredHeight,
-        )
-
-        mapHolder.zoom(targetZoom)
-        val centerX = (minX + maxX) / 2f
-        val centerY = (minY + maxY) / 2f
-        mapHolder.scrollTo(centerX, mapHolder.maxY - centerY, immediately = true)
-        worldScreen.shouldUpdate = true
-    }
-
-    private fun List<AgentEvaluationTurnSummary>.withReplayScreenshots(
-        batchId: String,
-        matchId: String,
-    ): List<AgentEvaluationTurnSummary> {
-        return map { turnSummary ->
-            turnSummary.copy(
-                screenshotFileName = AgentEvaluationStore.findTurnScreenshotFileName(
-                    batchId = batchId,
-                    matchId = matchId,
-                    civName = turnSummary.civName,
-                    turn = turnSummary.turn,
-                ),
-            )
         }
     }
 

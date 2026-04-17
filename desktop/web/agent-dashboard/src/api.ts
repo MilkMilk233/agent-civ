@@ -17,33 +17,8 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  replayTurnScreenshotFileName(civName: string, turn: number) {
-    const sanitizedCivName = civName
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "civ";
-    return `${sanitizedCivName}-turn-${String(turn).padStart(4, "0")}.png`;
-  },
   snapshot(limit = 2000) {
     return requestJson<SnapshotResponse>(`/api/snapshot?limit=${limit}`);
-  },
-  liveTurnScreenshotUrl(civName: string, turn: number, generation: number, cacheKey?: string | number) {
-    const params = new URLSearchParams({
-      civName,
-      turn: String(turn),
-      generation: String(generation),
-    });
-    if (cacheKey !== undefined && cacheKey !== null) params.set("ts", String(cacheKey));
-    return `/api/live-turn-screenshot?${params.toString()}`;
-  },
-  historyTurnScreenshotUrl(batchId: string, matchId: string, fileName: string, cacheKey?: string | number) {
-    const params = new URLSearchParams({
-      batchId,
-      matchId,
-      fileName,
-    });
-    if (cacheKey !== undefined && cacheKey !== null) params.set("ts", String(cacheKey));
-    return `/api/history/turn-screenshot?${params.toString()}`;
   },
   batches() {
     return requestJson<BatchSummary[]>("/api/history/batches");

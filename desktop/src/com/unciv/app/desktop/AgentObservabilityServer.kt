@@ -51,21 +51,6 @@ object AgentObservabilityServer {
                     AgentObservability.snapshotJson(parseSnapshotLimit(exchange)),
                     "application/json; charset=utf-8",
                 )
-                path == "/api/live-turn-screenshot" -> {
-                    val civName = queryParam(exchange, "civName")
-                    val turn = queryParam(exchange, "turn")?.toIntOrNull()
-                    val generation = queryParam(exchange, "generation")?.toLongOrNull() ?: AgentObservability.currentGeneration()
-                    if (civName.isNullOrBlank() || turn == null) {
-                        respond(exchange, 400, """{"error":"Missing civName or turn"}""", "application/json; charset=utf-8")
-                    } else {
-                        val screenshot = AgentLiveTurnScreenshotStore.load(generation, civName, turn)
-                        if (screenshot == null) {
-                            respond(exchange, 404, """{"error":"Live turn screenshot not found"}""", "application/json; charset=utf-8")
-                        } else {
-                            respondBytes(exchange, 200, screenshot, "image/png")
-                        }
-                    }
-                }
                 path == "/api/history/batches" -> respond(
                     exchange,
                     200,
@@ -196,21 +181,6 @@ object AgentObservabilityServer {
                                 AgentEvaluationJson.json.encodeToString(replay),
                                 "application/json; charset=utf-8",
                             )
-                        }
-                    }
-                }
-                path == "/api/history/turn-screenshot" -> {
-                    val batchId = queryParam(exchange, "batchId")
-                    val matchId = queryParam(exchange, "matchId")
-                    val fileName = queryParam(exchange, "fileName")
-                    if (batchId.isNullOrBlank() || matchId.isNullOrBlank() || fileName.isNullOrBlank()) {
-                        respond(exchange, 400, """{"error":"Missing batchId, matchId, or fileName"}""", "application/json; charset=utf-8")
-                    } else {
-                        val screenshot = AgentEvaluationStore.loadTurnScreenshot(batchId, matchId, fileName)
-                        if (screenshot == null) {
-                            respond(exchange, 404, """{"error":"Turn screenshot not found"}""", "application/json; charset=utf-8")
-                        } else {
-                            respondBytes(exchange, 200, screenshot, "image/png")
                         }
                     }
                 }
