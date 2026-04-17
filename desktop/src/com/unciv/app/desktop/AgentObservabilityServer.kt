@@ -5,6 +5,7 @@ import com.sun.net.httpserver.HttpServer
 import com.unciv.logic.automation.agent.AgentObservability
 import com.unciv.utils.Log
 import java.net.InetSocketAddress
+import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.Executors
 import kotlinx.serialization.encodeToString
@@ -50,6 +51,21 @@ object AgentObservabilityServer {
                     AgentObservability.snapshotJson(parseSnapshotLimit(exchange)),
                     "application/json; charset=utf-8",
                 )
+                path == "/api/live-turn-screenshot" -> {
+                    val civName = queryParam(exchange, "civName")
+                    val turn = queryParam(exchange, "turn")?.toIntOrNull()
+                    val generation = queryParam(exchange, "generation")?.toLongOrNull() ?: AgentObservability.currentGeneration()
+                    if (civName.isNullOrBlank() || turn == null) {
+                        respond(exchange, 400, """{"error":"Missing civName or turn"}""", "application/json; charset=utf-8")
+                    } else {
+                        val screenshot = AgentLiveTurnScreenshotStore.load(generation, civName, turn)
+                        if (screenshot == null) {
+                            respond(exchange, 404, """{"error":"Live turn screenshot not found"}""", "application/json; charset=utf-8")
+                        } else {
+                            respondBytes(exchange, 200, screenshot, "image/png")
+                        }
+                    }
+                }
                 path == "/api/history/batches" -> respond(
                     exchange,
                     200,
@@ -183,6 +199,21 @@ object AgentObservabilityServer {
                         }
                     }
                 }
+                path == "/api/history/turn-screenshot" -> {
+                    val batchId = queryParam(exchange, "batchId")
+                    val matchId = queryParam(exchange, "matchId")
+                    val fileName = queryParam(exchange, "fileName")
+                    if (batchId.isNullOrBlank() || matchId.isNullOrBlank() || fileName.isNullOrBlank()) {
+                        respond(exchange, 400, """{"error":"Missing batchId, matchId, or fileName"}""", "application/json; charset=utf-8")
+                    } else {
+                        val screenshot = AgentEvaluationStore.loadTurnScreenshot(batchId, matchId, fileName)
+                        if (screenshot == null) {
+                            respond(exchange, 404, """{"error":"Turn screenshot not found"}""", "application/json; charset=utf-8")
+                        } else {
+                            respondBytes(exchange, 200, screenshot, "image/png")
+                        }
+                    }
+                }
                 else -> respond(exchange, 404, "Not found", "text/plain; charset=utf-8")
             }
         }
@@ -200,6 +231,10 @@ object AgentObservabilityServer {
 
     private fun respond(exchange: HttpExchange, status: Int, body: String, contentType: String) {
         val bytes = body.toByteArray(StandardCharsets.UTF_8)
+        respondBytes(exchange, status, bytes, contentType)
+    }
+
+    private fun respondBytes(exchange: HttpExchange, status: Int, bytes: ByteArray, contentType: String) {
         exchange.responseHeaders.add("Content-Type", contentType)
         exchange.responseHeaders.add("Cache-Control", "no-store")
         exchange.responseHeaders.add("Access-Control-Allow-Origin", "*")
@@ -226,9 +261,14 @@ object AgentObservabilityServer {
             .split('&')
             .firstNotNullOfOrNull { entry ->
                 val parts = entry.split('=', limit = 2)
-                if (parts.firstOrNull() != name) return@firstNotNullOfOrNull null
-                parts.getOrNull(1)
+                val decodedName = parts.firstOrNull()?.let { decodeQueryComponent(it) } ?: return@firstNotNullOfOrNull null
+                if (decodedName != name) return@firstNotNullOfOrNull null
+                parts.getOrNull(1)?.let(::decodeQueryComponent)
             }
+    }
+
+    private fun decodeQueryComponent(value: String): String {
+        return URLDecoder.decode(value, StandardCharsets.UTF_8)
     }
 
     private fun respondResource(exchange: HttpExchange, resourcePath: String, contentType: String) {

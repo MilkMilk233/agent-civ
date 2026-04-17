@@ -10,6 +10,7 @@ export interface ObservabilityEvent {
 
 export interface SnapshotResponse {
   startedAtEpochMs: number;
+  generation: number;
   generatedAtEpochMs: number;
   totalBufferedEvents: number;
   recentEvents: ObservabilityEvent[];
@@ -88,6 +89,7 @@ export interface TurnSummary {
   illegalActionRate: number;
   notes?: string | null;
   topConcern?: string | null;
+  screenshotFileName?: string | null;
 }
 
 export interface ReplayResponse {

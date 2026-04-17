@@ -111,7 +111,7 @@ object AgentBatchRunnerService {
 
     fun formOptions(): AgentBatchRunnerFormOptions {
         synchronized(lock) {
-            check(launchEnabled) { "Batch launch options are only available from the replay server." }
+            check(launchEnabled) { "Batch launch options are only available from dashboard mode." }
         }
 
         AgentBatchEvaluationEnvironment.ensureReady()
@@ -197,7 +197,7 @@ object AgentBatchRunnerService {
         val startedAt = System.currentTimeMillis()
 
         synchronized(lock) {
-            check(launchEnabled) { "Batch launch is only available from the replay server." }
+            check(launchEnabled) { "Batch launch is only available from dashboard mode." }
             check(!running) { "A batch is already running. Wait for it to finish before starting another." }
             running = true
             currentBatchId = batchId
@@ -258,7 +258,7 @@ object AgentBatchRunnerService {
 
     fun cancel(): AgentBatchRunnerStatus {
         synchronized(lock) {
-            check(launchEnabled) { "Batch cancel is only available from the replay server." }
+            check(launchEnabled) { "Batch cancel is only available from dashboard mode." }
             check(running) { "No batch is currently running." }
             cancelRequested = true
             currentTask?.cancel(true)

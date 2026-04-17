@@ -61,6 +61,7 @@ internal object DesktopLauncher {
             exitProcess(0)
         }
 
+        val agentDashboardMode = arg.any { it == "--agentdashboard" }
         if (arg.any { it == "--agentreplay" }) {
             AgentReplayServerLauncher.main(emptyArray())
             exitProcess(0)
@@ -102,8 +103,12 @@ internal object DesktopLauncher {
         // Setup Desktop logging
         Log.backend = DesktopLogBackend()
 
+        if (agentDashboardMode) {
+            AgentBatchRunnerService.enableDashboardLaunches()
+        }
+
         // Start optional local observability dashboard for AI-agent diagnostics.
-        AgentObservabilityServer.startFromEnvironment()
+        AgentObservabilityServer.startFromEnvironment(forceEnable = agentDashboardMode)
 
         // Setup Desktop display
         Display.platform = DesktopDisplay()

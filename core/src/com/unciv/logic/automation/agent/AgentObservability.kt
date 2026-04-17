@@ -29,6 +29,7 @@ object AgentObservability {
     private val lock = Any()
     private val nextId = AtomicLong(1)
     private val startedAtEpochMs = System.currentTimeMillis()
+    private val generation = AtomicLong(1)
     private val events = ArrayDeque<AgentObservabilityEvent>()
     private val listeners = LinkedHashMap<Long, (AgentObservabilityEvent) -> Unit>()
     private val nextListenerId = AtomicLong(1)
@@ -89,6 +90,7 @@ object AgentObservability {
 
         return AgentObservabilitySnapshot(
             startedAtEpochMs = startedAtEpochMs,
+            generation = generation.get(),
             generatedAtEpochMs = System.currentTimeMillis(),
             totalBufferedEvents = synchronized(lock) { events.size },
             recentEvents = recentEvents,
@@ -102,10 +104,13 @@ object AgentObservability {
 
     fun maxBufferedEvents(): Int = maxEvents
 
+    fun currentGeneration(): Long = generation.get()
+
     fun clear() {
         synchronized(lock) {
             events.clear()
         }
+        generation.incrementAndGet()
     }
 
     fun addListener(listener: (AgentObservabilityEvent) -> Unit): Long {
@@ -126,6 +131,7 @@ object AgentObservability {
 @Serializable
 data class AgentObservabilitySnapshot(
     val startedAtEpochMs: Long,
+    val generation: Long,
     val generatedAtEpochMs: Long,
     val totalBufferedEvents: Int,
     val recentEvents: List<AgentObservabilityEvent>,

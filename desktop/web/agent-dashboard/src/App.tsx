@@ -125,6 +125,26 @@ export default function App() {
     () => buildMetricTimeline(turns, selectedTimelineMetric),
     [selectedTimelineMetric, turns],
   );
+  const replayTurnScreenshotUrl = useMemo(() => {
+    const screenshotFileName = selectedTurn?.turnSummary?.screenshotFileName;
+    if (mode !== "replay" || !selectedBatchId || !selectedMatchId || !screenshotFileName) return "";
+    return api.historyTurnScreenshotUrl(
+      selectedBatchId,
+      selectedMatchId,
+      screenshotFileName,
+      `${selectedTurn.key}-${selectedTurn.latestEpochMs}`,
+    );
+  }, [mode, selectedBatchId, selectedMatchId, selectedTurn]);
+  const liveTurnScreenshotUrl = useMemo(() => {
+    if (mode !== "live" || !snapshot || !selectedTurn) return "";
+    return api.liveTurnScreenshotUrl(
+      selectedTurn.civName,
+      selectedTurn.turn,
+      snapshot.generation,
+      `${selectedTurn.key}-${selectedTurn.latestEpochMs}`,
+    );
+  }, [mode, selectedTurn, snapshot]);
+  const battlefieldScreenshotUrl = mode === "live" ? liveTurnScreenshotUrl : replayTurnScreenshotUrl;
   const selectedBatch = batches.find((batch) => batch.batchId === selectedBatchId) ?? null;
   const selectedMatch = matches.find((match) => match.matchId === selectedMatchId) ?? null;
 
@@ -351,7 +371,7 @@ export default function App() {
         </aside>
 
         <section className="detail-pane">
-          {selectedTurn ? <TurnDetail turn={selectedTurn} /> : <EmptyState />}
+          {selectedTurn ? <TurnDetail turn={selectedTurn} battlefieldScreenshotUrl={battlefieldScreenshotUrl} /> : <EmptyState />}
         </section>
       </section>
 
@@ -847,8 +867,10 @@ function ScoreTimelineCard({
 
 function TurnDetail({
   turn,
+  battlefieldScreenshotUrl,
 }: {
   turn: TurnRecord;
+  battlefieldScreenshotUrl?: string;
 }) {
   const strategistInferenceRan = hasStrategistInference(turn);
   const observation = asRecord(turn.observation);
@@ -1032,6 +1054,10 @@ function TurnDetail({
           { id: "section-events", label: "Events" },
         ]}
       />
+
+      {battlefieldScreenshotUrl ? (
+        <BattlefieldScreenshotCard screenshotUrl={battlefieldScreenshotUrl} turn={turn} />
+      ) : null}
 
       {worldFactsView ? <WorldFactsLaunchSection onOpen={() => setWorldFactsOpen(true)} /> : null}
 
@@ -1509,6 +1535,44 @@ function TurnDetail({
         </details>
       </SectionShell>
     </div>
+  );
+}
+
+function BattlefieldScreenshotCard({
+  screenshotUrl,
+  turn,
+}: {
+  screenshotUrl: string;
+  turn: TurnRecord;
+}) {
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  useEffect(() => {
+    setLoadFailed(false);
+  }, [screenshotUrl]);
+
+  return (
+    <Card
+      title="Battlefield view"
+      subtitle={`Turn-scoped battlefield frame for ${turn.civName} on turn ${turn.turn}.`}
+    >
+      <div className="battlefield-screenshot-frame">
+        {!loadFailed ? (
+          <img
+            key={screenshotUrl}
+            className="battlefield-screenshot-image"
+            src={screenshotUrl}
+            alt={`Battlefield screenshot for ${turn.civName} turn ${turn.turn}`}
+            onLoad={() => setLoadFailed(false)}
+            onError={() => setLoadFailed(true)}
+          />
+        ) : (
+          <div className="battlefield-screenshot-empty">
+            No battlefield screenshot is available for this turn.
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }
 

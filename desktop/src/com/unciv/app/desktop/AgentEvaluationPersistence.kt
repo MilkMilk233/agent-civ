@@ -94,6 +94,7 @@ data class AgentEvaluationTurnSummary(
     val illegalActionRate: Double = 0.0,
     val notes: String? = null,
     val topConcern: String? = null,
+    val screenshotFileName: String? = null,
 )
 
 @Serializable
@@ -128,6 +129,7 @@ object AgentEvaluationStore {
     private const val eventsFile = "events.jsonl"
     private const val configFile = "config.json"
     private const val finalSaveFile = "final-game.uncivsave"
+    private const val screenshotsDirName = "screenshots"
     private const val staleRunThresholdMs = 3 * 60 * 1000L
 
     fun rootDir(): Path = Paths.get(
@@ -137,6 +139,8 @@ object AgentEvaluationStore {
     fun batchDir(batchId: String): Path = rootDir().resolve(batchesDirName).resolve(batchId)
 
     fun matchDir(batchId: String, matchId: String): Path = batchDir(batchId).resolve("matches").resolve(matchId)
+
+    fun screenshotsDir(batchId: String, matchId: String): Path = matchDir(batchId, matchId).resolve(screenshotsDirName)
 
     fun writeBatchSummary(summary: AgentEvaluationBatchSummary) {
         writeJson(batchDir(summary.batchId).resolve(batchSummaryFile), summary)
@@ -180,6 +184,28 @@ object AgentEvaluationStore {
             StandardOpenOption.WRITE,
         )
         return path.fileName.toString()
+    }
+
+    fun writeTurnScreenshot(batchId: String, matchId: String, civName: String, turn: Int, pngBytes: ByteArray): String {
+        val fileName = "${sanitizeForFileName(civName)}-turn-${turn.toString().padStart(4, '0')}.png"
+        val path = screenshotsDir(batchId, matchId).resolve(fileName)
+        ensureParent(path)
+        Files.write(
+            path,
+            pngBytes,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+            StandardOpenOption.WRITE,
+        )
+        return fileName
+    }
+
+    fun loadTurnScreenshot(batchId: String, matchId: String, fileName: String): ByteArray? {
+        val path = screenshotsDir(batchId, matchId).resolve(fileName).normalize()
+        val screenshotsRoot = screenshotsDir(batchId, matchId).normalize()
+        if (!path.startsWith(screenshotsRoot)) return null
+        if (!path.exists()) return null
+        return runCatching { Files.readAllBytes(path) }.getOrNull()
     }
 
     fun reconcileStaleRunningEntries(
@@ -279,6 +305,14 @@ object AgentEvaluationStore {
 
     private fun ensureParent(path: Path) {
         Files.createDirectories(path.parent)
+    }
+
+    private fun sanitizeForFileName(value: String): String {
+        return value
+            .lowercase()
+            .replace(Regex("[^a-z0-9]+"), "-")
+            .trim('-')
+            .ifBlank { "civ" }
     }
 
     private fun abortBatch(summary: AgentEvaluationBatchSummary, finishedAtEpochMs: Long) {

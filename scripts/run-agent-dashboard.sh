@@ -40,9 +40,9 @@ build_frontend() {
 }
 
 start_backend() {
-  echo "Starting Unciv replay dashboard on http://localhost:${UNCIV_AGENT_OBS_PORT:-7071}/ ..."
+  echo "Starting Unciv dashboard with live renderer on http://localhost:${UNCIV_AGENT_OBS_PORT:-7071}/ ..."
   cd "$ROOT_DIR"
-  exec ./gradlew desktop:run --args="--agentreplay"
+  exec ./gradlew desktop:run --args="--agentdashboard"
 }
 
 load_nvm
