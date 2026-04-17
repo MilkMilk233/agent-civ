@@ -17,6 +17,13 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  replayTurnScreenshotFileName(civName: string, turn: number) {
+    const sanitizedCivName = civName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "civ";
+    return `${sanitizedCivName}-turn-${String(turn).padStart(4, "0")}.png`;
+  },
   snapshot(limit = 2000) {
     return requestJson<SnapshotResponse>(`/api/snapshot?limit=${limit}`);
   },

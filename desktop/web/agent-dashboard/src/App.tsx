@@ -126,8 +126,9 @@ export default function App() {
     [selectedTimelineMetric, turns],
   );
   const replayTurnScreenshotUrl = useMemo(() => {
-    const screenshotFileName = selectedTurn?.turnSummary?.screenshotFileName;
-    if (mode !== "replay" || !selectedBatchId || !selectedMatchId || !screenshotFileName) return "";
+    if (mode !== "replay" || !selectedBatchId || !selectedMatchId || !selectedTurn) return "";
+    const screenshotFileName = selectedTurn.turnSummary?.screenshotFileName
+      || api.replayTurnScreenshotFileName(selectedTurn.civName, selectedTurn.turn);
     return api.historyTurnScreenshotUrl(
       selectedBatchId,
       selectedMatchId,

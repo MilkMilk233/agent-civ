@@ -70,7 +70,7 @@ object AgentStrategicGovernor {
             progressInMotion = progressInMotion,
             empireChoices = AgentPlannerEmpireChoicesObservation(
                 researchChoices = empireObservation.researchCandidates.take(if (empireObservation.currentResearch == null || empireObservation.freeTechs > 0) 3 else 2),
-                policyChoices = empireObservation.policyCandidates.take(2),
+                policyChoices = empireObservation.policyCandidates.take(3),
                 macroChoices = empireObservation.macroCandidates.take(2),
                 diplomacyChoices = empireObservation.diplomacyCandidates.take(if (gameContext.contactComplete && gameContext.duelLike) 1 else 2),
             ),
@@ -223,6 +223,28 @@ object AgentStrategicGovernor {
                 kind = "research_choice_missing",
                 headline = "Research choice is still unresolved",
                 detail = empireObservation.researchCandidates.take(3).joinToString(", ") { it.title },
+            )
+        }
+
+        if (empireObservation.policyCandidates.isNotEmpty()) {
+            items += AgentPlannerMustActObservation(
+                kind = "policy_choice_available",
+                headline = when {
+                    empireObservation.freePolicies > 0 ->
+                        "A free social policy is waiting to be adopted"
+                    else ->
+                        "A social policy can be adopted now"
+                },
+                detail = buildString {
+                    append(empireObservation.policyCandidates.take(3).joinToString(", ") { it.title })
+                    if (empireObservation.freePolicies > 0) {
+                        append(" | ${empireObservation.freePolicies} free policy")
+                        if (empireObservation.freePolicies > 1) append(" slots")
+                        append(" available")
+                    } else {
+                        append(" | stored culture ${empireObservation.storedCulture}")
+                    }
+                },
             )
         }
 

@@ -98,7 +98,7 @@ object AgentPromptBuilder {
             - Use controlLanes to preserve tactician ownership, not to surrender it. They are expectation envelopes, not exact scripts. Choose the best surfaced actions that fit inside those envelopes.
             - decisionFocus is the packet's mode-aware cockpit for this turn. criticalChoicesNow are the decisions that should dominate this turn, backgroundChores are the things that should not crowd them out, launchCohort is the compact battle package view when the line is war-facing, supplySnapshot is the compact sustainment picture, and actionSurfaceMismatch lists places where the current surfaced options may not fully support the strategist frame.
             - When decisionFocus is present, let its criticalChoicesNow outrank background chores unless the current visible board state shows a clearly stronger emergency.
-            - Planner Brief JSON may also include mustActNow. These are the hard unresolved commitments visible on this exact turn, such as a city still needing a real build choice, a Settler that can found immediately, or research still being unchosen.
+            - Planner Brief JSON may also include mustActNow. These are the hard unresolved commitments visible on this exact turn, such as a city still needing a real build choice, a Settler that can found immediately, research still being unchosen, or a social policy that can already be adopted.
             - Use only the surfaced legal candidate actions and exact action types from the brief. Do not invent unsupported commands or mod mechanics.
             - Use Memory JSON only for continuity helpers that are not already expressed in the planner brief: map anchors, lingering city intents, unit assignments, and recent failures.
             - Plan like a strong tactical player serving the strategist memo. Reconstruct the current situation from the packets you were given, then choose the best exact legal actions for this turn.
@@ -151,6 +151,7 @@ object AgentPromptBuilder {
             - When mustActNow is non-empty, do not spend the turn only on low-value scouting, fortify, or reposition actions unless the current brief shows immediate danger or another clearly stronger tactical opportunity.
             - If mustActNow includes a city that still needs a project choice, that choice usually deserves action before extra map-polishing moves.
             - If mustActNow includes a Settler that can found on its current tile and the strategist memo still wants that city, founding it usually outranks routine observation moves.
+            - If mustActNow includes an adoptable social policy, spend it this turn unless the brief shows a clearly stronger immediate emergency.
             - If mustActNow says the current plan should pivot, do not spend the turn on “one more turn of staging” unless the current brief shows a concrete immediate payoff for that delay.
             - If mustActNow says a launch window is open, treat that like a real tempo warning rather than a decorative note.
             - If mustActNow says campaign supply is under pressure, do not keep choosing actions whose main effect is to make the current stalled line even more expensive.
