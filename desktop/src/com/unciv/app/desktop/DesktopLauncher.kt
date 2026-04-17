@@ -1,5 +1,6 @@
 package com.unciv.app.desktop
 
+import com.badlogic.gdx.backends.lwjgl3.Lwjgl3Application
 import com.badlogic.gdx.backends.lwjgl3.Lwjgl3ApplicationConfiguration
 import com.badlogic.gdx.files.FileHandle
 import com.badlogic.gdx.graphics.glutils.HdpiMode
@@ -22,6 +23,7 @@ import com.unciv.ui.components.fonts.Fonts
 import com.unciv.ui.screens.basescreen.BaseScreen
 import com.unciv.utils.Display
 import com.unciv.utils.Log
+import com.unciv.utils.PlatformDisplay
 import org.lwjgl.system.Configuration
 import java.awt.GraphicsEnvironment
 import java.awt.Image
@@ -62,6 +64,11 @@ internal object DesktopLauncher {
         }
 
         val agentDashboardMode = arg.any { it == "--agentdashboard" }
+        val agentRenderArg = arg.find { it.startsWith("--agentrender=") }
+        val agentRenderRequest = agentRenderArg
+            ?.substringAfter("=")
+            ?.takeIf { it.isNotBlank() }
+            ?.let(AgentBattlefieldRenderRequest::fromFile)
         if (arg.any { it == "--agenthistory" }) {
             AgentHistoryServerLauncher.main(emptyArray())
             exitProcess(0)
@@ -114,14 +121,24 @@ internal object DesktopLauncher {
         // Start optional local observability dashboard for AI-agent diagnostics.
         AgentObservabilityServer.startFromEnvironment(forceEnable = agentDashboardMode)
 
-        // Setup Desktop display
-        Display.platform = DesktopDisplay()
+        // The replay render worker does not need desktop screen-mode integration.
+        Display.platform = if (agentRenderRequest != null) {
+            object : PlatformDisplay {}
+        } else {
+            DesktopDisplay()
+        }
 
         // Setup Desktop font
         Fonts.fontImplementation = DesktopFont()
 
-        // Setup Desktop saver-loader
-        UncivFiles.saverLoader = if (LinuxX11SaverLoader.isRequired()) LinuxX11SaverLoader() else DesktopSaverLoader()
+        // The replay render worker never opens file dialogs, so skip the AWT/X11 saver-loader probe.
+        UncivFiles.saverLoader = if (agentRenderRequest != null) {
+            DesktopSaverLoader()
+        } else if (LinuxX11SaverLoader.isRequired()) {
+            LinuxX11SaverLoader()
+        } else {
+            DesktopSaverLoader()
+        }
         UncivFiles.preferExternalStorage = false
 
         // Solves a rendering problem in specific GPUs and drivers.
@@ -139,23 +156,30 @@ internal object DesktopLauncher {
         config.setTitle("Unciv")
         config.setHdpiMode(HdpiMode.Logical)
         config.setWindowSizeLimits(WindowState.minimumWidth, WindowState.minimumHeight, -1, -1)
-
-
-        // LibGDX not yet configured, use regular java class
-        val maximumWindowBounds = getMaximumWindowBounds()
-
-
-        val settings = UncivFiles.getSettingsForPlatformLaunchers(dataDirectory)
-        if (settings.isFreshlyCreated) {
-            settings.screenSize = ScreenSize.Large // By default we guess that Desktops have larger screens
-            settings.windowState = WindowState(maximumWindowBounds)
-
-            FileHandle(dataDirectory + File.separator + SETTINGS_FILE_NAME).writeString(json().toJson(settings), false, Charsets.UTF_8.name()) // so when we later open the game we get fullscreen
+        if (agentRenderRequest != null) {
+            config.setInitialVisible(false)
+            config.disableAudio(true)
         }
-        // Kludge! This is a workaround - the matching call in DesktopDisplay doesn't "take" quite permanently,
-        // the window might revert to the "config" values when the user moves the window - worse if they
-        // minimize/restore. And the config default is 640x480 unless we set something here.
-        val (width, height) = settings.windowState.coerceIn(maximumWindowBounds)
+
+
+        val (width, height) = if (agentRenderRequest != null) {
+            agentRenderRequest.width to agentRenderRequest.height
+        } else {
+            // LibGDX not yet configured, use regular java class
+            val maximumWindowBounds = getMaximumWindowBounds()
+
+            val settings = UncivFiles.getSettingsForPlatformLaunchers(dataDirectory)
+            if (settings.isFreshlyCreated) {
+                settings.screenSize = ScreenSize.Large // By default we guess that Desktops have larger screens
+                settings.windowState = WindowState(maximumWindowBounds)
+
+                FileHandle(dataDirectory + File.separator + SETTINGS_FILE_NAME).writeString(json().toJson(settings), false, Charsets.UTF_8.name()) // so when we later open the game we get fullscreen
+            }
+            // Kludge! This is a workaround - the matching call in DesktopDisplay doesn't "take" quite permanently,
+            // the window might revert to the "config" values when the user moves the window - worse if they
+            // minimize/restore. And the config default is 640x480 unless we set something here.
+            settings.windowState.coerceIn(maximumWindowBounds).let { it.width to it.height }
+        }
         config.setWindowedMode(width, height)
 
         config.setInitialBackgroundColor(BaseScreen.clearColor)
@@ -167,8 +191,12 @@ internal object DesktopLauncher {
 
 
 
-        // HardenGdxAudio extends Lwjgl3Application, and the Lwjgl3Application constructor runs as long as the game runs
-        HardenGdxAudio(DesktopGame(config, customDataDir), config)
+        if (agentRenderRequest != null) {
+            Lwjgl3Application(AgentBattlefieldRenderGame(customDataDir, agentRenderRequest), config)
+        } else {
+            // HardenGdxAudio extends Lwjgl3Application, and the Lwjgl3Application constructor runs as long as the game runs
+            HardenGdxAudio(DesktopGame(config, customDataDir), config)
+        }
         exitProcess(0)
     }
 

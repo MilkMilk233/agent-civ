@@ -57,7 +57,7 @@ data class AgentMemory(
                 driftWarnings = ArrayList(lastStrategistMemo.controlLanes.driftWarnings)
             ),
             reviewContract = lastStrategistMemo.reviewContract.copy(
-                triggers = lastStrategistMemo.reviewContract.triggers.map { it.copy() }
+                triggers = ArrayList(lastStrategistMemo.reviewContract.triggers.map { it.copy() })
             ),
             campaignControl = lastStrategistMemo.campaignControl.copy(),
             reviewCityNames = ArrayList(lastStrategistMemo.reviewCityNames),

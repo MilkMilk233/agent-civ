@@ -131,6 +131,7 @@ object AgentEvaluationStore {
     private const val configFile = "config.json"
     private const val finalSaveFile = "final-game.uncivsave"
     private const val turnCheckpointDirName = "turn-checkpoints"
+    private const val battlefieldRenderDirName = "battlefield-renders"
     private const val staleRunThresholdMs = 3 * 60 * 1000L
 
     fun rootDir(): Path = Paths.get(
@@ -149,6 +150,20 @@ object AgentEvaluationStore {
 
     fun storageRootsDescription(): String {
         return readRootDirs().joinToString(" ; ") { it.toString() }
+    }
+
+    fun renderCacheRoot(): Path {
+        val configured = (System.getenv("UNCIV_AGENT_RENDER_CACHE_DIR") ?: "")
+            .trim()
+            .takeIf { it.isNotEmpty() }
+        return if (configured != null) {
+            Paths.get(configured).toAbsolutePath().normalize()
+        } else {
+            Paths.get(System.getProperty("java.io.tmpdir"))
+                .resolve("unciv-agent-replay-cache")
+                .toAbsolutePath()
+                .normalize()
+        }
     }
 
     fun batchDir(batchId: String): Path = rootDir().resolve(batchesDirName).resolve(batchId)
@@ -418,8 +433,49 @@ object AgentEvaluationStore {
         return path.takeIf { it.exists() }?.fileName?.toString()
     }
 
+    fun findTurnCheckpointPath(batchId: String, matchId: String, civName: String, turn: Int): Path? {
+        return (matchDirForRead(batchId, matchId) ?: return null)
+            .resolve(turnCheckpointDirName)
+            .resolve(turnCheckpointFileName(civName, turn))
+            .takeIf { it.exists() }
+    }
+
+    fun battlefieldRenderImagePath(batchId: String, matchId: String, civName: String, turn: Int): Path {
+        return renderCacheRoot()
+            .resolve(batchesDirName)
+            .resolve(sanitizeForFileName(batchId))
+            .resolve("matches")
+            .resolve(sanitizeForFileName(matchId))
+            .resolve(battlefieldRenderDirName)
+            .resolve(battlefieldRenderFileName(civName, turn))
+    }
+
+    fun battlefieldRenderRequestPath(batchId: String, matchId: String, civName: String, turn: Int): Path {
+        return renderCacheRoot()
+            .resolve("_requests")
+            .resolve(sanitizeForFileName(batchId))
+            .resolve(sanitizeForFileName(matchId))
+            .resolve(battlefieldRenderBaseName(civName, turn) + ".request.json")
+    }
+
+    fun battlefieldRenderResultPath(batchId: String, matchId: String, civName: String, turn: Int): Path {
+        return renderCacheRoot()
+            .resolve("_requests")
+            .resolve(sanitizeForFileName(batchId))
+            .resolve(sanitizeForFileName(matchId))
+            .resolve(battlefieldRenderBaseName(civName, turn) + ".result.json")
+    }
+
     private fun turnCheckpointFileName(civName: String, turn: Int): String {
         return "${sanitizeForFileName(civName)}-turn-${turn.toString().padStart(4, '0')}.uncivsave"
+    }
+
+    private fun battlefieldRenderFileName(civName: String, turn: Int): String {
+        return battlefieldRenderBaseName(civName, turn) + ".png"
+    }
+
+    private fun battlefieldRenderBaseName(civName: String, turn: Int): String {
+        return "${sanitizeForFileName(civName)}-turn-${turn.toString().padStart(4, '0')}"
     }
 
     private fun sanitizeForFileName(value: String): String {

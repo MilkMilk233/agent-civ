@@ -7,6 +7,7 @@ x-agent-service: &agent-service
   environment:
     UNCIV_AGENT_OBS_ENABLED: "true"
     UNCIV_AGENT_SKIP_FRONTEND_BUILD: "true"
+    UNCIV_AGENT_USE_DIST_JAR: "true"
   restart: unless-stopped
 
 services:
@@ -17,6 +18,7 @@ services:
     environment:
       UNCIV_AGENT_OBS_ENABLED: "true"
       UNCIV_AGENT_SKIP_FRONTEND_BUILD: "true"
+      UNCIV_AGENT_USE_DIST_JAR: "true"
       UNCIV_AGENT_OBS_PORT: "7071"
       UNCIV_AGENT_EVAL_DIR: /runs/producer-a/agent-evaluations
     ports:
@@ -31,6 +33,7 @@ services:
     environment:
       UNCIV_AGENT_OBS_ENABLED: "true"
       UNCIV_AGENT_SKIP_FRONTEND_BUILD: "true"
+      UNCIV_AGENT_USE_DIST_JAR: "true"
       UNCIV_AGENT_OBS_PORT: "7072"
       UNCIV_AGENT_EVAL_DIR: /runs/producer-b/agent-evaluations
     ports:
@@ -45,11 +48,14 @@ services:
     environment:
       UNCIV_AGENT_OBS_ENABLED: "true"
       UNCIV_AGENT_SKIP_FRONTEND_BUILD: "true"
+      UNCIV_AGENT_USE_DIST_JAR: "true"
       UNCIV_AGENT_OBS_PORT: "7080"
       UNCIV_AGENT_EVAL_DIR: /runs/producer-a/agent-evaluations
       UNCIV_AGENT_EVAL_DIRS: /runs/producer-a/agent-evaluations:/runs/producer-b/agent-evaluations
+      UNCIV_AGENT_RENDER_CACHE_DIR: /runs/replay-cache
     ports:
       - "7080:7080"
     volumes:
       - ./docker-data/producer-a:/runs/producer-a:ro
       - ./docker-data/producer-b:/runs/producer-b:ro
+      - ./docker-data/replay-cache:/runs/replay-cache

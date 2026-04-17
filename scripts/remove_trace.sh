@@ -1,0 +1,1 @@
+sudo chown -R $USER:$USER docker-data && rm -rf docker-data/producer-a docker-data/producer-b

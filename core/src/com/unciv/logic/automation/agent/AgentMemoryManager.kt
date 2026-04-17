@@ -1738,7 +1738,7 @@ object AgentMemoryManager {
             .take(4)
         return AgentStrategistReviewContract(
             maxAgeTurns = maxAgeTurns,
-            triggers = triggers,
+            triggers = ArrayList(triggers),
         )
     }
 

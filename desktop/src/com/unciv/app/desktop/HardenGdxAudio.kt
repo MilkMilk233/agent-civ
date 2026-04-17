@@ -7,6 +7,7 @@ import com.badlogic.gdx.backends.lwjgl3.audio.OpenALLwjgl3Audio
 import com.badlogic.gdx.backends.lwjgl3.audio.OpenALMusic
 import com.badlogic.gdx.utils.Array
 import com.badlogic.gdx.utils.Clipboard
+import com.unciv.UncivGame
 import com.unciv.ui.audio.MusicController
 
 /**
@@ -49,7 +50,7 @@ import com.unciv.ui.audio.MusicController
  *  * NullPointerException: Cannot invoke "javazoom.jl.decoder.Bitstream.closeFrame()" because "this.bitstream" is null
  */
 class HardenGdxAudio(
-    game: DesktopGame,
+    game: UncivGame,
     config: Lwjgl3ApplicationConfiguration
 ) : Lwjgl3Application(game, config) {
     private var updateCallback: (()->Unit)? = null

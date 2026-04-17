@@ -56,6 +56,11 @@ build_frontend() {
 start_backend() {
   echo "Starting Unciv dashboard server on http://localhost:${UNCIV_AGENT_OBS_PORT:-7071}/ ..."
   cd "$ROOT_DIR"
+  export UNCIV_AGENT_WORKSPACE_DIR="$ROOT_DIR"
+  if [[ "${UNCIV_AGENT_USE_DIST_JAR:-false}" =~ ^(1|true|yes)$ ]] && [[ -f "$ROOT_DIR/desktop/build/libs/Unciv.jar" ]]; then
+    cd "$ROOT_DIR/android/assets"
+    exec java -jar "$ROOT_DIR/desktop/build/libs/Unciv.jar" --agentreplay
+  fi
   exec ./gradlew desktop:run --args="--agentreplay"
 }
 

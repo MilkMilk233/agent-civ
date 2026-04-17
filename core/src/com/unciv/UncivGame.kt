@@ -6,6 +6,7 @@ import com.unciv.UncivGame.Companion.isCurrentInitialized
 import com.unciv.logic.GameInfo
 import com.unciv.logic.UncivShowableException
 import com.unciv.logic.Version
+import com.unciv.logic.civilization.Civilization
 import com.unciv.logic.civilization.PlayerType
 import com.unciv.logic.files.UncivFiles
 import com.unciv.logic.multiplayer.Multiplayer
@@ -184,7 +185,12 @@ open class UncivGame(val isConsoleMode: Boolean = false) : Game(), PlatformSpeci
      * Sets the returned `WorldScreen` as the only active screen.
      * @param autoPlay pass in the old WorldScreen AutoPlay to retain the state throughout turns. Otherwise leave it is the default.
      */
-    suspend fun loadGame(newGameInfo: GameInfo, autoPlay: AutoPlay = AutoPlay(settings.autoPlay), callFromLoadScreen: Boolean = false): WorldScreen = withThreadPoolContext toplevel@{
+    suspend fun loadGame(
+        newGameInfo: GameInfo,
+        autoPlay: AutoPlay = AutoPlay(settings.autoPlay),
+        callFromLoadScreen: Boolean = false,
+        viewingCivOverride: Civilization? = null,
+    ): WorldScreen = withThreadPoolContext toplevel@{
         val prevGameInfo = gameInfo
         gameInfo = newGameInfo
 
@@ -215,7 +221,12 @@ open class UncivGame(val isConsoleMode: Boolean = false) : Game(), PlatformSpeci
             screenStack.clear()
 
             worldScreen = null // This allows the GC to collect our old WorldScreen, otherwise we keep two WorldScreens in memory.
-            val newWorldScreen = WorldScreen(newGameInfo, autoPlay, newGameInfo.getPlayerToViewAs(), worldScreenRestoreState)
+            val newWorldScreen = WorldScreen(
+                newGameInfo,
+                autoPlay,
+                viewingCivOverride ?: newGameInfo.getPlayerToViewAs(),
+                worldScreenRestoreState,
+            )
             worldScreen = newWorldScreen
 
             val moreThanOnePlayer = newGameInfo.civilizations.count { it.playerType == PlayerType.Human } > 1

@@ -1,19 +1,54 @@
 FROM node:20-bookworm-slim AS node
 
-FROM gradle:8.10.2-jdk21
+FROM eclipse-temurin:21-jdk-jammy AS build
 
 USER root
 COPY --from=node /usr/local /usr/local
 
 WORKDIR /workspace
 
+COPY desktop/web/agent-dashboard/package.json desktop/web/agent-dashboard/package-lock.json /workspace/desktop/web/agent-dashboard/
+RUN npm ci --prefix desktop/web/agent-dashboard
+
 COPY . /workspace/
 
-RUN npm ci --prefix desktop/web/agent-dashboard \
-    && npm --prefix desktop/web/agent-dashboard run build \
+RUN npm --prefix desktop/web/agent-dashboard run build \
     && chmod +x gradlew scripts/run-agent-dashboard.sh scripts/run-agent-replay.sh \
-    && ./gradlew desktop:compileKotlin
+    && ./gradlew desktop:dist
+
+FROM eclipse-temurin:21-jre-jammy
+
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        xvfb \
+        fontconfig \
+        fonts-dejavu-core \
+        libfreetype6 \
+        libx11-6 \
+        libxext6 \
+        libxrender1 \
+        libxtst6 \
+        libxt6 \
+        libgl1-mesa-dri \
+        libgl1-mesa-glx \
+        libxrandr2 \
+        libxi6 \
+        libxcursor1 \
+        libxinerama1 \
+        libxxf86vm1 \
+        libasound2 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+COPY --from=build /workspace/desktop/build/libs/Unciv.jar /workspace/desktop/build/libs/Unciv.jar
+COPY --from=build /workspace/android/assets /workspace/android/assets
+COPY --from=build /workspace/scripts/run-agent-dashboard.sh /workspace/scripts/run-agent-dashboard.sh
+COPY --from=build /workspace/scripts/run-agent-replay.sh /workspace/scripts/run-agent-replay.sh
 
 ENV UNCIV_AGENT_SKIP_FRONTEND_BUILD=true
+ENV UNCIV_AGENT_USE_DIST_JAR=true
 
 CMD ["/bin/bash", "-lc", "./scripts/run-agent-dashboard.sh"]

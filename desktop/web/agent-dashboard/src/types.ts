@@ -89,6 +89,7 @@ export interface TurnSummary {
   illegalActionRate: number;
   notes?: string | null;
   topConcern?: string | null;
+  checkpointFileName?: string | null;
 }
 
 export interface ReplayResponse {

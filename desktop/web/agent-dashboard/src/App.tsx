@@ -382,7 +382,14 @@ export default function App() {
         </aside>
 
         <section className="detail-pane">
-          {selectedTurn ? <TurnDetail turn={selectedTurn} /> : <EmptyState />}
+          {selectedTurn ? (
+            <TurnDetail
+              turn={selectedTurn}
+              mode={mode}
+              batchId={selectedBatchId}
+              matchId={selectedMatchId}
+            />
+          ) : <EmptyState />}
         </section>
       </section>
 
@@ -602,6 +609,116 @@ interface WorldFactsViewModel {
   overview: Array<{ label: string; value: string; note?: string }>;
   matrices: WorldFactsMatrix[];
   notes: string[];
+}
+
+function BattlefieldViewSection({
+  batchId,
+  matchId,
+  turn,
+}: {
+  batchId: string;
+  matchId: string;
+  turn: TurnRecord;
+}) {
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [status, setStatus] = useState<"loading" | "rendering" | "ready" | "missing" | "failed">("loading");
+  const [message, setMessage] = useState<string>("Loading battlefield snapshot...");
+
+  useEffect(() => {
+    if (!batchId || !matchId) {
+      setImageUrl(null);
+      setStatus("missing");
+      setMessage("Replay identifiers are missing for this turn.");
+      return;
+    }
+
+    let cancelled = false;
+    let pollTimer: number | undefined;
+    let currentObjectUrl: string | null = null;
+
+    const clearImage = () => {
+      if (currentObjectUrl) {
+        URL.revokeObjectURL(currentObjectUrl);
+        currentObjectUrl = null;
+      }
+    };
+
+    const load = async () => {
+      setStatus((previous) => (previous === "rendering" ? previous : "loading"));
+      setMessage("Loading battlefield snapshot...");
+      try {
+        const result = await api.battlefieldView(batchId, matchId, turn.civName, turn.turn);
+        if (cancelled) return;
+
+        if (result.kind === "image") {
+          clearImage();
+          currentObjectUrl = URL.createObjectURL(result.blob);
+          setImageUrl(currentObjectUrl);
+          setStatus("ready");
+          setMessage("");
+          return;
+        }
+
+        setImageUrl(null);
+        if (result.status === "rendering") {
+          setStatus("rendering");
+          setMessage(result.message || "Rendering battlefield snapshot...");
+          pollTimer = window.setTimeout(() => {
+            void load();
+          }, 2000);
+          return;
+        }
+        if (result.status === "missing_checkpoint") {
+          setStatus("missing");
+          setMessage(result.message || "No saved post-turn checkpoint is available for this turn.");
+          return;
+        }
+
+        setStatus("failed");
+        setMessage(result.message || "Battlefield rendering failed.");
+      } catch (err) {
+        if (cancelled) return;
+        setImageUrl(null);
+        setStatus("failed");
+        setMessage((err as Error).message || "Battlefield rendering failed.");
+      }
+    };
+
+    clearImage();
+    setImageUrl(null);
+    setStatus("loading");
+    setMessage("Loading battlefield snapshot...");
+    void load();
+
+    return () => {
+      cancelled = true;
+      if (pollTimer !== undefined) window.clearTimeout(pollTimer);
+      clearImage();
+    };
+  }, [batchId, matchId, turn.civName, turn.turn]);
+
+  return (
+    <SectionShell
+      id="section-battlefield-view"
+      eyebrow="Battlefield view"
+      title="Battlefield view"
+      body={`Post-turn battlefield frame for ${turn.civName} on turn ${formatNumber(turn.turn)}.`}
+    >
+      <div className="battlefield-view-shell">
+        {status === "ready" && imageUrl ? (
+          <img
+            className="battlefield-view-image"
+            src={imageUrl}
+            alt={`Post-turn battlefield for ${turn.civName} on turn ${turn.turn}`}
+          />
+        ) : (
+          <div className="battlefield-view-placeholder">
+            <p>{message}</p>
+          </div>
+        )}
+      </div>
+    </SectionShell>
+  );
 }
 
 function WorldFactsLaunchSection({
@@ -878,8 +995,14 @@ function ScoreTimelineCard({
 
 function TurnDetail({
   turn,
+  mode,
+  batchId,
+  matchId,
 }: {
   turn: TurnRecord;
+  mode: Mode;
+  batchId: string;
+  matchId: string;
 }) {
   const strategistInferenceRan = hasStrategistInference(turn);
   const observation = asRecord(turn.observation);
@@ -1053,6 +1176,7 @@ function TurnDetail({
 
       <TurnSectionNav
         items={[
+          ...(mode === "replay" ? [{ id: "section-battlefield-view", label: "Battlefield view" }] : []),
           { id: "section-world-facts", label: "World facts" },
           { id: "section-memory", label: "Memory" },
           { id: "section-strategist-input", label: "Strategist saw" },
@@ -1063,6 +1187,14 @@ function TurnDetail({
           { id: "section-events", label: "Events" },
         ]}
       />
+
+      {mode === "replay" ? (
+        <BattlefieldViewSection
+          batchId={batchId}
+          matchId={matchId}
+          turn={turn}
+        />
+      ) : null}
 
       {worldFactsView ? <WorldFactsLaunchSection onOpen={() => setWorldFactsOpen(true)} /> : null}
 

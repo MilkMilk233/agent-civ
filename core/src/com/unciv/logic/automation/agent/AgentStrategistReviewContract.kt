@@ -1,19 +1,24 @@
 package com.unciv.logic.automation.agent
 
+import com.unciv.logic.IsPartOfGameInfoSerialization
 import kotlinx.serialization.Serializable
 
 @Serializable
 data class AgentStrategistReviewTrigger(
-    val kind: String,
-    val metric: String,
-    val summary: String? = null,
-    val withinTurns: Int? = null,
-)
+    var kind: String = "",
+    var metric: String = "",
+    var summary: String? = null,
+    var withinTurns: Int? = null,
+) : IsPartOfGameInfoSerialization {
+    constructor() : this("", "", null, null)
+}
 
 @Serializable
 data class AgentStrategistReviewContract(
-    val maxAgeTurns: Int = 8,
-    val triggers: List<AgentStrategistReviewTrigger> = emptyList(),
-) {
+    var maxAgeTurns: Int = 8,
+    var triggers: ArrayList<AgentStrategistReviewTrigger> = arrayListOf(),
+) : IsPartOfGameInfoSerialization {
+    constructor() : this(8, arrayListOf())
+
     fun isEmpty(): Boolean = maxAgeTurns <= 0 && triggers.isEmpty()
 }

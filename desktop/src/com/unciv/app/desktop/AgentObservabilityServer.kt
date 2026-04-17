@@ -186,6 +186,72 @@ object AgentObservabilityServer {
                         }
                     }
                 }
+                path == "/api/history/battlefield-view" -> {
+                    val batchId = queryParam(exchange, "batchId")
+                    val matchId = queryParam(exchange, "matchId")
+                    val civName = queryParam(exchange, "civName")
+                    val turn = queryParam(exchange, "turn")?.toIntOrNull()
+                    if (batchId.isNullOrBlank() || matchId.isNullOrBlank() || civName.isNullOrBlank() || turn == null) {
+                        respond(
+                            exchange,
+                            400,
+                            """{"error":"Missing batchId, matchId, civName, or turn"}""",
+                            "application/json; charset=utf-8",
+                        )
+                    } else {
+                        reconcileHistoryState()
+                        when (val result = AgentBattlefieldRenderService.resolveOrStart(batchId, matchId, civName, turn)) {
+                            is AgentBattlefieldRenderService.ResolveResult -> when (result.status) {
+                                "ready" -> {
+                                    val imagePath = result.imagePath
+                                    if (imagePath == null || !java.nio.file.Files.exists(imagePath)) {
+                                        respond(
+                                            exchange,
+                                            500,
+                                            """{"error":"Rendered image is missing from cache"}""",
+                                            "application/json; charset=utf-8",
+                                        )
+                                    } else {
+                                        respondBytes(exchange, 200, java.nio.file.Files.readAllBytes(imagePath), "image/png")
+                                    }
+                                }
+                                "missing_checkpoint" -> respond(
+                                    exchange,
+                                    404,
+                                    AgentEvaluationJson.json.encodeToString(
+                                        AgentBattlefieldRenderStatus(
+                                            status = result.status,
+                                            message = result.message,
+                                        ),
+                                    ),
+                                    "application/json; charset=utf-8",
+                                )
+                                "failed" -> respond(
+                                    exchange,
+                                    500,
+                                    AgentEvaluationJson.json.encodeToString(
+                                        AgentBattlefieldRenderStatus(
+                                            status = result.status,
+                                            message = result.message,
+                                        ),
+                                    ),
+                                    "application/json; charset=utf-8",
+                                )
+                                else -> respond(
+                                    exchange,
+                                    202,
+                                    AgentEvaluationJson.json.encodeToString(
+                                        AgentBattlefieldRenderStatus(
+                                            status = result.status,
+                                            message = result.message,
+                                        ),
+                                    ),
+                                    "application/json; charset=utf-8",
+                                )
+                            }
+                        }
+                    }
+                }
                 else -> respond(exchange, 404, "Not found", "text/plain; charset=utf-8")
             }
         }

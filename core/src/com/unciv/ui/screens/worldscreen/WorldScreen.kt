@@ -34,6 +34,7 @@ import com.unciv.ui.images.ImageGetter
 import com.unciv.ui.popups.AuthPopup
 import com.unciv.ui.popups.Popup
 import com.unciv.ui.popups.ToastPopup
+import com.unciv.ui.popups.closeAllPopups
 import com.unciv.ui.popups.hasOpenPopups
 import com.unciv.ui.screens.basescreen.BaseScreen
 import com.unciv.ui.screens.cityscreen.CityScreen
@@ -794,6 +795,31 @@ class WorldScreen(
         mapHolder.removeUnitActionOverlay()
         bottomUnitTable.selectUnit()
         bottomUnitTable.selectSpy(null)
+        shouldUpdate = true
+    }
+
+    fun prepareForBattlefieldRender() {
+        game.settings.showTutorials = false
+        game.isTutorialTaskCollapsed = true
+        viewingCiv.popupAlerts.clear()
+        viewingCiv.tradeRequests.clear()
+        selectedCiv = viewingCiv
+        closeAllPopups()
+        clearSelectionForCapture()
+
+        uiEnabled = false
+        topBar.isVisible = false
+        statusButtons.isVisible = false
+        techPolicyAndDiplomacy.isVisible = false
+        tutorialTaskTable.isVisible = false
+        bottomTileInfoTable.isVisible = false
+        unitActionsTable.isVisible = false
+        notificationsScroll.isVisible = false
+        minimapWrapper.isVisible = false
+        bottomUnitTable.isVisible = false
+        battleTable.isVisible = false
+        chatButton.isVisible = false
+        zoomController.isVisible = false
         shouldUpdate = true
     }
 

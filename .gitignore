@@ -200,3 +200,5 @@ detekt/reports.html
 .env
 
 .codex
+
+docker-data/

@@ -497,6 +497,39 @@ pre {
   overflow: hidden;
 }
 
+.battlefield-view-shell {
+  width: 100%;
+  min-height: 16rem;
+  border-radius: 24px;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(242, 247, 255, 0.9));
+  border: 1px solid rgba(115, 148, 193, 0.18);
+}
+
+.battlefield-view-image {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.battlefield-view-placeholder {
+  min-height: 16rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  text-align: center;
+  color: #6c7d97;
+  background:
+    linear-gradient(135deg, rgba(29, 124, 242, 0.04), rgba(21, 199, 184, 0.05)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(242, 247, 255, 0.9));
+}
+
+.battlefield-view-placeholder p {
+  margin: 0;
+  max-width: 32rem;
+}
+
 .world-facts-launch {
   width: 100%;
   border: none;
