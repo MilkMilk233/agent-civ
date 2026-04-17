@@ -118,6 +118,7 @@ object AgentStrategistPromptBuilder {
             - If campaignControl says checkpointStatus is missed, explain plainly whether the right response is launch now, stabilize first, or pivot away. Do not leave the memo in a vague “still preparing” state.
             - If campaignControl says launchWindowOpen is true while battleReadiness is ready or engaged, be skeptical of another passive staging turn unless there is a concrete immediate payoff for waiting.
             - If campaignControl says supplyHealth is fragile or collapsing, say that plainly and stop treating more army growth as harmless.
+            - If decisionFocus.supplySnapshot shows a positive unitSupplyDeficit or a unitSupplyProductionPenaltyPercent above 0, treat that as hard evidence the empire is over the Civ V unit supply cap.
             - Do not label battleReadiness as ready unless the current visible package looks capable of actually converting the next checkpoint soon.
             - Do not label supplyHealth as healthy if treasury, happiness, science, or city count are already showing that the campaign is expensive to hold.
             - citySnapshots and unitSnapshots cover the current empire in compact form. rivalCities, rivalUnits, and campaignPicture describe the known enemy-side and frontier situation. Use them to understand where the empire really stands and what the tactician needs to know next.

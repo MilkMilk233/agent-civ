@@ -131,6 +131,15 @@ class WorkerAutomation(
         return false
     }
 
+    @Readonly
+    internal fun chooseImprovementForTile(
+        unit: MapUnit,
+        tile: Tile,
+        localUniqueCache: LocalUniqueCache = LocalUniqueCache(),
+    ): TileImprovement? {
+        return chooseImprovement(unit, tile, localUniqueCache)
+    }
+
     private fun startWorkOnCurrentTile(unit: MapUnit) {
         val currentTile = unit.currentTile
         val tileRanking = tileRankings[currentTile]!!

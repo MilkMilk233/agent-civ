@@ -25,7 +25,7 @@ object AgentCityOptionBuilder {
     internal fun build(civInfo: Civilization, memory: AgentMemory = civInfo.agentMemory): AgentCityOptionContext {
         val candidates = LinkedHashMap<String, AgentCityRuntimeCandidate>()
         val observationsByCity = LinkedHashMap<String, AgentCityActionBuckets>()
-        val conversionContext = buildConversionContext(memory)
+        val conversionContext = buildConversionContext(civInfo, memory)
 
         for (city in civInfo.cities.sortedWith(compareBy<City> { it.name }.thenBy { it.location.toString() })) {
             val cityKey = cityKey(city.location.x, city.location.y)
@@ -49,7 +49,7 @@ object AgentCityOptionBuilder {
         limit: Int = maxConstructionCandidatesPerCity,
         memory: AgentMemory = city.civ.agentMemory,
     ): List<RankedConstructionChoice> {
-        val conversionContext = buildConversionContext(memory)
+        val conversionContext = buildConversionContext(city.civ, memory)
         val needsExplicitChoice = AgentCityProjectPolicy.needsExplicitProjectChoice(city)
         val orderedNames: List<String> = if (needsExplicitChoice || conversionContext.objectivePressure) {
             val names = mutableListOf<String>()
@@ -501,6 +501,8 @@ object AgentCityOptionBuilder {
             }
         }
 
+        score += militarySupplyAndQualityAdjustment(city, construction, conversionContext)
+
         return score
     }
 
@@ -588,6 +590,20 @@ object AgentCityOptionBuilder {
             }
         }
 
+        if (construction is BaseUnit && construction.isMilitary && construction.name != "Scout") {
+            if (conversionContext.unitSupplyDeficit > 0) {
+                reasons += "Unit supply is already over cap by ${conversionContext.unitSupplyDeficit}, so extra units are imposing a ${conversionContext.unitSupplyProductionPenaltyPercent}% production penalty"
+            } else if (conversionContext.supplyHealth in setOf("fragile", "collapsing") &&
+                conversionContext.battleReadiness in setOf("ready", "engaged")
+            ) {
+                reasons += "The empire is already carrying an expensive battle package, so more unit count is lower value unless this is a genuinely better reinforcement"
+            }
+
+            strongerSameRoleBuildableUnit(city, construction)?.let { strongerUnit ->
+                reasons += "A stronger ${militaryRoleLabel(construction)} unit is already buildable here (${strongerUnit.name}), so junior filler is lower value"
+            }
+        }
+
         if (reasons.isEmpty()) reasons += "Ranked city development option from current game state"
         currentProgress?.let { reasons += it }
         return reasons.joinToString(". ")
@@ -619,6 +635,7 @@ object AgentCityOptionBuilder {
             construction is Building && isPassivePeacetimeConstruction(construction) -> -165
             else -> -90
         }
+        score += militarySupplyAndQualityAdjustment(city, construction, conversionContext)
         return score
     }
 
@@ -721,7 +738,7 @@ object AgentCityOptionBuilder {
         else -> listOf("balanced")
     }
 
-    private fun buildConversionContext(memory: AgentMemory): ConversionContext {
+    private fun buildConversionContext(civInfo: Civilization, memory: AgentMemory): ConversionContext {
         val stage = memory.campaign.stage.lowercase()
         val decisiveObjective = memory.campaign.decisiveObjective?.lowercase().orEmpty()
         val conversionBlocker = memory.campaign.conversionBlocker?.lowercase().orEmpty()
@@ -747,7 +764,100 @@ object AgentCityOptionBuilder {
                 conversionBlocker.contains("bombard") ||
                 conversionBlocker.contains("siege") ||
                 conversionBlocker.contains("support"),
+            battleReadiness = memory.campaignControl.battleReadiness,
+            supplyHealth = memory.campaignControl.supplyHealth,
+            unitSupply = civInfo.stats.getUnitSupply(),
+            unitSupplyDeficit = civInfo.stats.getUnitSupplyDeficit(),
+            unitSupplyProductionPenaltyPercent = (-civInfo.stats.getUnitSupplyProductionPenalty()).roundToInt(),
+            militaryUnitCount = civInfo.units.getCivUnits().count { it.isMilitary() },
         )
+    }
+
+    private fun militarySupplyAndQualityAdjustment(
+        city: City,
+        construction: IConstruction,
+        conversionContext: ConversionContext,
+    ): Int {
+        val unit = construction as? BaseUnit ?: return 0
+        if (!unit.isMilitary || unit.name == "Scout") return 0
+
+        val isEmergencyReinforcement =
+            (isFrontlineMilitaryConstruction(unit) && conversionContext.frontlineShortage) ||
+                (unit.isRanged() && conversionContext.rangedShortage)
+        var adjustment = 0
+
+        if (conversionContext.unitSupplyDeficit > 0) {
+            adjustment -= when {
+                isEmergencyReinforcement -> 120 + conversionContext.unitSupplyProductionPenaltyPercent * 2
+                else -> 260 + conversionContext.unitSupplyProductionPenaltyPercent * 3
+            }
+        } else if (
+            conversionContext.supplyHealth in setOf("fragile", "collapsing") &&
+            conversionContext.battleReadiness in setOf("ready", "engaged")
+        ) {
+            adjustment -= if (isEmergencyReinforcement) 45 else 115
+        } else if (
+            conversionContext.supplyHealth == "strained" &&
+            conversionContext.battleReadiness in setOf("ready", "engaged")
+        ) {
+            adjustment -= if (isEmergencyReinforcement) 20 else 55
+        }
+
+        strongerSameRoleBuildableUnit(city, unit)?.let { strongerUnit ->
+            adjustment -= strongerAlternativePenalty(unit, strongerUnit, conversionContext)
+        }
+
+        return adjustment
+    }
+
+    private fun strongerAlternativePenalty(
+        unit: BaseUnit,
+        strongerUnit: BaseUnit,
+        conversionContext: ConversionContext,
+    ): Int {
+        val qualityGap = militaryQualityScore(strongerUnit) - militaryQualityScore(unit)
+        var penalty = when {
+            qualityGap >= 180 -> 170
+            qualityGap >= 90 -> 120
+            qualityGap >= 40 -> 75
+            else -> 35
+        }
+        if (conversionContext.unitSupplyDeficit > 0) penalty += 80
+        else if (conversionContext.supplyHealth in setOf("fragile", "collapsing")) penalty += 45
+        return penalty
+    }
+
+    private fun strongerSameRoleBuildableUnit(city: City, unit: BaseUnit): BaseUnit? {
+        val role = militaryRole(unit) ?: return null
+        val currentQuality = militaryQualityScore(unit)
+        return city.cityConstructions.getConstructableUnits()
+            .asSequence()
+            .filter { it.name != unit.name }
+            .filter { it.isBuildable(city.cityConstructions) }
+            .filter { militaryRole(it) == role }
+            .filter { militaryQualityScore(it) > currentQuality + 20 }
+            .maxByOrNull { militaryQualityScore(it) }
+    }
+
+    private fun militaryRole(unit: BaseUnit): String? = when {
+        !unit.isMilitary -> null
+        unit.name == "Scout" -> "scout"
+        unit.isRanged() -> "ranged"
+        else -> "frontline"
+    }
+
+    private fun militaryRoleLabel(unit: BaseUnit): String = when (militaryRole(unit)) {
+        "ranged" -> "ranged"
+        "frontline" -> "frontline"
+        "scout" -> "recon"
+        else -> "military"
+    }
+
+    private fun militaryQualityScore(unit: BaseUnit): Int {
+        var score = unit.getForceEvaluation()
+        score += unit.movement * 8
+        if (unit.isProbablySiegeUnit()) score += 35
+        return score
     }
 
     private fun isFrontlineMilitaryConstruction(construction: IConstruction): Boolean {
@@ -821,6 +931,12 @@ object AgentCityOptionBuilder {
         val expansionCheckpointLive: Boolean,
         val frontlineShortage: Boolean,
         val rangedShortage: Boolean,
+        val battleReadiness: String?,
+        val supplyHealth: String?,
+        val unitSupply: Int,
+        val unitSupplyDeficit: Int,
+        val unitSupplyProductionPenaltyPercent: Int,
+        val militaryUnitCount: Int,
     )
 
     private data class AgentCityActionBuckets(

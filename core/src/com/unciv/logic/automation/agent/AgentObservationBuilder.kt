@@ -133,6 +133,9 @@ object AgentObservationBuilder {
 
         val visibleHostileUnits = visibleTargetCandidates.count { it.isHostile && it.observation.kind == "unit" }
         val visibleForeignCities = visibleTargetCandidates.count { it.observation.kind == "city" }
+        val unitSupply = civInfo.stats.getUnitSupply()
+        val unitSupplyDeficit = civInfo.stats.getUnitSupplyDeficit()
+        val unitSupplyProductionPenaltyPercent = (-civInfo.stats.getUnitSupplyProductionPenalty()).roundToInt()
         val empireSummary = EmpireSummaryObservation(
             isAtWar = civInfo.isAtWar(),
             gold = civInfo.gold,
@@ -140,6 +143,9 @@ object AgentObservationBuilder {
             culturePerTurn = civInfo.stats.statsForNextTurn.culture.toInt(),
             faithPerTurn = civInfo.stats.statsForNextTurn.faith.toInt(),
             happiness = civInfo.getHappiness(),
+            unitSupply = unitSupply,
+            unitSupplyDeficit = unitSupplyDeficit,
+            unitSupplyProductionPenaltyPercent = unitSupplyProductionPenaltyPercent,
             visibleTiles = civInfo.viewableTiles.size,
             cityCount = civInfo.cities.size,
             unitCount = allUnits.size,
@@ -710,6 +716,16 @@ object AgentObservationBuilder {
                 severity = "warning",
                 headline = "Empire happiness is negative",
                 detail = "Current happiness is ${empireSummary.happiness}, so growth and combat pressure may worsen the turn.",
+            )
+        }
+
+        if (empireSummary.unitSupplyDeficit > 0) {
+            facts += fact(
+                priority = 185 + empireSummary.unitSupplyDeficit * 12,
+                category = "empire",
+                severity = "warning",
+                headline = "The army is over the unit supply cap",
+                detail = "Unit count is over supply by ${empireSummary.unitSupplyDeficit}, causing a ${empireSummary.unitSupplyProductionPenaltyPercent}% production penalty until the roster shrinks or supply grows.",
             )
         }
 

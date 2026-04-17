@@ -744,6 +744,9 @@ object AgentMemoryManager {
     private data class CampaignControlSnapshot(
         val cityCount: Int,
         val militaryUnitCount: Int,
+        val unitSupply: Int,
+        val unitSupplyDeficit: Int,
+        val unitSupplyProductionPenaltyPercent: Int,
         val settlerUnits: Int,
         val settlersReady: Int,
         val isAtWar: Boolean,
@@ -788,6 +791,9 @@ object AgentMemoryManager {
         return CampaignControlSnapshot(
             cityCount = observation.empireSummary.cityCount,
             militaryUnitCount = observation.empireSummary.militaryUnitCount,
+            unitSupply = observation.empireSummary.unitSupply,
+            unitSupplyDeficit = observation.empireSummary.unitSupplyDeficit,
+            unitSupplyProductionPenaltyPercent = observation.empireSummary.unitSupplyProductionPenaltyPercent,
             settlerUnits = observation.units.count { it.role == "settler" },
             settlersReady = observation.empireSummary.settlersReady,
             isAtWar = observation.empireSummary.isAtWar,
@@ -839,6 +845,9 @@ object AgentMemoryManager {
         return CampaignControlSnapshot(
             cityCount = civInfo.cities.size,
             militaryUnitCount = civInfo.units.getCivUnits().count { it.isMilitary() },
+            unitSupply = civInfo.stats.getUnitSupply(),
+            unitSupplyDeficit = civInfo.stats.getUnitSupplyDeficit(),
+            unitSupplyProductionPenaltyPercent = (-civInfo.stats.getUnitSupplyProductionPenalty()).toInt(),
             settlerUnits = civInfo.units.getCivUnits().count { classifyCampaignUnitRole(it) == "settler" },
             settlersReady = civInfo.units.getCivUnits().count { classifyCampaignUnitRole(it) == "settler" && it.currentMovement > 0f },
             isAtWar = civInfo.isAtWar(),
@@ -1028,6 +1037,8 @@ object AgentMemoryManager {
         normalizeControlLabel(latestLabel)?.let { return it }
         normalizeControlLabel(memoLabel)?.let { return it }
         return when {
+            snapshot.unitSupplyDeficit >= 3 || snapshot.unitSupplyProductionPenaltyPercent >= 30 -> "collapsing"
+            snapshot.unitSupplyDeficit > 0 || snapshot.unitSupplyProductionPenaltyPercent > 0 -> "fragile"
             snapshot.gold <= -75 || snapshot.happiness <= -5 -> "collapsing"
             snapshot.gold < 0 || snapshot.happiness < 0 -> "fragile"
             snapshot.cityCount <= 1 && snapshot.militaryUnitCount >= 8 -> "strained"

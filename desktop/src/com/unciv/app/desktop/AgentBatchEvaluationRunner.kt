@@ -273,6 +273,7 @@ object AgentBatchEvaluationRunner {
 
             val finishedAt = System.currentTimeMillis()
             val turnSummaries = AgentEvaluationAnalyzer.analyzeTurns(capturedEvents, agentCivNameValue)
+                .withReplayScreenshots(batchId, matchId)
             AgentEvaluationStore.writeTurnSummaries(batchId, matchId, turnSummaries)
             var matchSummary = AgentEvaluationAnalyzer.buildMatchSummary(
                 batchId = batchId,
@@ -307,7 +308,9 @@ object AgentBatchEvaluationRunner {
             return matchSummary
         } catch (ex: CancellationException) {
             val finishedAt = System.currentTimeMillis()
-            val turnSummaries = agentCivName?.let { AgentEvaluationAnalyzer.analyzeTurns(capturedEvents, it) } ?: emptyList()
+            val turnSummaries = agentCivName
+                ?.let { AgentEvaluationAnalyzer.analyzeTurns(capturedEvents, it).withReplayScreenshots(batchId, matchId) }
+                ?: emptyList()
             AgentEvaluationStore.writeTurnSummaries(batchId, matchId, turnSummaries)
 
             val cancelledSummary = if (gameInfo != null && agentCivName != null && legacyCivName != null) {
@@ -520,6 +523,22 @@ object AgentBatchEvaluationRunner {
         val centerY = (minY + maxY) / 2f
         mapHolder.scrollTo(centerX, mapHolder.maxY - centerY, immediately = true)
         worldScreen.shouldUpdate = true
+    }
+
+    private fun List<AgentEvaluationTurnSummary>.withReplayScreenshots(
+        batchId: String,
+        matchId: String,
+    ): List<AgentEvaluationTurnSummary> {
+        return map { turnSummary ->
+            turnSummary.copy(
+                screenshotFileName = AgentEvaluationStore.findTurnScreenshotFileName(
+                    batchId = batchId,
+                    matchId = matchId,
+                    civName = turnSummary.civName,
+                    turn = turnSummary.turn,
+                ),
+            )
+        }
     }
 
     private fun buildBatchSummary(

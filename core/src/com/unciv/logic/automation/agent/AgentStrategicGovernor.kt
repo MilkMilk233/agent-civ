@@ -468,18 +468,29 @@ object AgentStrategicGovernor {
     ): AgentPlannerSupplySnapshotObservation {
         val summary = buildString {
             append("${observation.empireSummary.cityCount} cities, ")
+            append("${observation.empireSummary.unitCount} total units, ")
             append("${observation.empireSummary.militaryUnitCount} military units, ")
             append("${observation.empireSummary.gold} gold, ")
             append("${observation.empireSummary.happiness} happiness, ")
             append("${observation.empireSummary.sciencePerTurn} science/turn")
             campaignControl?.supplyHealth?.let { append(" • supply $it") }
+            if (observation.empireSummary.unitSupplyDeficit > 0) {
+                append(" • deficit ${observation.empireSummary.unitSupplyDeficit}")
+                append(" • -${observation.empireSummary.unitSupplyProductionPenaltyPercent}% production")
+            } else {
+                append(" • supply ${observation.empireSummary.unitCount}/${observation.empireSummary.unitSupply}")
+            }
         }
         return AgentPlannerSupplySnapshotObservation(
             gold = observation.empireSummary.gold,
             happiness = observation.empireSummary.happiness,
             sciencePerTurn = observation.empireSummary.sciencePerTurn,
             cityCount = observation.empireSummary.cityCount,
+            unitCount = observation.empireSummary.unitCount,
             militaryUnitCount = observation.empireSummary.militaryUnitCount,
+            unitSupply = observation.empireSummary.unitSupply,
+            unitSupplyDeficit = observation.empireSummary.unitSupplyDeficit,
+            unitSupplyProductionPenaltyPercent = observation.empireSummary.unitSupplyProductionPenaltyPercent,
             supplyHealth = campaignControl?.supplyHealth,
             holdingCosts = campaignControl?.holdingCosts ?: emptyList(),
             summary = summary,

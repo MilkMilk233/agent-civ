@@ -4,19 +4,10 @@ import com.unciv.Constants
 import com.unciv.logic.civilization.Civilization
 import com.unciv.logic.map.mapunit.MapUnit
 import com.unciv.logic.map.tile.Tile
-import com.unciv.models.UnitAction
-import com.unciv.models.UnitActionType
 import com.unciv.models.ruleset.tile.ResourceType
 import com.unciv.models.ruleset.unique.GameContext
 
 object AgentWorkerJobPlanner {
-    private val preferredActionTypes = listOf(
-        UnitActionType.Repair,
-        UnitActionType.CreateImprovement,
-        UnitActionType.ConstructImprovement,
-        UnitActionType.ConnectRoad,
-    )
-
     internal fun findWorkerJobs(unit: MapUnit, currentAssignment: UnitAssignmentMemory? = null): List<WorkerJob> {
         if (!unit.cache.hasUniqueToBuildImprovements || !unit.hasMovement()) return emptyList()
         val civInfo = unit.civ
@@ -55,13 +46,6 @@ object AgentWorkerJobPlanner {
             .sortedByDescending { it.priority }
             .take(2)
             .toList()
-    }
-
-    internal fun preferredCurrentAction(availableActions: List<UnitAction>): UnitAction? {
-        return preferredActionTypes
-            .asSequence()
-            .mapNotNull { preferred -> availableActions.firstOrNull { it.type == preferred && it.action != null } }
-            .firstOrNull()
     }
 
     private fun buildWorkerJob(unit: MapUnit, civInfo: Civilization, tile: Tile): WorkerJob? {

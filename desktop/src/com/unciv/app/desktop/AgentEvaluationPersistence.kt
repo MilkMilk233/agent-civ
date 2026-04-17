@@ -187,7 +187,7 @@ object AgentEvaluationStore {
     }
 
     fun writeTurnScreenshot(batchId: String, matchId: String, civName: String, turn: Int, pngBytes: ByteArray): String {
-        val fileName = "${sanitizeForFileName(civName)}-turn-${turn.toString().padStart(4, '0')}.png"
+        val fileName = turnScreenshotFileName(civName, turn)
         val path = screenshotsDir(batchId, matchId).resolve(fileName)
         ensureParent(path)
         Files.write(
@@ -198,6 +198,16 @@ object AgentEvaluationStore {
             StandardOpenOption.WRITE,
         )
         return fileName
+    }
+
+    fun turnScreenshotFileName(civName: String, turn: Int): String {
+        return "${sanitizeForFileName(civName)}-turn-${turn.toString().padStart(4, '0')}.png"
+    }
+
+    fun findTurnScreenshotFileName(batchId: String, matchId: String, civName: String, turn: Int): String? {
+        val fileName = turnScreenshotFileName(civName, turn)
+        val path = screenshotsDir(batchId, matchId).resolve(fileName)
+        return fileName.takeIf { path.exists() }
     }
 
     fun loadTurnScreenshot(batchId: String, matchId: String, fileName: String): ByteArray? {
@@ -249,7 +259,18 @@ object AgentEvaluationStore {
     }
 
     fun loadTurnSummaries(batchId: String, matchId: String): List<AgentEvaluationTurnSummary> {
-        return readJsonOrNull(matchDir(batchId, matchId).resolve(turnSummaryFile)) ?: emptyList()
+        return (readJsonOrNull<List<AgentEvaluationTurnSummary>>(matchDir(batchId, matchId).resolve(turnSummaryFile)) ?: emptyList())
+            .map { summary ->
+                if (summary.screenshotFileName != null) summary
+                else summary.copy(
+                    screenshotFileName = findTurnScreenshotFileName(
+                        batchId = batchId,
+                        matchId = matchId,
+                        civName = summary.civName,
+                        turn = summary.turn,
+                    ),
+                )
+            }
     }
 
     fun loadEvents(batchId: String, matchId: String): List<AgentObservabilityEvent> {

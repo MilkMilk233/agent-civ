@@ -507,12 +507,11 @@ object AgentUnitOptionBuilder {
         currentAssignment: UnitAssignmentMemory?,
     ): List<AgentUnitRuntimeCandidate> {
         if (!unit.cache.hasUniqueToBuildImprovements || !unit.hasMovement()) return emptyList()
-        val availableActions = UnitActions.getUnitActions(unit).filter { it.action != null }.toList()
         return AgentWorkerJobPlanner.findWorkerJobs(unit, currentAssignment = currentAssignment)
             .mapNotNull { job ->
                 val isCurrentTile = unit.getTile().position.x == job.tileX && unit.getTile().position.y == job.tileY
                 if (isCurrentTile) {
-                    buildCurrentWorkerCandidate(unit, job, availableActions)
+                    buildCurrentWorkerCandidate(unit, job)
                 } else {
                     val candidateId = "unitworkerreposition:${unit.id}:${job.tileX},${job.tileY}"
                     AgentUnitRuntimeCandidate(
@@ -552,56 +551,28 @@ object AgentUnitOptionBuilder {
     private fun buildCurrentWorkerCandidate(
         unit: MapUnit,
         job: AgentWorkerJobPlanner.WorkerJob,
-        availableActions: List<UnitAction>,
     ): AgentUnitRuntimeCandidate? {
         val directImprovementCandidate = when {
             job.isRepair -> buildRepairCandidate(unit, job)
             job.improvementName != null -> buildImprovementCandidate(unit, job)
-            else -> null
+            else -> buildBestCurrentTileImprovementCandidate(unit, job)
         }
         if (directImprovementCandidate != null) return directImprovementCandidate
+        return null
+    }
 
-        val workerAction = AgentWorkerJobPlanner.preferredCurrentAction(availableActions) ?: return null
-        val titleToken = workerAction.title.hashCode().toUInt().toString(16)
-        val candidateId = buildString {
-            append("unitworkerimprove:")
-            append(unit.id)
-            append(':')
-            append(job.tileX)
-            append(',')
-            append(job.tileY)
-            append(':')
-            append(workerAction.type.name)
-            append(':')
-            append(titleToken)
-        }
-        return AgentUnitRuntimeCandidate(
-            observation = UnitOptionCandidateObservation(
-                candidateId = candidateId,
-                category = "worker",
-                title = "${unit.name} #${unit.id} ${workerAction.title}",
-                detail = job.description,
-            ),
-            validate = { currentCiv ->
-                val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id }
-                    ?: return@AgentUnitRuntimeCandidate "Unit option rejected: unit missing"
-                if (liveUnit.getTile().position.x != job.tileX || liveUnit.getTile().position.y != job.tileY) {
-                    return@AgentUnitRuntimeCandidate "Unit option rejected: worker is no longer on the target tile"
-                }
-                val liveAction = findMatchingWorkerAction(liveUnit, workerAction.type, workerAction.title)
-                    ?: return@AgentUnitRuntimeCandidate "Unit option rejected: worker action is no longer available"
-                if (liveAction.action == null) return@AgentUnitRuntimeCandidate "Unit option rejected: worker action cannot execute right now"
-                null
-            },
-            execute = { currentCiv ->
-                val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id } ?: return@AgentUnitRuntimeCandidate false
-                val liveAction = findMatchingWorkerAction(liveUnit, workerAction.type, workerAction.title)
-                    ?: return@AgentUnitRuntimeCandidate false
-                liveAction.action?.invoke()
-                true
-            },
-            successMessage = "${unit.name} executed ${workerAction.title}",
+    private fun buildBestCurrentTileImprovementCandidate(
+        unit: MapUnit,
+        job: AgentWorkerJobPlanner.WorkerJob,
+    ): AgentUnitRuntimeCandidate? {
+        val improvement = unit.civ.getWorkerAutomation().chooseImprovementForTile(unit, unit.getTile()) ?: return null
+        val resolvedJob = job.copy(
+            improvementName = improvement.name,
+            description = "${job.description} Best current improvement: ${improvement.name}.",
+            intentLabel = job.intentLabel ?: "build ${improvement.name}",
+            isInProgress = unit.getTile().improvementInProgress == improvement.name,
         )
+        return buildImprovementCandidate(unit, resolvedJob)
     }
 
     private fun findStageOutsideBorderDestination(
@@ -1461,14 +1432,6 @@ object AgentUnitOptionBuilder {
                     it.tileToAttack.position.x == targetX &&
                     it.tileToAttack.position.y == targetY
             }
-    }
-
-    private fun findMatchingWorkerAction(
-        unit: MapUnit,
-        actionType: UnitActionType,
-        actionTitle: String,
-    ): UnitAction? {
-        return findMatchingAction(unit, actionType, actionTitle)
     }
 
     private fun findMatchingAction(

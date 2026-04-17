@@ -1949,7 +1949,11 @@ function DecisionFocusBody({ decisionFocus }: { decisionFocus: Record<string, un
               <SummaryStat label="Happiness" value={formatNumber(numberValue(supplySnapshot.happiness))} />
               <SummaryStat label="Science / turn" value={formatNumber(numberValue(supplySnapshot.sciencePerTurn))} />
               <SummaryStat label="Cities" value={formatNumber(numberValue(supplySnapshot.cityCount))} />
+              <SummaryStat label="Total units" value={formatNumber(numberValue(supplySnapshot.unitCount))} />
               <SummaryStat label="Military units" value={formatNumber(numberValue(supplySnapshot.militaryUnitCount))} />
+              <SummaryStat label="Unit supply" value={formatNumber(numberValue(supplySnapshot.unitSupply))} />
+              <SummaryStat label="Supply deficit" value={formatNumber(numberValue(supplySnapshot.unitSupplyDeficit))} />
+              <SummaryStat label="Supply penalty" value={numberValue(supplySnapshot.unitSupplyProductionPenaltyPercent) > 0 ? `-${formatNumber(numberValue(supplySnapshot.unitSupplyProductionPenaltyPercent))}% prod` : "0%"} />
               <SummaryStat label="Supply health" value={stringValue(supplySnapshot.supplyHealth) || "—"} />
             </div>
             {stringValue(supplySnapshot.summary) ? <p className="card-paragraph">{stringValue(supplySnapshot.summary)}</p> : null}
