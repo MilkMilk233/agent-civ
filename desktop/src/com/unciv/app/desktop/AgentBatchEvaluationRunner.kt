@@ -428,7 +428,11 @@ object AgentBatchEvaluationRunner {
             val originalShowSettlerSuggestions = runCatching {
                 UncivGame.Current.settings.showSettlersSuggestedCityLocations
             }.getOrDefault(true)
+            val liveGameInfo = gameInfo
             val displayGameInfo = gameInfo.clone()
+            displayGameInfo.tileMap.mapParameters = displayGameInfo.tileMap.mapParameters.clone().apply {
+                worldWrap = false
+            }
             displayGameInfo.currentPlayer = civName
             displayGameInfo.setTransients()
             val viewingCiv = displayGameInfo.getCivilization(civName)
@@ -444,11 +448,21 @@ object AgentBatchEvaluationRunner {
                     UncivGame.Current.loadGame(displayGameInfo)
                 }
 
+                UncivGame.Current.worldScreen?.clearSelectionForCapture()
+
                 focusWorldScreenForScreenshot(civName)
                 val pngBytes = AgentLiveScreenshotService.capturePng()
                 AgentLiveTurnScreenshotStore.save(AgentObservability.currentGeneration(), civName, turn, pngBytes)
                 AgentEvaluationStore.writeTurnScreenshot(batchId, matchId, civName, turn, pngBytes)
             } finally {
+                runCatching {
+                    Concurrency.runBlocking("agent-dashboard-restore-live-game-$turn") {
+                        UncivGame.Current.loadGame(liveGameInfo)
+                    }
+                }.onFailure { restoreError ->
+                    Log.debug("Agent dashboard failed to restore live game after screenshot capture for %s turn %s", civName, turn)
+                    Log.debug(restoreError.toString())
+                }
                 UncivGame.Current.settings.showTutorials = originalShowTutorials
                 UncivGame.Current.settings.showSettlersSuggestedCityLocations = originalShowSettlerSuggestions
             }

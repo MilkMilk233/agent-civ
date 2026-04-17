@@ -146,7 +146,7 @@ class UnitTable(val worldScreen: WorldScreen) : Table() {
     }
 
     fun selectSpy(spy: Spy?) {
-        presenter = spyPresenter
+        presenter = if (spy != null) spyPresenter else summaryPresenter
         spyPresenter.selectSpy(spy)
         resetUnitTable()
     }
@@ -163,7 +163,7 @@ class UnitTable(val worldScreen: WorldScreen) : Table() {
     fun update() {
         closeButton.isVisible = true
         
-        if (!presenter.shouldBeShown()) summaryPresenter
+        if (!presenter.shouldBeShown()) presenter = summaryPresenter
         presenter.update()
 
         // more efficient to do this check once for both

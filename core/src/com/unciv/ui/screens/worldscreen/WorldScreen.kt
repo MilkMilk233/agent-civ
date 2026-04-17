@@ -788,6 +788,15 @@ class WorldScreen(
         displayTutorial(TutorialTrigger.WeLoveTheKingDay) { viewingCiv.cities.any { it.demandedResource != "" } }
     }
 
+    fun clearSelectionForCapture() {
+        mapHolder.removeAction(mapHolder.blinkAction)
+        mapHolder.selectedTile = null
+        mapHolder.removeUnitActionOverlay()
+        bottomUnitTable.selectUnit()
+        bottomUnitTable.selectSpy(null)
+        shouldUpdate = true
+    }
+
     private fun backButtonAndESCHandler() {
 
         // Deselect Unit
