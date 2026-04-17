@@ -28,6 +28,20 @@ object AgentPromptBuilder {
     ): String {
         val memoryJson = memoryJson(memory)
         val plannerBriefJson = plannerBriefJson(memory, observation, empireObservation)
+        val tacticalCheatSheet = AgentTacticalCheatSheetBank.resolve(
+            gameContext = empireObservation.gameContext,
+            campaignStage = memory.lastStrategistMemo.campaignStage.ifBlank { empireObservation.campaignStage },
+            isAtWar = empireObservation.isAtWar,
+        )
+        val tacticalCheatSheetSection = tacticalCheatSheet?.let { sheet ->
+            buildString {
+                appendLine("Background knowledge from the tactician cheat sheet bank:")
+                appendLine("- ${sheet.title}.")
+                for (bullet in sheet.bullets) {
+                    appendLine("- $bullet")
+                }
+            }.trimEnd()
+        } ?: ""
         val retryBlock = retryContext?.let {
             """
             Retry context:
@@ -71,6 +85,7 @@ object AgentPromptBuilder {
               "notes": "optional"
             }
             Rules:
+            ${if (tacticalCheatSheetSection.isNotBlank()) "$tacticalCheatSheetSection\n" else ""}
             - Memory JSON carries only the continuity residue that is still useful for this exact turn: map anchors, live city intents, live unit assignments, and recent failures.
             - Planner Brief JSON is the tactical turn brief built from the current game state. It is the current truth for planning.
             - Trust Planner Brief JSON over Memory JSON if they conflict on current-turn facts.

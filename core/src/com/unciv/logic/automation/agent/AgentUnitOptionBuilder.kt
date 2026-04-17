@@ -690,10 +690,8 @@ object AgentUnitOptionBuilder {
         reservationTracker: TheaterReservationTracker? = null,
     ): Tile? {
         val allSlots = buildBattleTheaterSlots(unit, objective)
-        val candidateSlots = allSlots.filter { it.kind in preferredKinds }
-            .ifEmpty { allSlots.filter { it.kind in fallbackKinds } }
+        val candidateSlots = allSlots.filter { it.kind in preferredKinds || it.kind in fallbackKinds }
         if (candidateSlots.isEmpty()) return null
-
         val currentTile = unit.getTile()
         val reachableTiles = unit.movement.getDistanceToTiles().keys
             .asSequence()
@@ -701,32 +699,79 @@ object AgentUnitOptionBuilder {
             .filter { tile -> !tile.isCityCenter() }
             .filter { tile -> unit.getDamageFromTerrain(tile) <= 0 }
             .toList()
-        val orderedSlots = candidateSlots.sortedByDescending { slot ->
-            scoreTargetTheaterSlot(unit, objective, slot, reservationTracker)
-        }
-        var currentTileMatchesCandidate = false
-
-        for (slot in orderedSlots) {
-            if (slot.tile == currentTile) {
-                currentTileMatchesCandidate = true
-                continue
-            }
-            if (slot.tile in reachableTiles) {
-                reservationTracker?.reserve(objective.x, objective.y, slot.tile)
-                return slot.tile
-            }
-            val bestStep = reachableTiles
-                .maxByOrNull { step -> scoreStepTowardTheaterSlot(unit, objective, step, slot, reservationTracker) }
-                ?.takeIf { step -> scoreStepTowardTheaterSlot(unit, objective, step, slot, reservationTracker) > 0 }
-            if (bestStep != null) {
-                reservationTracker?.reserve(objective.x, objective.y, slot.tile)
-                return bestStep
-            }
-        }
-        if (currentTileMatchesCandidate) {
+        val selection = selectTheaterDestinationFromSlots(
+            unit = unit,
+            objective = objective,
+            slots = candidateSlots,
+            reachableTiles = reachableTiles,
+            preferredKinds = preferredKinds,
+            reservationTracker = reservationTracker,
+        )
+        if (selection.destination != null) return selection.destination
+        if (selection.currentTileMatchesCandidate) {
             reservationTracker?.reserve(objective.x, objective.y, currentTile)
         }
         return null
+    }
+
+    private fun selectTheaterDestinationFromSlots(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+        slots: List<BattleTheaterSlot>,
+        reachableTiles: List<Tile>,
+        preferredKinds: Set<BattleTheaterSlotKind>,
+        reservationTracker: TheaterReservationTracker?,
+    ): TheaterDestinationSelection {
+        if (slots.isEmpty()) return TheaterDestinationSelection()
+
+        val currentTile = unit.getTile()
+        val currentTileMatchesCandidate = slots.any { it.tile == currentTile }
+
+        val bestMove = slots.asSequence()
+            .filter { slot -> slot.tile != currentTile }
+            .filter { slot -> !isFriendlyMilitaryBlocker(unit, slot.tile) }
+            .flatMap { slot ->
+                sequence {
+                    if (slot.tile in reachableTiles && unit.movement.canMoveTo(slot.tile)) {
+                        yield(
+                            TheaterMoveCandidate(
+                                destination = slot.tile,
+                                reservedSlot = slot.tile,
+                                score = scoreTargetTheaterSlot(unit, objective, slot, reservationTracker) +
+                                    slotKindPreferenceBonus(slot.kind, preferredKinds) + 28,
+                            )
+                        )
+                    }
+                    for (step in reachableTiles) {
+                        if (!unit.movement.canMoveTo(step)) continue
+                        val stepScore = scoreStepTowardTheaterSlot(unit, objective, step, slot, reservationTracker)
+                        if (stepScore > 0) {
+                            yield(
+                                TheaterMoveCandidate(
+                                    destination = step,
+                                    reservedSlot = slot.tile,
+                                    score = stepScore + slotKindPreferenceBonus(slot.kind, preferredKinds),
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+            .maxByOrNull { candidate -> candidate.score }
+
+        if (bestMove != null) {
+            reservationTracker?.reserve(objective.x, objective.y, bestMove.reservedSlot)
+            return TheaterDestinationSelection(destination = bestMove.destination)
+        }
+
+        return TheaterDestinationSelection(currentTileMatchesCandidate = currentTileMatchesCandidate)
+    }
+
+    private fun slotKindPreferenceBonus(
+        slotKind: BattleTheaterSlotKind,
+        preferredKinds: Set<BattleTheaterSlotKind>,
+    ): Int {
+        return if (slotKind in preferredKinds) 48 else 0
     }
 
     private fun buildBattleTheaterSlots(
@@ -840,6 +885,7 @@ object AgentUnitOptionBuilder {
         val currentDistToSlot = axialDistance(currentTile.position.x, currentTile.position.y, slot.tile.position.x, slot.tile.position.y)
         score -= currentDistToSlot * 7
         if (reservationTracker?.isReserved(objective.x, objective.y, slot.tile) == true) score -= 220
+        score -= congestionPenalty(unit, objective, slot.tile, slot.kind)
         return score
     }
 
@@ -855,6 +901,8 @@ object AgentUnitOptionBuilder {
         val nextDistanceToObjective = axialDistance(step.position.x, step.position.y, objective.x, objective.y)
         val currentDistToSlot = axialDistance(currentTile.position.x, currentTile.position.y, slot.tile.position.x, slot.tile.position.y)
         val nextDistToSlot = axialDistance(step.position.x, step.position.y, slot.tile.position.x, slot.tile.position.y)
+        val currentCongestion = congestionPenalty(unit, objective, currentTile, slot.kind)
+        val nextCongestion = congestionPenalty(unit, objective, step, slot.kind)
         var score = slot.score
         score += (currentDistToSlot - nextDistToSlot) * 40
         score -= nextDistToSlot * 9
@@ -862,13 +910,58 @@ object AgentUnitOptionBuilder {
         if (step.getOwner() == unit.civ) score += 8
         if (step.getOwner() == null) score += 4
         score += step.tileHeight * if (unit.baseUnit.isRanged()) 2 else 1
+        score += ((currentCongestion - nextCongestion) * 3) / 4
         score += when {
             slot.kind == BattleTheaterSlotKind.Recovery && nextDistanceToObjective >= currentDistanceToObjective -> 16
             slot.kind != BattleTheaterSlotKind.Recovery && nextDistanceToObjective < currentDistanceToObjective -> 18
             else -> -12
         }
         if (reservationTracker?.isReserved(objective.x, objective.y, slot.tile) == true) score -= 180
+        score -= nextCongestion
+        score -= congestionPenalty(unit, objective, slot.tile, slot.kind) / 2
         return score
+    }
+
+    private fun isFriendlyMilitaryBlocker(unit: MapUnit, tile: Tile): Boolean {
+        val blocker = tile.militaryUnit ?: return false
+        return blocker != unit && blocker.civ == unit.civ
+    }
+
+    private fun congestionPenalty(
+        unit: MapUnit,
+        objective: ResolvedObjective,
+        tile: Tile,
+        slotKind: BattleTheaterSlotKind,
+    ): Int {
+        val tileDistanceToObjective = axialDistance(tile.position.x, tile.position.y, objective.x, objective.y)
+        var penalty = 0
+
+        if (isFriendlyMilitaryBlocker(unit, tile)) {
+            penalty += when (slotKind) {
+                BattleTheaterSlotKind.MeleeAssault -> 320
+                BattleTheaterSlotKind.RangedAssault -> 260
+                BattleTheaterSlotKind.Reserve -> 140
+                BattleTheaterSlotKind.Staging -> 90
+                BattleTheaterSlotKind.Recovery -> 40
+            }
+        }
+
+        val nearbyFriendlyBlockers = tile.neighbors.count { neighbor ->
+            val blocker = neighbor.militaryUnit
+            blocker != null &&
+                blocker != unit &&
+                blocker.civ == unit.civ &&
+                axialDistance(neighbor.position.x, neighbor.position.y, objective.x, objective.y) <= tileDistanceToObjective
+        }
+        penalty += nearbyFriendlyBlockers * when (slotKind) {
+            BattleTheaterSlotKind.MeleeAssault -> 55
+            BattleTheaterSlotKind.RangedAssault -> 45
+            BattleTheaterSlotKind.Reserve -> 24
+            BattleTheaterSlotKind.Staging -> 18
+            BattleTheaterSlotKind.Recovery -> 8
+        }
+
+        return penalty
     }
 
     private fun currentTileMatchesOperationalRole(
@@ -1624,6 +1717,17 @@ object AgentUnitOptionBuilder {
     private data class BattleTheaterSlot(
         val tile: Tile,
         val kind: BattleTheaterSlotKind,
+        val score: Int,
+    )
+
+    private data class TheaterDestinationSelection(
+        val destination: Tile? = null,
+        val currentTileMatchesCandidate: Boolean = false,
+    )
+
+    private data class TheaterMoveCandidate(
+        val destination: Tile,
+        val reservedSlot: Tile,
         val score: Int,
     )
 
