@@ -37,7 +37,7 @@ const fallbackOptions: RunnerFormOptions = {
       difficulties: ["Settler", "Chieftain", "Warlord", "Prince", "King", "Emperor", "Immortal", "Deity"],
       speeds: ["Quick", "Standard", "Epic", "Marathon"],
       civilizations: ["Random", "America", "Babylon", "Egypt", "England", "France", "Germany", "Persia", "Rome"],
-      victoryTypes: ["Domination", "Science", "Cultural", "Diplomatic", "Time"],
+      victoryTypes: ["Domination", "Scientific", "Cultural", "Diplomatic", "Time"],
     },
   ],
   mapTypes: ["Pangaea", "Continents", "Archipelago", "Fractal", "Lakes"],
@@ -71,7 +71,7 @@ export function createDefaultLaunchForm(options: RunnerFormOptions | null): Batc
   return {
     name: "small-loop-1",
     games: 1,
-    maxTurns: 330,
+    maxTurns: 100,
     seedStart: 2000,
     pairMatchesBySeed: false,
     saveFinalGames: false,
@@ -178,6 +178,12 @@ function clampNumber(value: number, min: number, max: number): number {
 }
 
 function normalizeSelection(selected: string[], allowed: string[]): string[] {
-  const normalized = selected.filter((value) => allowed.includes(value));
+  const aliases = new Map<string, string>([
+    ["Science", "Scientific"],
+    ["Scientific", "Science"],
+  ]);
+  const normalized = selected
+    .map((value) => (allowed.includes(value) ? value : aliases.get(value)))
+    .filter((value): value is string => Boolean(value && allowed.includes(value)));
   return normalized.length ? normalized : [...allowed];
 }

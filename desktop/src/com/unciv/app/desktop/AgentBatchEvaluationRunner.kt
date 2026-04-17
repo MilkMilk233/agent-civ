@@ -425,6 +425,9 @@ object AgentBatchEvaluationRunner {
     ) {
         runCatching {
             val originalShowTutorials = runCatching { UncivGame.Current.settings.showTutorials }.getOrDefault(true)
+            val originalShowSettlerSuggestions = runCatching {
+                UncivGame.Current.settings.showSettlersSuggestedCityLocations
+            }.getOrDefault(true)
             val displayGameInfo = gameInfo.clone()
             displayGameInfo.currentPlayer = civName
             displayGameInfo.setTransients()
@@ -435,6 +438,7 @@ object AgentBatchEvaluationRunner {
             viewingCiv.flagsCountdown.remove("ShowDiplomaticVotingResults")
 
             UncivGame.Current.settings.showTutorials = false
+            UncivGame.Current.settings.showSettlersSuggestedCityLocations = false
             try {
                 Concurrency.runBlocking("agent-dashboard-load-turn-$turn") {
                     UncivGame.Current.loadGame(displayGameInfo)
@@ -446,6 +450,7 @@ object AgentBatchEvaluationRunner {
                 AgentEvaluationStore.writeTurnScreenshot(batchId, matchId, civName, turn, pngBytes)
             } finally {
                 UncivGame.Current.settings.showTutorials = originalShowTutorials
+                UncivGame.Current.settings.showSettlersSuggestedCityLocations = originalShowSettlerSuggestions
             }
         }.onFailure { error ->
             Log.debug("Agent dashboard screenshot capture failed for %s turn %s", civName, turn)
