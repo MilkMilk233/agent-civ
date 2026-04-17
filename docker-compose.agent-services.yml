@@ -1,0 +1,55 @@
+x-agent-service: &agent-service
+  build:
+    context: .
+    dockerfile: Dockerfile.agent-services
+  env_file:
+    - .env
+  environment:
+    UNCIV_AGENT_OBS_ENABLED: "true"
+    UNCIV_AGENT_SKIP_FRONTEND_BUILD: "true"
+  restart: unless-stopped
+
+services:
+  agent-producer-a:
+    <<: *agent-service
+    container_name: unciv-agent-producer-a
+    command: /bin/bash -lc ./scripts/run-agent-dashboard.sh
+    environment:
+      UNCIV_AGENT_OBS_ENABLED: "true"
+      UNCIV_AGENT_SKIP_FRONTEND_BUILD: "true"
+      UNCIV_AGENT_OBS_PORT: "7071"
+      UNCIV_AGENT_EVAL_DIR: /runs/producer-a/agent-evaluations
+    ports:
+      - "7071:7071"
+    volumes:
+      - ./docker-data/producer-a:/runs/producer-a
+
+  agent-producer-b:
+    <<: *agent-service
+    container_name: unciv-agent-producer-b
+    command: /bin/bash -lc ./scripts/run-agent-dashboard.sh
+    environment:
+      UNCIV_AGENT_OBS_ENABLED: "true"
+      UNCIV_AGENT_SKIP_FRONTEND_BUILD: "true"
+      UNCIV_AGENT_OBS_PORT: "7072"
+      UNCIV_AGENT_EVAL_DIR: /runs/producer-b/agent-evaluations
+    ports:
+      - "7072:7072"
+    volumes:
+      - ./docker-data/producer-b:/runs/producer-b
+
+  agent-replay:
+    <<: *agent-service
+    container_name: unciv-agent-replay
+    command: /bin/bash -lc ./scripts/run-agent-replay.sh
+    environment:
+      UNCIV_AGENT_OBS_ENABLED: "true"
+      UNCIV_AGENT_SKIP_FRONTEND_BUILD: "true"
+      UNCIV_AGENT_OBS_PORT: "7080"
+      UNCIV_AGENT_EVAL_DIR: /runs/producer-a/agent-evaluations
+      UNCIV_AGENT_EVAL_DIRS: /runs/producer-a/agent-evaluations:/runs/producer-b/agent-evaluations
+    ports:
+      - "7080:7080"
+    volumes:
+      - ./docker-data/producer-a:/runs/producer-a:ro
+      - ./docker-data/producer-b:/runs/producer-b:ro

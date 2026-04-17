@@ -6,6 +6,7 @@ import com.unciv.logic.automation.agent.AgentObservabilityEvent
 import com.unciv.logic.civilization.PlayerType
 import com.unciv.logic.files.UncivFiles
 import java.io.BufferedWriter
+import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
@@ -94,6 +95,7 @@ data class AgentEvaluationTurnSummary(
     val illegalActionRate: Double = 0.0,
     val notes: String? = null,
     val topConcern: String? = null,
+    val checkpointFileName: String? = null,
 )
 
 @Serializable
@@ -128,11 +130,26 @@ object AgentEvaluationStore {
     private const val eventsFile = "events.jsonl"
     private const val configFile = "config.json"
     private const val finalSaveFile = "final-game.uncivsave"
+    private const val turnCheckpointDirName = "turn-checkpoints"
     private const val staleRunThresholdMs = 3 * 60 * 1000L
 
     fun rootDir(): Path = Paths.get(
         (System.getenv("UNCIV_AGENT_EVAL_DIR") ?: "agent-evaluations").trim().ifEmpty { "agent-evaluations" },
     )
+
+    fun readRootDirs(): List<Path> {
+        val configuredRoots = (System.getenv("UNCIV_AGENT_EVAL_DIRS") ?: "")
+            .split(File.pathSeparatorChar)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .map { Paths.get(it).toAbsolutePath().normalize() }
+
+        return (configuredRoots + rootDir().toAbsolutePath().normalize()).distinct()
+    }
+
+    fun storageRootsDescription(): String {
+        return readRootDirs().joinToString(" ; ") { it.toString() }
+    }
 
     fun batchDir(batchId: String): Path = rootDir().resolve(batchesDirName).resolve(batchId)
 
@@ -182,14 +199,27 @@ object AgentEvaluationStore {
         return path.fileName.toString()
     }
 
+    fun writeTurnCheckpoint(batchId: String, matchId: String, civName: String, turn: Int, gameInfo: GameInfo): String {
+        val path = matchDir(batchId, matchId)
+            .resolve(turnCheckpointDirName)
+            .resolve(turnCheckpointFileName(civName, turn))
+        ensureParent(path)
+        Files.writeString(
+            path,
+            UncivFiles.gameInfoToString(gameInfo, forceZip = true, updateChecksum = true),
+            StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+            StandardOpenOption.WRITE,
+        )
+        return path.fileName.toString()
+    }
+
     fun reconcileStaleRunningEntries(
         activeBatchId: String? = null,
         nowEpochMs: Long = System.currentTimeMillis(),
     ) {
-        val dir = rootDir().resolve(batchesDirName)
-        if (!dir.exists() || !dir.isDirectory()) return
-
-        dir.listDirectoryEntries().forEach { entry ->
+        writableBatchDirs().forEach { entry ->
             val batchSummary = readJsonOrNull<AgentEvaluationBatchSummary>(entry.resolve(batchSummaryFile)) ?: return@forEach
             if (batchSummary.status != "running") return@forEach
             if (batchSummary.batchId == activeBatchId) return@forEach
@@ -202,20 +232,19 @@ object AgentEvaluationStore {
     }
 
     fun listBatches(limit: Int = 100): List<AgentEvaluationBatchSummary> {
-        val dir = rootDir().resolve(batchesDirName)
-        if (!dir.exists() || !dir.isDirectory()) return emptyList()
-        return dir.listDirectoryEntries()
+        return readableBatchDirs()
             .mapNotNull { entry -> readJsonOrNull<AgentEvaluationBatchSummary>(entry.resolve(batchSummaryFile)) }
+            .distinctBy { it.batchId }
             .sortedWith(compareByDescending<AgentEvaluationBatchSummary> { it.startedAtEpochMs }.thenByDescending { it.batchId })
             .take(limit)
     }
 
     fun loadBatch(batchId: String): AgentEvaluationBatchSummary? {
-        return readJsonOrNull(batchDir(batchId).resolve(batchSummaryFile))
+        return findBatchDir(batchId)?.let { readJsonOrNull(it.resolve(batchSummaryFile)) }
     }
 
     fun listMatches(batchId: String): List<AgentEvaluationMatchSummary> {
-        val dir = batchDir(batchId).resolve("matches")
+        val dir = findBatchDir(batchId)?.resolve("matches") ?: return emptyList()
         if (!dir.exists() || !dir.isDirectory()) return emptyList()
         return dir.listDirectoryEntries()
             .mapNotNull { entry -> readJsonOrNull<AgentEvaluationMatchSummary>(entry.resolve(matchSummaryFile)) }
@@ -223,11 +252,18 @@ object AgentEvaluationStore {
     }
 
     fun loadTurnSummaries(batchId: String, matchId: String): List<AgentEvaluationTurnSummary> {
-        return readJsonOrNull<List<AgentEvaluationTurnSummary>>(matchDir(batchId, matchId).resolve(turnSummaryFile)) ?: emptyList()
+        val turns = readJsonOrNull<List<AgentEvaluationTurnSummary>>(matchDirForRead(batchId, matchId)?.resolve(turnSummaryFile) ?: return emptyList()) ?: emptyList()
+        return turns.map { turnSummary ->
+            if (!turnSummary.checkpointFileName.isNullOrBlank()) turnSummary
+            else {
+                val checkpointFileName = findTurnCheckpointFileName(batchId, matchId, turnSummary.civName, turnSummary.turn)
+                if (checkpointFileName != null) turnSummary.copy(checkpointFileName = checkpointFileName) else turnSummary
+            }
+        }
     }
 
     fun loadEvents(batchId: String, matchId: String): List<AgentObservabilityEvent> {
-        val path = matchDir(batchId, matchId).resolve(eventsFile)
+        val path = matchDirForRead(batchId, matchId)?.resolve(eventsFile) ?: return emptyList()
         if (!path.exists()) return emptyList()
         return Files.readAllLines(path, StandardCharsets.UTF_8)
             .asSequence()
@@ -241,7 +277,9 @@ object AgentEvaluationStore {
 
     fun loadReplay(batchId: String, matchId: String): AgentEvaluationReplayResponse? {
         val batch = loadBatch(batchId) ?: return null
-        val match = readJsonOrNull<AgentEvaluationMatchSummary>(matchDir(batchId, matchId).resolve(matchSummaryFile)) ?: return null
+        val match = readJsonOrNull<AgentEvaluationMatchSummary>(
+            matchDirForRead(batchId, matchId)?.resolve(matchSummaryFile) ?: return null,
+        ) ?: return null
         return AgentEvaluationReplayResponse(
             batch = batch,
             match = match,
@@ -371,6 +409,48 @@ object AgentEvaluationStore {
                 .orElse(0L)
             return latest.takeIf { it > 0L }
         }
+    }
+
+    fun findTurnCheckpointFileName(batchId: String, matchId: String, civName: String, turn: Int): String? {
+        val path = (matchDirForRead(batchId, matchId) ?: return null)
+            .resolve(turnCheckpointDirName)
+            .resolve(turnCheckpointFileName(civName, turn))
+        return path.takeIf { it.exists() }?.fileName?.toString()
+    }
+
+    private fun turnCheckpointFileName(civName: String, turn: Int): String {
+        return "${sanitizeForFileName(civName)}-turn-${turn.toString().padStart(4, '0')}.uncivsave"
+    }
+
+    private fun sanitizeForFileName(value: String): String {
+        return value.lowercase()
+            .replace(Regex("[^a-z0-9]+"), "-")
+            .trim('-')
+            .ifBlank { "turn" }
+    }
+
+    private fun writableBatchDirs(): List<Path> {
+        val dir = rootDir().resolve(batchesDirName)
+        if (!dir.exists() || !dir.isDirectory()) return emptyList()
+        return dir.listDirectoryEntries()
+    }
+
+    private fun readableBatchDirs(): List<Path> {
+        return readRootDirs().flatMap { root ->
+            val dir = root.resolve(batchesDirName)
+            if (!dir.exists() || !dir.isDirectory()) emptyList() else dir.listDirectoryEntries()
+        }
+    }
+
+    private fun findBatchDir(batchId: String): Path? {
+        return readRootDirs()
+            .asSequence()
+            .map { it.resolve(batchesDirName).resolve(batchId) }
+            .firstOrNull { it.exists() && it.isDirectory() }
+    }
+
+    private fun matchDirForRead(batchId: String, matchId: String): Path? {
+        return findBatchDir(batchId)?.resolve("matches")?.resolve(matchId)?.takeIf { it.exists() && it.isDirectory() }
     }
 }
 

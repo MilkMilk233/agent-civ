@@ -1,0 +1,19 @@
+FROM node:20-bookworm-slim AS node
+
+FROM gradle:8.10.2-jdk21
+
+USER root
+COPY --from=node /usr/local /usr/local
+
+WORKDIR /workspace
+
+COPY . /workspace/
+
+RUN npm ci --prefix desktop/web/agent-dashboard \
+    && npm --prefix desktop/web/agent-dashboard run build \
+    && chmod +x gradlew scripts/run-agent-dashboard.sh scripts/run-agent-replay.sh \
+    && ./gradlew desktop:compileKotlin
+
+ENV UNCIV_AGENT_SKIP_FRONTEND_BUILD=true
+
+CMD ["/bin/bash", "-lc", "./scripts/run-agent-dashboard.sh"]

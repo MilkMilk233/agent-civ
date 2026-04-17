@@ -127,6 +127,14 @@ export default function App() {
   );
   const selectedBatch = batches.find((batch) => batch.batchId === selectedBatchId) ?? null;
   const selectedMatch = matches.find((match) => match.matchId === selectedMatchId) ?? null;
+  const launchEnabled = runnerStatus?.launchEnabled ?? false;
+  const replayOnlyMode = runnerStatus !== null && !launchEnabled;
+
+  useEffect(() => {
+    if (replayOnlyMode && mode !== "replay") {
+      setMode("replay");
+    }
+  }, [mode, replayOnlyMode]);
 
   async function loadSnapshot() {
     try {
@@ -207,15 +215,21 @@ export default function App() {
           <p className="eyebrow">Unciv Agent Observability</p>
           <h1>Observability Dashboard</h1>
           <p className="hero-copy">
-            Launch batches, watch live turns, and inspect strategist and tactical behavior without digging through raw files.
+            {replayOnlyMode
+              ? "Inspect stored strategist and tactical behavior without needing a live producer process."
+              : "Launch batches, watch live turns, and inspect strategist and tactical behavior without digging through raw files."}
           </p>
         </div>
         <div className="topbar-actions">
           <div className="mode-switch">
-            <button className={mode === "live" ? "active" : ""} onClick={() => setMode("live")}>Live</button>
+            <button className={mode === "live" ? "active" : ""} onClick={() => setMode("live")} disabled={replayOnlyMode}>Live</button>
             <button className={mode === "replay" ? "active" : ""} onClick={() => setMode("replay")}>Replay</button>
           </div>
-          <button className="primary large" disabled={busy || !!runnerStatus?.running} onClick={() => setLaunchModalOpen(true)}>
+          <button
+            className="primary large"
+            disabled={busy || !!runnerStatus?.running || !launchEnabled}
+            onClick={() => setLaunchModalOpen(true)}
+          >
             Start batch
           </button>
         </div>
@@ -225,10 +239,16 @@ export default function App() {
         <Card
           className="hero-status-card"
           title="Runner status"
-          subtitle={runnerStatus?.running ? "A batch is currently in progress." : "Ready for the next experiment."}
+          subtitle={
+            replayOnlyMode
+              ? "Replay-only backend reading stored artifacts from disk."
+              : runnerStatus?.running
+                ? "A batch is currently in progress."
+                : "Ready for the next experiment."
+          }
         >
           <div className="summary-grid compact hero-summary-grid hero-summary-grid-three">
-            <SummaryStat label="Current state" value={runnerStatus?.running ? "Running" : "Idle"} />
+            <SummaryStat label="Current state" value={replayOnlyMode ? "Replay only" : runnerStatus?.running ? "Running" : "Idle"} />
             <SummaryStat label="Current batch" value={runnerStatus?.currentBatchName || runnerStatus?.currentBatchId || "None"} />
             <SummaryStat label="Last result" value={runnerStatus?.lastCompletedBatchStatus || "None"} />
           </div>
@@ -245,12 +265,23 @@ export default function App() {
               Cancel running batch
             </button>
           </div>
+          {replayOnlyMode ? (
+            <div className="mini-note">
+              This backend is replay-only. Use a separate producer instance to launch or watch live batches.
+            </div>
+          ) : null}
         </Card>
 
         <Card
           className="hero-status-card"
           title={mode === "live" ? "Live session" : "Replay session"}
-          subtitle={mode === "live" ? "Current in-memory observability stream." : "Stored evaluations from disk."}
+          subtitle={
+            mode === "live"
+              ? "Current in-memory observability stream."
+              : replayOnlyMode
+                ? "Stored evaluations from disk, independent of live producers."
+                : "Stored evaluations from disk."
+          }
         >
           {mode === "live" ? (
             <>

@@ -96,7 +96,7 @@ object AgentBatchRunnerService {
             lastCompletedBatchId = lastCompletedBatchId,
             lastCompletedBatchStatus = lastCompletedBatchStatus,
             lastError = lastError,
-            storageDir = AgentEvaluationStore.rootDir().toAbsolutePath().normalize().toString(),
+            storageDir = AgentEvaluationStore.storageRootsDescription(),
         )
     }
 

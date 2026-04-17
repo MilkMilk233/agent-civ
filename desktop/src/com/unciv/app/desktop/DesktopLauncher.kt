@@ -62,6 +62,10 @@ internal object DesktopLauncher {
         }
 
         val agentDashboardMode = arg.any { it == "--agentdashboard" }
+        if (arg.any { it == "--agenthistory" }) {
+            AgentHistoryServerLauncher.main(emptyArray())
+            exitProcess(0)
+        }
         if (arg.any { it == "--agentreplay" }) {
             AgentReplayServerLauncher.main(emptyArray())
             exitProcess(0)

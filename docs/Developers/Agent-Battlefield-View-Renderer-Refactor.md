@@ -87,6 +87,182 @@ Recommended replay wording:
 
 That avoids confusion when text decisions and the board image are compared.
 
+## Service Split
+
+We should separate the system into two roles:
+
+1. **Producer / live mode**
+2. **Replay reader / replay mode**
+
+This is the key step that lets us run one or more live batches safely while inspecting results elsewhere.
+
+### Producer / live mode
+
+The producer is the process that actually runs games.
+
+It should:
+
+- accept batch launches
+- simulate matches
+- write trace artifacts
+- write post-turn `.uncivsave` checkpoints
+- optionally expose a live `/api/snapshot` view for the currently running batch
+
+It should not:
+
+- render battlefield PNGs
+- own replay screenshot generation
+- depend on a render-capable desktop window
+
+The safest launcher shape for producers is the server-only path:
+
+- `--agentreplay`
+
+not:
+
+- `--agentdashboard`
+
+because the producer should be a batch server, not a live GL-backed camera.
+
+### Replay reader / replay mode
+
+The replay reader is a separate process that only reads artifacts from disk.
+
+It should:
+
+- list stored batches
+- list matches within a batch
+- load replay JSON from stored files
+- later render battlefield PNGs from saved post-turn checkpoints
+- cache those rendered PNGs on disk
+
+It should not:
+
+- launch new matches
+- own the live in-memory observability stream
+- depend on the game simulation loop still being alive
+
+In other words:
+
+- live mode is about **producing artifacts**
+- replay mode is about **reading and enriching artifacts**
+
+## Docker / Multi-Instance Model
+
+Once live and replay are separated, parallel batch runs become much cleaner.
+
+### Producer containers
+
+Each producer container can run one batch server instance.
+
+Each producer needs:
+
+- its own port for live status / controls
+- its own artifact root, or a guaranteed unique batch namespace
+
+Example:
+
+- `producer-a`
+  - port `7071`
+  - `UNCIV_AGENT_EVAL_DIR=/data/agent-evaluations`
+  - mounted host path `/host/runs/producer-a:/data`
+- `producer-b`
+  - port `7072`
+  - `UNCIV_AGENT_EVAL_DIR=/data/agent-evaluations`
+  - mounted host path `/host/runs/producer-b:/data`
+
+This avoids collisions and keeps cleanup straightforward.
+
+### Replay service
+
+Replay should be a separate backend process or container.
+
+It can:
+
+- mount one shared artifact root
+- or mount several producer roots read-only
+
+Then the frontend can connect to the replay service and browse completed or interrupted runs without touching the live producers.
+
+### Why this is better
+
+This gives us:
+
+- one or more live producers running safely in parallel
+- replay inspection even after producers stop
+- no renderer logic in the live batch critical path
+- the option to render replay battlefield images lazily and cache them
+
+## API Shape
+
+### Live producer API
+
+Producer mode should own:
+
+- `/api/snapshot`
+- `/api/history/runner/status`
+- `/api/history/runner/start`
+- `/api/history/runner/cancel`
+
+It may also expose batch history for convenience, but that is not the core reason it exists.
+
+### Replay API
+
+Replay mode should own:
+
+- `/api/history/batches`
+- `/api/history/matches`
+- `/api/history/replay`
+- later, replay-only battlefield render endpoints
+
+That means replay can be served from stored artifacts alone.
+
+## Implementation Order
+
+To keep the work safe and incremental, we should do this in order:
+
+### Step 1
+
+- keep the live launcher on the server-only path
+- keep battlefield rendering out of the live run
+
+### Step 2
+
+- save one post-turn checkpoint per resolved turn
+- attach deterministic checkpoint filenames to turn summaries
+
+### Step 3
+
+- add a replay-only backend mode
+- point it at one or more artifact roots
+- make replay browsing work without needing a live producer process
+
+### Step 4
+
+- add replay-time battlefield rendering from saved checkpoints
+- render lazily on demand
+- cache PNGs after first render
+
+### Step 5
+
+- optionally add a background replay render worker to prewarm commonly viewed turns
+
+## Open Choice
+
+There are two viable ways to organize artifact roots:
+
+1. **One shared parent directory**
+- simplest operationally
+- all producers write under one host-mounted root
+- replay reads one root
+
+2. **Multiple producer roots**
+- safer isolation
+- clearer ownership per producer
+- replay needs to aggregate several roots
+
+I would start with **one shared parent directory if batch IDs are guaranteed unique**, and move to multi-root aggregation only if operational separation becomes important.
+
 ## Benefits
 
 This design gives us:
@@ -140,3 +316,9 @@ The renderer owns:
 - producing battlefield PNGs
 
 That separation is the main architectural rule that keeps the agent pipeline safe.
+
+There is a second rule that follows from this:
+
+- the process that runs live batches should not be the process that defines replay as a product
+
+Replay should be able to stand on stored artifacts alone.

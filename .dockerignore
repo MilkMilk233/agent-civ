@@ -1,3 +1,13 @@
 .git
 Dockerfile
 docker-compose.yml
+.gradle
+desktop/web/agent-dashboard/node_modules
+desktop/web/agent-dashboard/dist
+desktop/resources/agent-dashboard/assets
+build
+buildSrc/build
+core/build
+desktop/build
+server/build
+tests/build

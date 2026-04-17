@@ -1,0 +1,1 @@
+docker compose -f docker-compose.agent-services.yml build agent-replay && docker compose -f docker-compose.agent-services.yml up -d --force-recreate agent-replay

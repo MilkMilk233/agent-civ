@@ -249,13 +249,20 @@ object AgentBatchEvaluationRunner {
 
             println("Running ${initialSummary.label}")
             throwIfCancelled()
-            gameInfo.simulateUntilWin = true
-            gameInfo.simulateMaxTurns = config.maxTurns
-            gameInfo.nextTurn()
+            runTurnByTurnMatch(
+                batchId = batchId,
+                matchId = matchId,
+                gameInfo = gameInfo,
+                agentCivName = agentCivNameValue,
+                maxTurns = config.maxTurns,
+                capturedEvents = capturedEvents,
+                shouldCancel = shouldCancel,
+            )
             throwIfCancelled()
 
             val finishedAt = System.currentTimeMillis()
             val turnSummaries = AgentEvaluationAnalyzer.analyzeTurns(capturedEvents, agentCivNameValue)
+                .withTurnCheckpoints(batchId, matchId)
             AgentEvaluationStore.writeTurnSummaries(batchId, matchId, turnSummaries)
             var matchSummary = AgentEvaluationAnalyzer.buildMatchSummary(
                 batchId = batchId,
@@ -291,7 +298,7 @@ object AgentBatchEvaluationRunner {
         } catch (ex: CancellationException) {
             val finishedAt = System.currentTimeMillis()
             val turnSummaries = agentCivName
-                ?.let { AgentEvaluationAnalyzer.analyzeTurns(capturedEvents, it) }
+                ?.let { AgentEvaluationAnalyzer.analyzeTurns(capturedEvents, it).withTurnCheckpoints(batchId, matchId) }
                 ?: emptyList()
             AgentEvaluationStore.writeTurnSummaries(batchId, matchId, turnSummaries)
 
@@ -362,6 +369,60 @@ object AgentBatchEvaluationRunner {
         } finally {
             listenerId?.let(AgentObservability::removeListener)
             traceWriter?.close()
+        }
+    }
+
+    private fun runTurnByTurnMatch(
+        batchId: String,
+        matchId: String,
+        gameInfo: com.unciv.logic.GameInfo,
+        agentCivName: String,
+        maxTurns: Int,
+        capturedEvents: List<com.unciv.logic.automation.agent.AgentObservabilityEvent>,
+        shouldCancel: () -> Boolean,
+    ) {
+        val capturedTurns = mutableSetOf<Int>()
+        gameInfo.simulateUntilWin = true
+        gameInfo.simulateMaxTurns = maxTurns
+
+        while (gameInfo.simulateUntilWin && gameInfo.turns < maxTurns) {
+            if (shouldCancel() || Thread.currentThread().isInterrupted) {
+                throw CancellationException("Batch cancelled by user")
+            }
+
+            val nextStopTurn = gameInfo.turns + 1
+            gameInfo.simulateMaxTurns = nextStopTurn
+            UncivGame.Current.gameInfo = gameInfo
+            gameInfo.nextTurn()
+
+            val resolvedTurn = capturedEvents
+                .lastOrNull { event ->
+                    event.civName == agentCivName &&
+                        event.type in setOf("plan_applied", "fallback_legacy", "plan_missing")
+                }
+                ?.turn
+
+            if (resolvedTurn != null && capturedTurns.add(resolvedTurn)) {
+                AgentEvaluationStore.writeTurnCheckpoint(batchId, matchId, agentCivName, resolvedTurn, gameInfo)
+            }
+        }
+    }
+
+    private fun List<AgentEvaluationTurnSummary>.withTurnCheckpoints(
+        batchId: String,
+        matchId: String,
+    ): List<AgentEvaluationTurnSummary> {
+        return map { turnSummary ->
+            if (!turnSummary.checkpointFileName.isNullOrBlank()) turnSummary
+            else {
+                val checkpointFileName = AgentEvaluationStore.findTurnCheckpointFileName(
+                    batchId = batchId,
+                    matchId = matchId,
+                    civName = turnSummary.civName,
+                    turn = turnSummary.turn,
+                )
+                if (checkpointFileName != null) turnSummary.copy(checkpointFileName = checkpointFileName) else turnSummary
+            }
         }
     }
 

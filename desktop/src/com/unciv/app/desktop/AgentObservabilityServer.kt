@@ -12,12 +12,13 @@ import kotlinx.serialization.encodeToString
 
 object AgentObservabilityServer {
     private var server: HttpServer? = null
+    private var allowHistoryReconciliation = true
 
-    fun startFromEnvironment(forceEnable: Boolean = false) {
+    fun startFromEnvironment(forceEnable: Boolean = false, allowHistoryReconciliation: Boolean = true) {
         val enabled = (System.getenv("UNCIV_AGENT_OBS_ENABLED") ?: "true").lowercase() !in setOf("0", "false", "no")
         if (!enabled && !forceEnable) return
 
-        start(configuredPort())
+        start(configuredPort(), allowHistoryReconciliation)
     }
 
     fun configuredPort(): Int {
@@ -25,8 +26,9 @@ object AgentObservabilityServer {
     }
 
     @OptIn(kotlin.time.ExperimentalTime::class)
-    private fun start(port: Int) {
+    private fun start(port: Int, allowHistoryReconciliation: Boolean) {
         if (server != null) return
+        this.allowHistoryReconciliation = allowHistoryReconciliation
 
         val httpServer = HttpServer.create(InetSocketAddress("0.0.0.0", port), 0)
         httpServer.executor = Executors.newSingleThreadExecutor()
@@ -195,6 +197,7 @@ object AgentObservabilityServer {
 
     @OptIn(kotlin.time.ExperimentalTime::class)
     private fun reconcileHistoryState() {
+        if (!allowHistoryReconciliation) return
         val activeBatchId = AgentBatchRunnerService.status().takeIf { it.running }?.currentBatchId
         AgentEvaluationStore.reconcileStaleRunningEntries(activeBatchId = activeBatchId)
     }
