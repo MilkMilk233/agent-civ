@@ -164,7 +164,7 @@ object AgentStrategistPromptBuilder {
             - techControl and policyControl should only be used when the current phase really cares about them. Keep them short.
             - driftWarnings should be short bullets naming the specific low-value patterns the tactician should avoid repeating during this phase.
             - Keep each filled control lane concise, usually a short natural-language line or 1-2 sentences. These lanes set bounded expectations; they are not exact commands.
-            - decisionMode should be a short lowercase label such as expand, stage_briefly, launch_now, assault, pivot_recover, or stabilize when they fit. Pick one clear mode instead of smearing together multiple moods.
+            - decisionMode should be a short lowercase label such as expand, deter_while_expanding, defend_and_boom, stage_briefly, launch_now, assault, pivot_recover, or stabilize when they fit. Pick one clear mode instead of smearing together multiple moods.
             - If refreshRequest.triggerKind is deadline_missed and the same core checkpoint is still unresolved, do not casually re-issue stage_briefly with another soft short horizon. Either tighten to a final immediate 1-2 turn window with a sharper declarative memo or switch to a more decisive mode such as launch_now, pivot_recover, assault, or stabilize.
             - If a rival city or capital is visible and the same checkpoint already slipped once, be very skeptical of another relaxed staging memo.
             - targetFrame, whyNow, nextCheckpoint, and expiryCondition should be short natural-language lines, not schema jargon or tactical scripts.

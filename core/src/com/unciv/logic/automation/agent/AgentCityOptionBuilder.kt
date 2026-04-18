@@ -91,6 +91,17 @@ object AgentCityOptionBuilder {
 
     internal fun isPeacefulGrowthWindow(city: City): Boolean {
         val civInfo = city.civ
+        val victoryIntent = civInfo.agentMemory.victoryIntent
+        val scientificSnowballMode = AgentVictoryIntentResolver.isScientificVictoryType(
+            victoryIntent.effectiveWinPath ?: victoryIntent.forcedVictoryType
+        )
+        if (scientificSnowballMode) {
+            if (civInfo.gameInfo.turns > 70) return false
+            if (civInfo.isAtWar()) return false
+            if (civInfo.getHappiness() < 0) return false
+            if (civInfo.gold < -50) return false
+            return civInfo.cities.size <= 5
+        }
         if (civInfo.gameInfo.turns > 45) return false
         if (civInfo.isAtWar()) return false
         if (civInfo.getHappiness() < 0) return false
@@ -488,6 +499,22 @@ object AgentCityOptionBuilder {
             }
         }
 
+        if (conversionContext.scientificSnowballMode) {
+            when (construction) {
+                is Building -> when (construction.name) {
+                    "Library" -> score += 80
+                    "University" -> score += 90
+                    "Market", "Mint" -> if (conversionContext.economicPosture == "recover") score += 35
+                    "Barracks" -> score -= 150
+                }
+                is BaseUnit -> when {
+                    construction.name == "Scout" && scoutCount == 0 -> score += 35
+                    construction.name == "Scout" && scoutCount >= 1 -> score -= 65
+                    construction.isCityFounder() && civInfo.cities.size < 4 && civInfo.getHappiness() > 0 -> score += 50
+                }
+            }
+        }
+
         if (conversionContext.objectivePressure) {
             score += conversionPressureAdjustment(city, construction, conversionContext)
             if (currentName.isNotBlank() && construction.name != currentName) {
@@ -502,6 +529,7 @@ object AgentCityOptionBuilder {
         }
 
         score += militarySupplyAndQualityAdjustment(city, construction, conversionContext)
+        score += nonConquestMilitaryDisciplineAdjustment(city, construction, conversionContext)
 
         return score
     }
@@ -636,6 +664,7 @@ object AgentCityOptionBuilder {
             else -> -90
         }
         score += militarySupplyAndQualityAdjustment(city, construction, conversionContext)
+        score += nonConquestMilitaryDisciplineAdjustment(city, construction, conversionContext)
         return score
     }
 
@@ -739,21 +768,32 @@ object AgentCityOptionBuilder {
     }
 
     private fun buildConversionContext(civInfo: Civilization, memory: AgentMemory): ConversionContext {
+        val effectiveWinPath = memory.victoryIntent.effectiveWinPath ?: memory.victoryIntent.forcedVictoryType
+        val scientificSnowballMode = AgentVictoryIntentResolver.isScientificVictoryType(effectiveWinPath)
+        val militaryPurpose = memory.victoryIntent.militaryPurpose.ifBlank { "deterrence" }
+        val economicPosture = memory.victoryIntent.economicPosture.ifBlank { "boom" }
+        val contactComplete = civInfo.getKnownCivs().any { !it.isBarbarian && !it.isCityState }
         val stage = memory.campaign.stage.lowercase()
         val decisiveObjective = memory.campaign.decisiveObjective?.lowercase().orEmpty()
         val conversionBlocker = memory.campaign.conversionBlocker?.lowercase().orEmpty()
-        val objectivePressure = stage in setOf("pressure", "staging", "assault", "rebuild", "declaration") ||
-            decisiveObjective.contains("capture") ||
-            decisiveObjective.contains("take") ||
-            decisiveObjective.contains("assault") ||
-            decisiveObjective.contains("war") ||
-            decisiveObjective.contains("frontier")
+        val objectivePressure = civInfo.isAtWar() ||
+            militaryPurpose == "conquest" ||
+            (
+                stage in setOf("pressure", "staging", "assault", "rebuild", "declaration") &&
+                    militaryPurpose == "conquest"
+                )
         val expansionCheckpointLive =
             decisiveObjective.contains("second city") ||
                 decisiveObjective.contains("found the second city") ||
                 decisiveObjective.contains("found a second city") ||
                 decisiveObjective.contains("city founded") ||
                 decisiveObjective.contains("settler")
+        val cityCount = civInfo.cities.size
+        val deterrenceTargetMilitaryCount = when {
+            scientificSnowballMode -> maxOf(2, cityCount + if (contactComplete) 1 else 0)
+            militaryPurpose != "conquest" -> maxOf(2, cityCount + if (contactComplete) 2 else 1)
+            else -> 0
+        }
         return ConversionContext(
             objectivePressure = objectivePressure,
             expansionCheckpointLive = expansionCheckpointLive,
@@ -764,6 +804,12 @@ object AgentCityOptionBuilder {
                 conversionBlocker.contains("bombard") ||
                 conversionBlocker.contains("siege") ||
                 conversionBlocker.contains("support"),
+            scientificSnowballMode = scientificSnowballMode,
+            militaryPurpose = militaryPurpose,
+            economicPosture = economicPosture,
+            cityCount = cityCount,
+            contactComplete = contactComplete,
+            deterrenceTargetMilitaryCount = deterrenceTargetMilitaryCount,
             battleReadiness = memory.campaignControl.battleReadiness,
             supplyHealth = memory.campaignControl.supplyHealth,
             unitSupply = civInfo.stats.getUnitSupply(),
@@ -771,6 +817,46 @@ object AgentCityOptionBuilder {
             unitSupplyProductionPenaltyPercent = (-civInfo.stats.getUnitSupplyProductionPenalty()).roundToInt(),
             militaryUnitCount = civInfo.units.getCivUnits().count { it.isMilitary() },
         )
+    }
+
+    private fun nonConquestMilitaryDisciplineAdjustment(
+        city: City,
+        construction: IConstruction,
+        conversionContext: ConversionContext,
+    ): Int {
+        if (conversionContext.militaryPurpose == "conquest") return 0
+
+        if (construction is Building && isMilitaryInfrastructureBuilding(construction)) {
+            return if (conversionContext.scientificSnowballMode) -140 else -80
+        }
+
+        val unit = construction as? BaseUnit ?: return 0
+        if (!unit.isMilitary || unit.name == "Scout") return 0
+
+        val excessUnits = conversionContext.militaryUnitCount - conversionContext.deterrenceTargetMilitaryCount
+        val cityThreat = city.getThreatScore()
+        val immediateThreat = cityThreat > 0 || city.nearbyRivalPressure() > 0
+
+        if (conversionContext.economicPosture == "recover" && !immediateThreat) {
+            return if (unit.isRanged()) -120 else -150
+        }
+
+        if (excessUnits >= 3 && !immediateThreat) {
+            return if (unit.isRanged()) -180 else -220
+        }
+        if (excessUnits >= 1 && !immediateThreat) {
+            return if (unit.isRanged()) -110 else -145
+        }
+
+        if (conversionContext.scientificSnowballMode && !immediateThreat) {
+            return when {
+                unit.isRanged() && conversionContext.contactComplete -> 10
+                unit.isRanged() -> -35
+                else -> -70
+            }
+        }
+
+        return 0
     }
 
     private fun militarySupplyAndQualityAdjustment(
@@ -895,6 +981,14 @@ object AgentCityOptionBuilder {
         }
     }
 
+    private fun City.nearbyRivalPressure(): Int {
+        return civ.gameInfo.civilizations
+            .asSequence()
+            .filter { it != civ && !it.isBarbarian && !it.isCityState }
+            .flatMap { rival -> rival.units.getCivUnits().asSequence() }
+            .count { unit -> unit.getTile().aerialDistanceTo(getCenterTile()) <= 5 }
+    }
+
     private fun cityKey(x: Int, y: Int): String = "$x,$y"
 
     internal data class AgentCityOptionContext(
@@ -931,6 +1025,12 @@ object AgentCityOptionBuilder {
         val expansionCheckpointLive: Boolean,
         val frontlineShortage: Boolean,
         val rangedShortage: Boolean,
+        val scientificSnowballMode: Boolean,
+        val militaryPurpose: String,
+        val economicPosture: String,
+        val cityCount: Int,
+        val contactComplete: Boolean,
+        val deterrenceTargetMilitaryCount: Int,
         val battleReadiness: String?,
         val supplyHealth: String?,
         val unitSupply: Int,

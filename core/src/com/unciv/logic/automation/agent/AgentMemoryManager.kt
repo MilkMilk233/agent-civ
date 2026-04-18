@@ -72,7 +72,7 @@ object AgentMemoryManager {
 
         val basePrepared = existing.copy(
             worldModel = refreshWorldModelAnchors(pruneWorldModel(existing.worldModel, turn), observation, turn),
-            campaign = pruneCampaign(existing.campaign, empireObservation, turn),
+            campaign = pruneCampaign(existing.campaign, existing.victoryIntent, empireObservation, turn),
             empirePlan = pruneEmpirePlan(existing.empirePlan, turn),
             campaignControl = pruneCampaignControl(existing.campaignControl, turn),
             recentChanges = pruneNotes(existing.recentChanges, turn, maxRecentChanges),
@@ -351,7 +351,14 @@ object AgentMemoryManager {
 
         val updated = memory.copy(
             worldModel = refreshWorldModelAnchors(buildWorldModel(memory.worldModel, strategicPlan.memo, turn), observation, turn),
-            campaign = buildCampaignMemory(memory.campaign, strategicPlan.memo, observation, empireObservation, turn),
+            campaign = buildCampaignMemory(
+                memory.campaign,
+                strategicPlan.memo,
+                observation,
+                empireObservation,
+                AgentVictoryIntentResolver.resolve(memory, observation, empireObservation),
+                turn,
+            ),
             empirePlan = buildEmpirePlan(memory.empirePlan, strategicPlan.memo, turn),
             campaignControl = buildCampaignControl(memory.campaignControl, memory.lastStrategistMemo, strategicPlan.memo, turn),
             recentChanges = buildNoteList("recent_change", "change", strategicPlan.memo.recentChanges, turn, recentChangeHorizonTurns, maxRecentChanges),
@@ -595,7 +602,7 @@ object AgentMemoryManager {
     ): AgentMemory {
         return memory.copy(
             worldModel = refreshWorldModelAnchors(pruneWorldModel(memory.worldModel, turn), observation, turn),
-            campaign = pruneCampaign(memory.campaign, empireObservation, turn),
+            campaign = pruneCampaign(memory.campaign, memory.victoryIntent, empireObservation, turn),
             victoryIntent = memory.victoryIntent.copy(
                 allowedVictoryTypes = ArrayList(memory.victoryIntent.allowedVictoryTypes),
                 preferredVictoryTypes = ArrayList(memory.victoryIntent.preferredVictoryTypes),
@@ -737,10 +744,11 @@ object AgentMemoryManager {
 
         val allowOperationalCityTargeting = observation.empireSummary.isAtWar ||
             memory.victoryIntent.militaryPurpose == "conquest"
+        val autoExploreCandidate = firstMatching("unitautoexplore:${unit.id}")
 
         return when {
             unit.name == "Scout" ->
-                firstMatching("unitautoexplore:${unit.id}") ?: firstMatching("unithold:${unit.id}:")
+                autoExploreCandidate ?: firstMatching("unithold:${unit.id}:")
             unit.name == "Settler" ->
                 firstMatching("unitsettle:${unit.id}:") ?: firstMatching("unithold:${unit.id}:")
             unit.name == "Worker" ->
@@ -751,6 +759,9 @@ object AgentMemoryManager {
                 firstMatching("unitattackcity:${unit.id}:") ?:
                     firstMatching("unitstagecity:${unit.id}:") ?:
                     firstMatching("unithold:${unit.id}:")
+            isOperationalAutoFillCombatUnit(unit) &&
+                shouldAutoExploreAsDeterrenceUnit(unit, observation, memory, autoExploreCandidate != null) ->
+                autoExploreCandidate ?: firstMatching("unithold:${unit.id}:")
             else ->
                 firstMatching("unithold:${unit.id}:")
         }
@@ -770,6 +781,50 @@ object AgentMemoryManager {
             turn = turn,
             assignmentSource = "auto_filled",
         )
+    }
+
+    private fun shouldAutoExploreAsDeterrenceUnit(
+        unit: MapUnit,
+        observation: AgentObservation,
+        memory: AgentMemory,
+        hasAutoExploreCandidate: Boolean,
+    ): Boolean {
+        if (!hasAutoExploreCandidate) return false
+        if (memory.victoryIntent.militaryPurpose == "conquest") return false
+
+        val unitObservation = observation.units.firstOrNull { it.id == unit.id } ?: return false
+        if (unitObservation.nearbyHostileUnits > 0 || unitObservation.nearbyHostileCities > 0) return false
+
+        val rivalKnown = memory.victoryIntent.raceRivalCiv != null ||
+            observation.visibleThreatsAndTargets.any { it.civName != observation.civName }
+
+        if (unitObservation.role == "melee" && observation.empireSummary.cityCount <= 1 && !rivalKnown) {
+            return true
+        }
+
+        if (unitObservation.role !in setOf("melee", "ranged", "siege", "naval_melee", "naval_ranged")) {
+            return false
+        }
+
+        val nearbyCity = observation.cities.minByOrNull { city ->
+            axialDistance(unitObservation.x, unitObservation.y, city.x, city.y)
+        } ?: return false
+        val distanceToCity = axialDistance(unitObservation.x, unitObservation.y, nearbyCity.x, nearbyCity.y)
+        if (distanceToCity > 2) return false
+
+        val localGarrison = observation.units.count { other ->
+            other.role in setOf("melee", "ranged", "siege", "naval_melee", "naval_ranged") &&
+                axialDistance(other.x, other.y, nearbyCity.x, nearbyCity.y) <= 2
+        }
+        val desiredLocalGarrison = if (nearbyCity.state.isCapital) 2 else 1
+        val desiredEmpireMilitary = maxOf(2, observation.empireSummary.cityCount + if (rivalKnown) 1 else 0)
+        val excessEmpireMilitary = observation.empireSummary.militaryUnitCount - desiredEmpireMilitary
+
+        return when {
+            unitObservation.role in setOf("ranged", "siege", "naval_ranged") && localGarrison > desiredLocalGarrison -> true
+            excessEmpireMilitary >= 3 && localGarrison > desiredLocalGarrison -> true
+            else -> false
+        }
     }
 
     private fun normalizeCarriedAssignmentSource(source: String): String = when (source) {
@@ -1628,13 +1683,25 @@ object AgentMemoryManager {
         )
     }
 
-    private fun pruneCampaign(campaign: CampaignMemory, empireObservation: AgentEmpireObservation, turn: Int): CampaignMemory {
-        val raceRivalCiv = campaign.raceRivalCiv ?: empireObservation.victoryThreats.firstOrNull()?.civName
-        val campaignRivalCiv = campaign.campaignRivalCiv ?: campaign.primaryRivalCiv ?: raceRivalCiv
+    private fun pruneCampaign(
+        campaign: CampaignMemory,
+        victoryIntent: AgentVictoryIntentMemory,
+        empireObservation: AgentEmpireObservation,
+        turn: Int,
+    ): CampaignMemory {
+        val raceRivalCiv = campaign.raceRivalCiv
+            ?: victoryIntent.raceRivalCiv
+            ?: empireObservation.victoryThreats.firstOrNull()?.civName
+        val conquestLike = victoryIntent.militaryPurpose == "conquest"
+        val campaignRivalCiv = if (conquestLike) {
+            campaign.campaignRivalCiv ?: campaign.primaryRivalCiv ?: victoryIntent.campaignRivalCiv ?: raceRivalCiv
+        } else {
+            null
+        }
         return campaign.copy(
             raceRivalCiv = raceRivalCiv,
             campaignRivalCiv = campaignRivalCiv,
-            primaryRivalCiv = campaign.primaryRivalCiv ?: campaignRivalCiv,
+            primaryRivalCiv = campaign.primaryRivalCiv ?: campaignRivalCiv ?: raceRivalCiv,
             doNotDo = ArrayList(campaign.doNotDo.take(4)),
             notes = pruneNotes(campaign.notes, turn, maxRecentChanges),
         )
@@ -1702,11 +1769,25 @@ object AgentMemoryManager {
         memo: AgentStrategistMemoDraft,
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
+        victoryIntent: AgentVictoryIntentObservation,
         turn: Int,
     ): CampaignMemory {
         val derivedNotes = buildList {
             memo.currentSituation?.trim()?.takeIf { it.isNotEmpty() }?.let { add(it) }
             memo.futurePlan?.trim()?.takeIf { it.isNotEmpty() }?.let { add(it) }
+        }
+        val raceRivalCiv = current.raceRivalCiv
+            ?: victoryIntent.raceRivalCiv
+            ?: empireObservation.victoryThreats.firstOrNull()?.civName
+            ?: extractPrimaryRivalCiv(memory = null, observation = observation, empireObservation = empireObservation)
+        val conquestLike = observation.empireSummary.isAtWar || victoryIntent.militaryPurpose == "conquest"
+        val campaignRivalCiv = if (conquestLike) {
+            current.campaignRivalCiv
+                ?: current.primaryRivalCiv
+                ?: victoryIntent.campaignRivalCiv
+                ?: extractPrimaryRivalCiv(memory = null, observation = observation, empireObservation = empireObservation)
+        } else {
+            null
         }
         return CampaignMemory(
             title = memo.campaignTitle?.trim().takeUnless { it.isNullOrEmpty() } ?: current.title,
@@ -1715,23 +1796,9 @@ object AgentMemoryManager {
             conversionBlocker = memo.conversionBlocker?.trim().takeUnless { it.isNullOrEmpty() } ?: current.conversionBlocker,
             summary = memo.campaignSummary?.trim().takeUnless { it.isNullOrEmpty() } ?: current.summary,
             reinforcementPlan = memo.reinforcementPlan?.trim().takeUnless { it.isNullOrEmpty() } ?: current.reinforcementPlan,
-            raceRivalCiv = current.raceRivalCiv
-                ?: empireObservation.victoryThreats.firstOrNull()?.civName
-                ?: extractPrimaryRivalCiv(memory = null, observation = observation, empireObservation = empireObservation),
-            campaignRivalCiv = current.campaignRivalCiv
-                ?: current.primaryRivalCiv
-                ?: if (observation.empireSummary.isAtWar) {
-                    extractPrimaryRivalCiv(memory = null, observation = observation, empireObservation = empireObservation)
-                } else {
-                    null
-                },
-            primaryRivalCiv = current.primaryRivalCiv
-                ?: current.campaignRivalCiv
-                ?: if (observation.empireSummary.isAtWar) {
-                    extractPrimaryRivalCiv(memory = null, observation = observation, empireObservation = empireObservation)
-                } else {
-                    null
-                },
+            raceRivalCiv = raceRivalCiv,
+            campaignRivalCiv = campaignRivalCiv,
+            primaryRivalCiv = current.primaryRivalCiv ?: campaignRivalCiv ?: raceRivalCiv,
             doNotDo = ArrayList(memo.campaignDoNotDo.take(4)),
             notes = buildNoteList("campaign", "implication", derivedNotes, turn, turn + 60, maxRecentChanges),
             lastUpdatedTurn = turn,

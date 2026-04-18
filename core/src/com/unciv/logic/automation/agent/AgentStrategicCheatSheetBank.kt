@@ -14,9 +14,14 @@ object AgentStrategicCheatSheetBank {
         val archetype = memo?.gameArchetype?.ifBlank { null } ?: gameContext.archetype
         return when (archetype) {
             "tiny_duel_pangaea_no_city_states_no_barbs" -> when (victoryIntent?.effectiveWinPath) {
-                "Science" -> tinyDuelScience()
-                "Domination", null -> tinyDuelDomination()
-                else -> null
+                null -> tinyDuelDomination()
+                else -> if (AgentVictoryIntentResolver.isScientificVictoryType(victoryIntent.effectiveWinPath)) {
+                    tinyDuelScience()
+                } else if (victoryIntent.effectiveWinPath.equals("Domination", ignoreCase = true)) {
+                    tinyDuelDomination()
+                } else {
+                    null
+                }
             }
             else -> null
         }
@@ -98,8 +103,14 @@ object AgentStrategicCheatSheetBank {
         bullets = listOf(
             "When science is the only legal win, the primary job is to snowball cities, science tempo, and safe expansion instead of treating early conquest as the default story.",
             "The normal backbone is still tempo first: found the capital immediately, use the starting Warrior plus only as much recon as needed, secure the second city, and convert production into growth, labor, and science rather than a conquest-sized army.",
+            "Exactly one early Scout is usually enough here. Build a second Scout only if the current board clearly proves the first Scout plus the opening Warrior cannot resolve the rival or the key city sites soon enough.",
+            "The opening Warrior should usually stay active and scout. Do not let it sit in a decorative early hold unless there is a concrete local safety reason.",
+            "Pottery into Writing is a normal science opener checkpoint once the first city is stable enough to support it. Do not keep delaying the Writing/Library chain for speculative military filler.",
             "Do not overbuild Scouts once the map is reasonably understood. Extra recon is only worth it when it clearly changes the next few turns more than growth, Settler timing, or economy.",
             "On tiny duel maps, military still matters, but mostly as deterrence and self-defense. Build enough to stay safe and protect expansion tempo, not enough to carry a stalled prewar package with no legal conquest payoff.",
+            "A useful default deterrence rule is that about one anchored military unit per city is enough unless the current board shows a real threat spike. Extra military past that point needs a concrete reason.",
+            "Archery is a deterrence tool here, not a reason to keep chaining Archers from the same city. One or two well-placed ranged units are often enough; a capital blob of ranged units is usually wasted upkeep.",
+            "When ranged units are already sufficient, spread or retask them instead of stacking them around the capital and blocking your own movement lanes.",
             "If the rival is visible, read that as a race and threat signal first, not automatically as permission to turn the empire into a city-assault machine.",
             "A second city is still a major checkpoint because it improves production, science, and flexibility. Do not let fear or unnecessary staging delay that city without a concrete immediate threat.",
             "Worker timing matters, but do not let labor urgency crowd out second-city timing. Use Workers to unlock food, production, and connection tempo once the expansion line is secure.",

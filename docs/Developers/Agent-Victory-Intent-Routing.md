@@ -194,11 +194,14 @@ The current state is:
   - initial diplomacy / campaign-context / combat auto-fill gating
 - partially complete:
   - race-rival vs campaign-rival separation
+  - explicit non-conquest `militaryPurpose` propagation in live planner packets
   - war-facing packet suppression in non-conquest games
+  - the science-side behavior slice
   - observability and dashboard truthfulness for the new packet fields
 - not complete yet:
-  - a natural science-side tactical posture
+  - fresh trace validation of the new science-side tactical posture
   - science-friendly review cadence and recovery logic
+  - domination conversion / force-composition cleanup
   - full cleanup of string-shaped military inference in lower layers
 
 What landed:
@@ -225,6 +228,16 @@ What landed:
   - `raceRivalCiv`
   - `campaignRivalCiv`
   - legacy `primaryRivalCiv` is still dual-written as a compatibility shadow
+- the traces show this split is not behaviorally complete yet:
+  - in the fresh tech-only run, first contact still collapsed `raceRivalCiv` and `campaignRivalCiv` onto Persia immediately
+  - the live planner packet also still omitted an explicit non-conquest `militaryPurpose`, which helps explain why defensive ranged units still blob into a generic anchor posture
+- the next behavior slice is now partially implemented in code:
+  - `militaryPurpose` and `economicPosture` are now always encoded into the live `victoryIntent` packet, even when they sit on default values like `deterrence` or `boom`
+  - non-conquest routing no longer auto-persists a `campaignRivalCiv` just because first contact happened
+  - planner decision focus can now rewrite stale war-like memo modes into non-conquest modes such as `defend_and_boom` and `deter_while_expanding`
+  - city scoring is now victory-intent-aware for non-conquest science games, with new penalties for excess military churn, Barracks drift, and unit upkeep overshoot
+  - unit auto-fill is now more willing to push excess deterrence units into exploration instead of letting them all inherit local `hold_position` anchors
+  - the tiny-duel science cheat sheet now explicitly teaches one-Scout tempo, active Warrior scouting, and non-blob deterrence posture
 - war-facing packet shaping is partially gated by victory intent:
   - `campaignContext.objectiveTarget` is only surfaced when war is live or `militaryPurpose == conquest`
   - pressure-context surfacing in the planner now consults `militaryPurpose`
@@ -249,74 +262,115 @@ What is intentionally not done yet:
 
 ## Evaluation Snapshot
 
-The most recent tiny-duel traces show that the first routing slice is doing its top-level job.
+The fresh rebuilt traces below are still the pre-second-slice baseline. They explain why the next behavior patch was needed.
 
-What the fresh traces showed:
+The newest code changes in this document have not been re-evaluated on fresh traces yet.
 
-- tech-only tiny duel routed cleanly:
-  - the run stayed `Scientific / deterrence / expand`
-  - the strategist and tactician packets remained science-shaped through the opener
-  - before contact there were no war-facing campaign targets, no objective theater, and no offensive city-attack packet
-- all-victories tiny duel also routed cleanly:
-  - the run stayed `Domination / conquest / convert`
-  - the strategist memo and tactical packet kept the domination line intact
-  - the opener continued to choose forward settle plus military conversion rather than peaceful snowball
+### What the fresh traces proved
 
-This is the main success criterion for the first slice:
+- the same tiny-duel map now routes differently under different victory settings:
+  - the all-victories run still commits to `Domination`
+  - the tech-only run still commits to `Scientific`
+- the refactor did not collapse the domination opener into a softer generic line
+- the tech-only run no longer drifted into an explicit conquest packet just because the rival eventually appeared
 
-- the same map archetype now routes differently under different victory settings
-- the all-victories domination opener did not collapse into a softer generic line
+### What the fresh tech-only trace exposed
 
-The traces also showed the main remaining gap:
+- the run did build exactly one Scout, but too late:
+  - Scout arrived on turn `8`
+  - the opening still felt worker / checkpoint driven rather than information-seeking
+  - the starting Warrior oscillated between `autoexplore` and `stopautoexplore` instead of providing a clean first-contact scouting pattern
+- the overbuild starts before contact, not because of contact:
+  - `Writing` was delayed until turn `35`
+  - by turn `35`, the empire already had `5` cities, `13` military units, and only `2` gold left
+  - repeated Archer choices began well before the rival was visible, so the core issue is science-mode packet/scoring shape, not only first-contact drift
+- military stayed too sticky for a science-first game:
+  - by turn `40`, the empire had `13` military units across `5` cities
+  - by turn `70`, it had `20` military units despite the game being tech-only
+- the defensive posture was still unnatural:
+  - Archers were repeatedly anchored in a Berlin/Hamburg cluster via `hold_position` style assignments
+  - that created the exact "road-blocking capital blob" problem seen in the frontend
+  - later turns began retasking some of those units to `auto_explore`, but that happened after the army had already become too expensive
+- the economy eventually collapsed under the defensive blob:
+  - gold fell from `-36` on turn `60` to `-223` on turn `70`
+  - military count then crashed from `20` on turn `70` to `13`, `8`, and then `0` by turn `73`
+  - this was not the planner deliberately disbanding units; it was a bankruptcy-style collapse after the army budget had already gotten out of control
+- planner quality still degraded into brittle science recovery loops:
+  - the run got trapped in Library / treasury recovery checkpoints
+  - the live packet still collapsed `raceRivalCiv` and `campaignRivalCiv` onto Persia at first contact
+  - the live `victoryIntent` packet still lacked an explicit non-conquest `militaryPurpose`, which is likely why the posture kept defaulting to generic anchoring behavior
 
-- the tech-only game is routed correctly, but it still does not *play* naturally enough
-- it spends too much time in `staging` / missed-checkpoint recovery loops
-- it still burns too many strategist refreshes, validation failures, and occasional fallbacks
-- once contact arrives, `raceRivalCiv` and `campaignRivalCiv` can still collapse too eagerly onto the same rival identity
+### What the fresh all-victories trace exposed
 
-So the routing refactor is ahead of the behavior refactor:
+- the domination route is intact, but the conversion is still weak:
+  - Germany declared war on Persia on turn `21`
+  - it stayed in a domination-shaped memo for the entire run
+  - but it had not captured a Persian city by turn `85`
+- the opener remained strong at first:
+  - Germany was ahead on score, cities, force, and science through the midgame
+  - for example, on turn `40` Germany led `236` to `189` on score and `524` to `10` on force
+- the later game showed the real weakness:
+  - Germany kept churning Warriors and Spearmen and repeatedly staging units toward Parsagadae
+  - strategist memos became fixated on "escorted frontline replacement stream" and "fresh captor" maintenance
+  - planner packets repeatedly reported very high capture-unit counts but `0 ranged support near Susa`
+  - so the system kept preserving and feeding melee pressure without assembling the sort of ranged-backed assault package that actually converts into a city capture
+  - meanwhile Persia eventually passed Germany on score, population, and science
+  - by turn `84`, Germany trailed `394` to `335` on score and `23` to `15` on science despite still having the larger army
+- this means the refactor preserved domination routing, but it did not solve the older domination conversion problem:
+  - the packet still knows how to stage and sustain pressure better than it knows how to finish the conquest
+  - the force mix is still too melee-heavy and replacement-heavy once war is live
+
+So the routing refactor is still ahead of the behavior refactor:
 
 - packet truth is improved
-- science-side play quality is not yet where we want it
+- science-side play quality is still too defensive and too brittle
+- domination-side play quality is still too feeder-loop oriented and not decisive enough
 
 ## Status Against The Plan
 
 Against the implementation order below, the current status is:
 
-- done:
-  - steps `1` through `8`
+- effectively done:
+  - steps `1` through `5`
+- partially done:
+  - steps `6` through `10`
 - next:
-  - step `9`
-  - step `10`
+  - validate the newly-landed science-side behavior slice on fresh traces
+  - then start the domination-conversion cleanup
 - later:
   - steps `11` through `13`
 
 In plain terms:
 
 - the routing layer is in place
-- the next work is a behavior-quality slice for science-mode play
-- exact score tuning should still wait until after that slice lands
+- the first science-side behavior-quality slice is now in code
+- the next work is to validate that slice on fresh traces, then move to domination conversion
+- exact score tuning should still wait until after that validation
 
 ## Next Slice
 
-The next implementation slice should focus on making tech-only play feel intentional instead of merely science-labeled.
+The science-side behavior slice described above is now partially implemented. The immediate next step is validation, not another large refactor.
 
-Recommended next changes:
+Immediate validation goals:
 
-1. Add a real non-conquest middle posture.
-   - introduce a mode such as `defend_and_boom` or `deter_while_expanding`
-   - stop forcing tech-only recovery and tempo play to express itself as `staging`
-2. Strengthen race-rival vs campaign-rival separation at contact.
-   - in tech-oriented games, first contact should usually create a `raceRivalCiv`
-   - it should not automatically create a conquest-shaped `campaignRivalCiv`
-3. Soften science-side checkpoint failure handling.
-   - missing one Library / Writing timing window should not trap the run in repeated launch-style refreshes
-   - add a calmer recover-and-boom path instead of repeated short-horizon emergency loops
-4. Add a few science-side typed packet facts before broader score changes.
-   - worker sufficiency
-   - science tempo
-   - deterrence threshold
-   - army overspend
+1. Re-run fresh `7071` / `7072` traces and check whether the new packet now carries explicit `militaryPurpose` in the tech-only planner brief.
+2. Check whether the tech-only opener now:
+   - gets one Scout out earlier
+   - keeps the Warrior scouting more naturally
+   - delays or suppresses repeated Archer spam
+   - avoids the Berlin/Hamburg ranged blob
+3. Check whether the tech-only midgame now keeps military closer to a deterrence budget instead of climbing to `13` units by turn `35`.
+4. Check whether first contact in tech-only now keeps `campaignRivalCiv` empty unless real war or emergency defense exists.
+
+If that validation is positive enough, the next implementation slice after it should be the domination-conversion cleanup.
+
+What should happen just after this slice, but not be mixed into it unless necessary:
+
+- a domination-conversion cleanup slice
+- specifically:
+  - reduce over-fixation on feeder / escort churn once a real attack package already exists
+  - improve "front converts into capture" logic so all-victories domination does not spend 60 turns staging and stabilizing without taking a city
+  - add composition awareness so domination packets stop treating "more melee replacements" as the default answer when ranged support near the target is still missing
 
 What should *not* happen yet:
 

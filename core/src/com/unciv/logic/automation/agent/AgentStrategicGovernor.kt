@@ -34,6 +34,7 @@ object AgentStrategicGovernor {
             observation = observation,
             empireObservation = empireObservation,
             strategy = strategyObservation,
+            victoryIntent = victoryIntent,
             campaignControl = campaignControl,
             campaignContext = campaignContext,
             objectiveTheater = unitSurfacing.objectiveTheater,
@@ -89,6 +90,7 @@ object AgentStrategicGovernor {
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
         strategy: AgentPlannerStrategyObservation,
+        victoryIntent: AgentVictoryIntentObservation,
         campaignControl: AgentCampaignControlObservation?,
         campaignContext: AgentPlannerCampaignContextObservation?,
         objectiveTheater: AgentPlannerObjectiveTheaterObservation?,
@@ -98,8 +100,13 @@ object AgentStrategicGovernor {
         unitHighlights: List<AgentUnitObservation>,
     ): AgentPlannerDecisionFocusObservation? {
         val explicitFrame = strategy.decisionFrame?.takeUnless { it.isEmpty() }
-        val mode = explicitFrame?.decisionMode
-            ?: inferDecisionMode(strategy.campaignStage, campaignControl, campaignContext)
+        val mode = resolveDecisionMode(
+            explicitMode = explicitFrame?.decisionMode,
+            campaignStage = strategy.campaignStage,
+            victoryIntent = victoryIntent,
+            campaignControl = campaignControl,
+            campaignContext = campaignContext,
+        )
         if (mode.isBlank()) return null
 
         return AgentPlannerDecisionFocusObservation(
@@ -342,6 +349,37 @@ object AgentStrategicGovernor {
                     )
                 }
             }
+            "defend_and_boom" -> {
+                priorities += AgentPlannerDecisionPriorityObservation(
+                    kind = "deterrence",
+                    headline = "Keep deterrence efficient while the economy keeps growing",
+                    detail = campaignControl?.holdingCosts?.firstOrNull()
+                        ?: strategy.conversionBlocker
+                        ?: "Maintain only the defensive coverage needed to stay safe; extra military that does not improve safety or tempo is drift.",
+                )
+                priorities += AgentPlannerDecisionPriorityObservation(
+                    kind = "science_tempo",
+                    headline = "City choices should preserve growth and science tempo",
+                    detail = strategy.decisiveObjective
+                        ?: campaignControl?.nextCheckpointSummary
+                        ?: "Keep cities converting into growth, labor, and science instead of reopening a fake war-prep loop.",
+                )
+            }
+            "deter_while_expanding" -> {
+                priorities += AgentPlannerDecisionPriorityObservation(
+                    kind = "safe_expansion",
+                    headline = "Expansion should continue under light deterrence cover",
+                    detail = campaignControl?.nextCheckpointSummary
+                        ?: strategy.decisiveObjective
+                        ?: "Found or stabilize the next city while keeping enough local coverage to punish aggression.",
+                )
+                priorities += AgentPlannerDecisionPriorityObservation(
+                    kind = "coverage",
+                    headline = "Use the minimum military needed to keep the expansion line safe",
+                    detail = strategy.conversionBlocker
+                        ?: "Avoid paying for a large idle army while the real win path is still city growth and science tempo.",
+                )
+            }
             "pivot_recover", "stabilize" -> {
                 priorities += AgentPlannerDecisionPriorityObservation(
                     kind = "recovery",
@@ -393,6 +431,10 @@ object AgentStrategicGovernor {
                 "stage_briefly" -> {
                     add("Use this turn to close the short staging checkpoint, not to reopen broad scouting or city-polish drift.")
                     add("Background micro should stay subordinate to the missing launch piece.")
+                }
+                "defend_and_boom", "deter_while_expanding" -> {
+                    add("Do not let decorative staging or extra military churn crowd out growth, labor, and science tempo.")
+                    add("If current defensive coverage is already enough, extra fortify loops and extra unit builds are background.")
                 }
                 "pivot_recover", "stabilize" -> {
                     add("Speculative assault prep is background unless it directly improves supply or removes immediate danger.")
@@ -455,6 +497,16 @@ object AgentStrategicGovernor {
                 }
                 if (!settlerFoundSurfaced) {
                     add("Expansion mode is active and a settler is ready, but the highlighted unit packet does not show an immediate found-city option.")
+                }
+            }
+
+            if (mode in setOf("defend_and_boom", "deter_while_expanding")) {
+                val defensiveCoverage = unitHighlights.count { unit ->
+                    unit.role in setOf("melee", "ranged", "siege", "naval_melee", "naval_ranged") &&
+                        unit.assignmentProgress?.role == "hold_position"
+                }
+                if (defensiveCoverage >= observation.empireSummary.cityCount + 2) {
+                    add("The non-conquest packet already has many held combat units surfaced. Recheck whether more defensive anchoring is really improving safety or just adding upkeep.")
                 }
             }
         }.distinct()
@@ -951,10 +1003,14 @@ object AgentStrategicGovernor {
             )
         val primaryRivalCiv = victoryIntent.campaignRivalCiv
             ?: memory.campaign.campaignRivalCiv
-            ?: memory.campaign.primaryRivalCiv
-            ?: empireObservation.victoryThreats.firstOrNull()?.civName
-            ?: visibleTarget?.civName
-            ?: visibleCapital?.civName
+            ?: if (observation.empireSummary.isAtWar || victoryIntent.militaryPurpose == "conquest") {
+                memory.campaign.primaryRivalCiv
+                    ?: empireObservation.victoryThreats.firstOrNull()?.civName
+                    ?: visibleTarget?.civName
+                    ?: visibleCapital?.civName
+            } else {
+                null
+            }
         val lastKnownTarget = lastKnownAnchor(memory, primaryRivalCiv, setOf("city"))
         val lastKnownCapital = lastKnownAnchor(memory, primaryRivalCiv, setOf("capital"))
         val preferredObjective = preferredObjectiveTarget(
@@ -1155,8 +1211,29 @@ object AgentStrategicGovernor {
         return "positioning"
     }
 
+    private fun resolveDecisionMode(
+        explicitMode: String?,
+        campaignStage: String,
+        victoryIntent: AgentVictoryIntentObservation,
+        campaignControl: AgentCampaignControlObservation?,
+        campaignContext: AgentPlannerCampaignContextObservation?,
+    ): String {
+        val normalizedExplicit = explicitMode?.trim()?.lowercase()
+        if (
+            normalizedExplicit != null &&
+            victoryIntent.militaryPurpose != "conquest" &&
+            campaignContext?.atWar != true &&
+            normalizedExplicit in setOf("stage_briefly", "staging", "pressure", "launch_now", "launch_window", "assault")
+        ) {
+            return nonConquestDecisionMode(victoryIntent, campaignContext)
+        }
+        return normalizedExplicit
+            ?: inferDecisionMode(campaignStage, victoryIntent, campaignControl, campaignContext)
+    }
+
     private fun inferDecisionMode(
         campaignStage: String,
+        victoryIntent: AgentVictoryIntentObservation,
         campaignControl: AgentCampaignControlObservation?,
         campaignContext: AgentPlannerCampaignContextObservation?,
     ): String {
@@ -1166,11 +1243,30 @@ object AgentStrategicGovernor {
             campaignControl?.checkpointStatus.equals("missed", ignoreCase = true) &&
             campaignControl?.supplyHealth in setOf("fragile", "collapsing")
         ) return "pivot_recover"
+        if (
+            victoryIntent.militaryPurpose != "conquest" &&
+            campaignContext?.atWar != true &&
+            (campaignContext?.visibleRivalCities ?: 0) + (campaignContext?.visibleRivalUnits ?: 0) > 0
+        ) {
+            return nonConquestDecisionMode(victoryIntent, campaignContext)
+        }
         return when (campaignStage.lowercase()) {
             "assault" -> "assault"
             "rebuild", "consolidation", "positioning" -> "stabilize"
             "expansion", "scouting" -> "expand"
             else -> "stage_briefly"
+        }
+    }
+
+    private fun nonConquestDecisionMode(
+        victoryIntent: AgentVictoryIntentObservation,
+        campaignContext: AgentPlannerCampaignContextObservation?,
+    ): String {
+        if (campaignContext?.atWar == true || victoryIntent.militaryPurpose == "defense") return "defend_and_boom"
+        return when (victoryIntent.economicPosture) {
+            "recover" -> "pivot_recover"
+            "expand" -> "deter_while_expanding"
+            else -> "defend_and_boom"
         }
     }
 
