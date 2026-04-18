@@ -46,6 +46,42 @@ const WORLD_FACTS_METRIC_OPTIONS: Array<{ key: WorldFactsMetricKey; label: strin
   { key: "faithPerTurn", label: "Faith / turn" },
 ];
 
+type BattlefieldPrefetchState = "started" | "ready" | "missing" | "failed";
+
+const battlefieldPrefetchStates = new Map<string, BattlefieldPrefetchState>();
+
+function battlefieldRenderKey(batchId: string, matchId: string, civName: string, turn: number): string {
+  return `${batchId}::${matchId}::${civName}::${turn}`;
+}
+
+function markBattlefieldRenderState(
+  batchId: string,
+  matchId: string,
+  civName: string,
+  turn: number,
+  state: BattlefieldPrefetchState,
+) {
+  battlefieldPrefetchStates.set(battlefieldRenderKey(batchId, matchId, civName, turn), state);
+}
+
+function getBattlefieldRenderState(batchId: string, matchId: string, civName: string, turn: number): BattlefieldPrefetchState | undefined {
+  return battlefieldPrefetchStates.get(battlefieldRenderKey(batchId, matchId, civName, turn));
+}
+
+function buildBackgroundBattlefieldOrder(turns: TurnRecord[], selectedTurn: TurnRecord): TurnRecord[] {
+  const selectedIndex = turns.findIndex((turn) => turn.key === selectedTurn.key);
+  if (selectedIndex < 0) return [];
+
+  const ordered: TurnRecord[] = [];
+  for (let distance = 1; distance < turns.length; distance += 1) {
+    const newer = turns[selectedIndex - distance];
+    const older = turns[selectedIndex + distance];
+    if (newer) ordered.push(newer);
+    if (older) ordered.push(older);
+  }
+  return ordered;
+}
+
 export default function App() {
   const [mode, setMode] = useState<Mode>("live");
   const [snapshot, setSnapshot] = useState<SnapshotResponse | null>(null);
@@ -416,6 +452,7 @@ export default function App() {
               mode={mode}
               batchId={selectedBatchId}
               matchId={selectedMatchId}
+              turns={turns}
             />
           ) : <EmptyState />}
         </section>
@@ -650,10 +687,12 @@ function BattlefieldViewSection({
   batchId,
   matchId,
   turn,
+  turns,
 }: {
   batchId: string;
   matchId: string;
   turn: TurnRecord;
+  turns: TurnRecord[];
 }) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [status, setStatus] = useState<"loading" | "rendering" | "ready" | "missing" | "failed">("loading");
@@ -691,6 +730,7 @@ function BattlefieldViewSection({
           setImageUrl(currentObjectUrl);
           setStatus("ready");
           setMessage("");
+          markBattlefieldRenderState(batchId, matchId, turn.civName, turn.turn, "ready");
           return;
         }
 
@@ -698,6 +738,7 @@ function BattlefieldViewSection({
         if (result.status === "rendering") {
           setStatus("rendering");
           setMessage(result.message || "Rendering battlefield snapshot...");
+          markBattlefieldRenderState(batchId, matchId, turn.civName, turn.turn, "started");
           pollTimer = window.setTimeout(() => {
             void load();
           }, 2000);
@@ -706,16 +747,19 @@ function BattlefieldViewSection({
         if (result.status === "missing_checkpoint") {
           setStatus("missing");
           setMessage(result.message || "No saved post-turn checkpoint is available for this turn.");
+          markBattlefieldRenderState(batchId, matchId, turn.civName, turn.turn, "missing");
           return;
         }
 
         setStatus("failed");
         setMessage(result.message || "Battlefield rendering failed.");
+        markBattlefieldRenderState(batchId, matchId, turn.civName, turn.turn, "failed");
       } catch (err) {
         if (cancelled) return;
         setImageUrl(null);
         setStatus("failed");
         setMessage((err as Error).message || "Battlefield rendering failed.");
+        markBattlefieldRenderState(batchId, matchId, turn.civName, turn.turn, "failed");
       }
     };
 
@@ -731,6 +775,64 @@ function BattlefieldViewSection({
       clearImage();
     };
   }, [batchId, matchId, turn.civName, turn.turn]);
+
+  useEffect(() => {
+    if (status !== "ready" || !batchId || !matchId) return;
+
+    let cancelled = false;
+
+    const warmTurn = async (candidate: TurnRecord) => {
+      const knownState = getBattlefieldRenderState(batchId, matchId, candidate.civName, candidate.turn);
+      if (knownState === "ready" || knownState === "missing" || knownState === "failed" || knownState === "started") {
+        return;
+      }
+
+      markBattlefieldRenderState(batchId, matchId, candidate.civName, candidate.turn, "started");
+
+      while (!cancelled) {
+        try {
+          const result = await api.battlefieldView(batchId, matchId, candidate.civName, candidate.turn);
+          if (cancelled) return;
+
+          if (result.kind === "image") {
+            markBattlefieldRenderState(batchId, matchId, candidate.civName, candidate.turn, "ready");
+            return;
+          }
+
+          if (result.status === "rendering") {
+            await new Promise<void>((resolve) => {
+              window.setTimeout(resolve, 2000);
+            });
+            continue;
+          }
+
+          if (result.status === "missing_checkpoint") {
+            markBattlefieldRenderState(batchId, matchId, candidate.civName, candidate.turn, "missing");
+            return;
+          }
+
+          markBattlefieldRenderState(batchId, matchId, candidate.civName, candidate.turn, "failed");
+          return;
+        } catch {
+          if (cancelled) return;
+          markBattlefieldRenderState(batchId, matchId, candidate.civName, candidate.turn, "failed");
+          return;
+        }
+      }
+    };
+
+    const backgroundOrder = buildBackgroundBattlefieldOrder(turns, turn);
+    void (async () => {
+      for (const candidate of backgroundOrder) {
+        if (cancelled) break;
+        await warmTurn(candidate);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [status, batchId, matchId, turn, turns]);
 
   return (
     <SectionShell
@@ -1033,11 +1135,13 @@ function TurnDetail({
   mode,
   batchId,
   matchId,
+  turns,
 }: {
   turn: TurnRecord;
   mode: Mode;
   batchId: string;
   matchId: string;
+  turns: TurnRecord[];
 }) {
   const strategistInferenceRan = hasStrategistInference(turn);
   const observation = asRecord(turn.observation);
@@ -1228,6 +1332,7 @@ function TurnDetail({
           batchId={batchId}
           matchId={matchId}
           turn={turn}
+          turns={turns}
         />
       ) : null}
 
