@@ -89,6 +89,8 @@ object AgentTurnAutomation {
         var empireObservationJson = ""
         var worldFactsJson = ""
         var memoryJson = ""
+        var victoryIntent = AgentVictoryIntentResolver.resolve(memory, observation, empireObservation)
+        var victoryIntentJson = ""
         var plannerBrief = AgentPromptBuilder.plannerBrief(memory, observation, empireObservation)
         var plannerBriefJson = ""
 
@@ -97,6 +99,8 @@ object AgentTurnAutomation {
             empireObservationJson = AgentPromptBuilder.empireObservationJson(empireObservation)
             worldFactsJson = AgentWorldFactsBuilder.json(civInfo)
             memoryJson = AgentMemoryManager.memoryJson(memory)
+            victoryIntent = AgentVictoryIntentResolver.resolve(memory, observation, empireObservation)
+            victoryIntentJson = AgentVictoryIntentResolver.json(victoryIntent)
             plannerBrief = AgentPromptBuilder.plannerBrief(memory, observation, empireObservation)
             plannerBriefJson = AgentPromptBuilder.plannerBriefJson(plannerBrief)
         }
@@ -131,6 +135,12 @@ object AgentTurnAutomation {
                     "memoryUnitAssignments" to memory.unitAssignments.size.toString(),
                     "memoryRecentFailures" to memory.recentFailures.size.toString(),
                     "strategistRefreshCount" to strategistRefreshCount.toString(),
+                    "victoryIntentWinPath" to (victoryIntent.effectiveWinPath ?: ""),
+                    "victoryIntentMilitaryPurpose" to victoryIntent.militaryPurpose,
+                    "victoryIntentEconomicPosture" to victoryIntent.economicPosture,
+                    "victoryIntentRaceRival" to (victoryIntent.raceRivalCiv ?: ""),
+                    "victoryIntentCampaignRival" to (victoryIntent.campaignRivalCiv ?: ""),
+                    "victoryIntentJson" to victoryIntentJson,
                     "memoryJson" to memoryJson,
                     "strategistMemoJson" to AgentMemoryManager.strategistMemoJson(memory.lastStrategistMemo),
                     "observationJson" to observationJson,

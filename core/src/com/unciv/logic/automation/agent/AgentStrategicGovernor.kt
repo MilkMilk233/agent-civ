@@ -8,22 +8,23 @@ object AgentStrategicGovernor {
     ): AgentPlannerBrief {
         val gameContext = empireObservation.gameContext
         val primaryThreat = empireObservation.victoryThreats.firstOrNull()
+        val victoryIntent = AgentVictoryIntentResolver.resolve(memory, observation, empireObservation)
         val memo = memory.lastStrategistMemo.takeIf { it.campaignStage.isNotBlank() }
         val campaignControl = memory.campaignControl.toObservation(observation.turn)
         val attentionFacts = buildAttentionFacts(observation)
         val mustActNow = buildMustActNow(observation, empireObservation, campaignControl)
-        val campaignContext = buildCampaignContext(memory, observation, empireObservation)
-        val cityHighlights = selectCityHighlights(observation, gameContext, campaignContext)
-        val memoryContext = buildMemoryContext(memory, observation, empireObservation)
-        val unitSurfacing = selectUnitHighlights(observation, gameContext, primaryThreat, campaignContext)
+        val campaignContext = buildCampaignContext(memory, observation, empireObservation, victoryIntent)
+        val cityHighlights = selectCityHighlights(observation, gameContext, campaignContext, victoryIntent)
+        val memoryContext = buildMemoryContext(memory, observation, empireObservation, victoryIntent)
+        val unitSurfacing = selectUnitHighlights(observation, gameContext, primaryThreat, campaignContext, victoryIntent)
         val unitHighlights = unitSurfacing.units
         val captureReadiness = buildCaptureReadiness(observation, campaignContext)
-        val progressInMotion = buildProgressInMotion(observation, empireObservation, cityHighlights, unitHighlights, campaignContext)
+        val progressInMotion = buildProgressInMotion(observation, empireObservation, cityHighlights, unitHighlights, campaignContext, victoryIntent)
         val threatHighlights = observation.visibleThreatsAndTargets.take(if (observation.empireSummary.isAtWar) 3 else 2)
         val strategyObservation = AgentPlannerStrategyObservation(
             gameArchetype = memo?.gameArchetype?.ifBlank { null } ?: gameContext.archetype,
-            winPath = memo?.winPath ?: empireObservation.victoryGoal,
-            campaignStage = memo?.campaignStage ?: defaultCampaignStage(memory, observation, empireObservation, campaignContext),
+            winPath = victoryIntent.effectiveWinPath ?: memo?.winPath ?: empireObservation.victoryGoal,
+            campaignStage = memo?.campaignStage ?: defaultCampaignStage(memory, observation, empireObservation, campaignContext, victoryIntent),
             decisiveObjective = memo?.decisiveObjective ?: memory.campaign.decisiveObjective,
             conversionBlocker = memo?.conversionBlocker ?: memory.campaign.conversionBlocker,
             decisionFrame = memo?.decisionFrame?.takeUnless { it.isEmpty() },
@@ -58,6 +59,7 @@ object AgentStrategicGovernor {
 
         return AgentPlannerBrief(
             gameContext = gameContext,
+            victoryIntent = victoryIntent,
             strategy = strategyObservation,
             campaignControl = campaignControl,
             decisionFocus = decisionFocus,
@@ -72,7 +74,9 @@ object AgentStrategicGovernor {
                 researchChoices = empireObservation.researchCandidates.take(if (empireObservation.currentResearch == null || empireObservation.freeTechs > 0) 3 else 2),
                 policyChoices = empireObservation.policyCandidates.take(3),
                 macroChoices = empireObservation.macroCandidates.take(2),
-                diplomacyChoices = empireObservation.diplomacyCandidates.take(if (gameContext.contactComplete && gameContext.duelLike) 1 else 2),
+                diplomacyChoices = empireObservation.diplomacyCandidates.take(
+                    if (gameContext.contactComplete && gameContext.duelLike && victoryIntent.militaryPurpose == "conquest") 1 else 2
+                ),
             ),
             cityHighlights = cityHighlights,
             unitHighlights = unitHighlights,
@@ -142,8 +146,11 @@ object AgentStrategicGovernor {
         memory: AgentMemory,
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
+        victoryIntent: AgentVictoryIntentObservation,
     ): AgentPlannerMemoryContextObservation? {
-        val primaryRivalCiv = memory.campaign.primaryRivalCiv
+        val primaryRivalCiv = victoryIntent.raceRivalCiv
+            ?: memory.campaign.raceRivalCiv
+            ?: memory.campaign.primaryRivalCiv
             ?: empireObservation.victoryThreats.firstOrNull()?.civName
             ?: observation.visibleThreatsAndTargets.firstOrNull { it.civName != observation.civName }?.civName
         if (
@@ -524,15 +531,17 @@ object AgentStrategicGovernor {
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
     ): List<AgentPlannerProgressObservation> {
-        val campaignContext = buildCampaignContext(memory, observation, empireObservation)
-        val cityHighlights = selectCityHighlights(observation, empireObservation.gameContext, campaignContext)
+        val victoryIntent = AgentVictoryIntentResolver.resolve(memory, observation, empireObservation)
+        val campaignContext = buildCampaignContext(memory, observation, empireObservation, victoryIntent)
+        val cityHighlights = selectCityHighlights(observation, empireObservation.gameContext, campaignContext, victoryIntent)
         val unitHighlights = selectUnitHighlights(
             observation,
             empireObservation.gameContext,
             empireObservation.victoryThreats.firstOrNull(),
             campaignContext,
+            victoryIntent,
         ).units
-        return buildProgressInMotion(observation, empireObservation, cityHighlights, unitHighlights, campaignContext)
+        return buildProgressInMotion(observation, empireObservation, cityHighlights, unitHighlights, campaignContext, victoryIntent)
     }
 
     private fun buildAttentionFacts(observation: AgentObservation): List<ObservationFact> {
@@ -608,8 +617,9 @@ object AgentStrategicGovernor {
         observation: AgentObservation,
         gameContext: AgentPublicGameContextObservation,
         campaignContext: AgentPlannerCampaignContextObservation?,
+        victoryIntent: AgentVictoryIntentObservation,
     ): List<AgentCityObservation> {
-        val warLikeContext = isPressureContext(observation, campaignContext)
+        val warLikeContext = isPressureContext(observation, campaignContext, victoryIntent)
         val maxCities = when {
             warLikeContext && gameContext.duelLike -> 4
             warLikeContext -> 5
@@ -634,8 +644,9 @@ object AgentStrategicGovernor {
         gameContext: AgentPublicGameContextObservation,
         primaryThreat: AgentVictoryThreatObservation?,
         campaignContext: AgentPlannerCampaignContextObservation?,
+        victoryIntent: AgentVictoryIntentObservation,
     ): UnitSurfacingResult {
-        val warLikeContext = isPressureContext(observation, campaignContext)
+        val warLikeContext = isPressureContext(observation, campaignContext, victoryIntent)
         val candidateUnits = observation.units
         val objective = campaignContext?.objectiveTarget
         if (warLikeContext && objective != null) {
@@ -646,10 +657,11 @@ object AgentStrategicGovernor {
                 primaryThreat = primaryThreat,
                 campaignContext = campaignContext,
                 objective = objective,
+                victoryIntent = victoryIntent,
             )
         }
 
-        val ranked = candidateUnits.sortedByDescending { unitScore(it, observation, gameContext, primaryThreat, campaignContext) }
+        val ranked = candidateUnits.sortedByDescending { unitScore(it, observation, gameContext, primaryThreat, campaignContext, victoryIntent) }
         return UnitSurfacingResult(units = ranked)
     }
 
@@ -660,8 +672,11 @@ object AgentStrategicGovernor {
         primaryThreat: AgentVictoryThreatObservation?,
         campaignContext: AgentPlannerCampaignContextObservation,
         objective: AgentStrategistTargetReference,
+        victoryIntent: AgentVictoryIntentObservation,
     ): UnitSurfacingResult {
-        val ranked = candidateUnits.sortedByDescending { unitScore(it, observation, gameContext, primaryThreat, campaignContext) }
+        val ranked = candidateUnits.sortedByDescending {
+            unitScore(it, observation, gameContext, primaryThreat, campaignContext, victoryIntent)
+        }
         val theaterUnits = ranked.filter { isObjectiveTheaterUnit(it, objective, observation.empireSummary.isAtWar) }
         val remaining = ranked.filter { rankedUnit -> theaterUnits.none { it.id == rankedUnit.id } }
         val reserveUnits = remaining.filter { shouldSurfaceAsReserve(it) }
@@ -705,8 +720,9 @@ object AgentStrategicGovernor {
         cityHighlights: List<AgentCityObservation>,
         unitHighlights: List<AgentUnitObservation>,
         campaignContext: AgentPlannerCampaignContextObservation?,
+        victoryIntent: AgentVictoryIntentObservation,
     ): List<AgentPlannerProgressObservation> {
-        val warLikeContext = isPressureContext(observation, campaignContext)
+        val warLikeContext = isPressureContext(observation, campaignContext, victoryIntent)
         val progress = arrayListOf<AgentPlannerProgressObservation>()
         empireObservation.currentResearch?.let { research ->
             progress += AgentPlannerProgressObservation(
@@ -869,8 +885,9 @@ object AgentStrategicGovernor {
         gameContext: AgentPublicGameContextObservation,
         primaryThreat: AgentVictoryThreatObservation?,
         campaignContext: AgentPlannerCampaignContextObservation?,
+        victoryIntent: AgentVictoryIntentObservation,
     ): Int {
-        val warLikeContext = isPressureContext(observation, campaignContext)
+        val warLikeContext = isPressureContext(observation, campaignContext, victoryIntent)
         var score = 100
         score += when (unit.role) {
             "settler" -> 90
@@ -914,6 +931,7 @@ object AgentStrategicGovernor {
         memory: AgentMemory,
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
+        victoryIntent: AgentVictoryIntentObservation,
     ): AgentPlannerCampaignContextObservation? {
         val visibleRivalCities = observation.visibleThreatsAndTargets
             .filter { it.kind == "city" && it.civName != observation.civName }
@@ -931,7 +949,9 @@ object AgentStrategicGovernor {
                     .thenBy { it.distanceToClosestCity ?: Int.MAX_VALUE }
                     .thenBy { it.name }
             )
-        val primaryRivalCiv = memory.campaign.primaryRivalCiv
+        val primaryRivalCiv = victoryIntent.campaignRivalCiv
+            ?: memory.campaign.campaignRivalCiv
+            ?: memory.campaign.primaryRivalCiv
             ?: empireObservation.victoryThreats.firstOrNull()?.civName
             ?: visibleTarget?.civName
             ?: visibleCapital?.civName
@@ -944,6 +964,9 @@ object AgentStrategicGovernor {
             lastKnownTarget = lastKnownTarget,
             lastKnownCapital = lastKnownCapital,
         )
+        val objective = preferredObjective.takeIf {
+            observation.empireSummary.isAtWar || victoryIntent.militaryPurpose == "conquest"
+        }
         val objectiveSource = when (preferredObjective) {
             visibleCapital?.let(::toTargetReference) -> "visible_capital"
             visibleTarget?.let(::toTargetReference) -> "visible_city"
@@ -951,7 +974,6 @@ object AgentStrategicGovernor {
             lastKnownTarget -> "last_known_city"
             else -> null
         }
-        val objective = preferredObjective
         val frontlineCombatUnits = objective?.let { target ->
             observation.units.count { unit ->
                 unit.role in setOf("melee", "ranged", "siege", "naval_melee", "naval_ranged") &&
@@ -986,7 +1008,7 @@ object AgentStrategicGovernor {
             visibleRivalCities = visibleRivalCities.size,
             visibleRivalUnits = visibleRivalUnits.size,
             objectiveTarget = objective,
-            objectiveSource = objectiveSource,
+            objectiveSource = objectiveSource?.takeIf { objective != null },
             visibleTarget = visibleTarget?.let(::toTargetReference),
             visibleCapital = visibleCapital?.let(::toTargetReference),
             lastKnownTarget = lastKnownTarget,
@@ -1034,8 +1056,10 @@ object AgentStrategicGovernor {
     private fun isPressureContext(
         observation: AgentObservation,
         campaignContext: AgentPlannerCampaignContextObservation?,
+        victoryIntent: AgentVictoryIntentObservation,
     ): Boolean {
         if (observation.empireSummary.isAtWar) return true
+        if (victoryIntent.militaryPurpose != "conquest") return false
         campaignContext ?: return false
         return campaignContext.warChoiceAvailable ||
             (observation.empireSummary.militaryUnitCount >= 8 && campaignContext.primaryRivalCiv != null) ||
@@ -1120,13 +1144,14 @@ object AgentStrategicGovernor {
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
         campaignContext: AgentPlannerCampaignContextObservation?,
+        victoryIntent: AgentVictoryIntentObservation,
     ): String {
         if (memory.campaign.stage.isNotBlank()) return memory.campaign.stage
         if (observation.empireSummary.isAtWar) return "assault"
         if (!empireObservation.gameContext.contactComplete) return "scouting"
         if (observation.empireSummary.cityCount < 2) return "expansion"
-        if (campaignContext?.warChoiceAvailable == true && hasMeaningfulRivalObjective(campaignContext)) return "staging"
-        if (campaignContext != null && hasMeaningfulRivalObjective(campaignContext)) return "pressure"
+        if (victoryIntent.militaryPurpose == "conquest" && campaignContext?.warChoiceAvailable == true && hasMeaningfulRivalObjective(campaignContext)) return "staging"
+        if (victoryIntent.militaryPurpose == "conquest" && campaignContext != null && hasMeaningfulRivalObjective(campaignContext)) return "pressure"
         return "positioning"
     }
 

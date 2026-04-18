@@ -7,6 +7,7 @@ import kotlinx.serialization.Serializable
 data class AgentMemory(
     var worldModel: WorldModelMemory = WorldModelMemory(),
     var campaign: CampaignMemory = CampaignMemory(),
+    var victoryIntent: AgentVictoryIntentMemory = AgentVictoryIntentMemory(),
     var empirePlan: EmpirePlanMemory = EmpirePlanMemory(),
     var campaignControl: AgentCampaignControlMemory = AgentCampaignControlMemory(),
     var recentChanges: ArrayList<MemoryNote> = arrayListOf(),
@@ -21,6 +22,7 @@ data class AgentMemory(
     constructor() : this(
         WorldModelMemory(),
         CampaignMemory(),
+        AgentVictoryIntentMemory(),
         EmpirePlanMemory(),
         AgentCampaignControlMemory(),
         arrayListOf(),
@@ -41,6 +43,10 @@ data class AgentMemory(
         campaign = campaign.copy(
             doNotDo = ArrayList(campaign.doNotDo),
             notes = ArrayList(campaign.notes.map { it.copy() }),
+        ),
+        victoryIntent = victoryIntent.copy(
+            allowedVictoryTypes = ArrayList(victoryIntent.allowedVictoryTypes),
+            preferredVictoryTypes = ArrayList(victoryIntent.preferredVictoryTypes),
         ),
         empirePlan = empirePlan.copy(
             notes = ArrayList(empirePlan.notes.map { it.copy() }),
@@ -102,12 +108,14 @@ data class CampaignMemory(
     var conversionBlocker: String? = null,
     var summary: String? = null,
     var reinforcementPlan: String? = null,
+    var raceRivalCiv: String? = null,
+    var campaignRivalCiv: String? = null,
     var primaryRivalCiv: String? = null,
     var doNotDo: ArrayList<String> = arrayListOf(),
     var notes: ArrayList<MemoryNote> = arrayListOf(),
     var lastUpdatedTurn: Int = 0,
 ) : IsPartOfGameInfoSerialization {
-    constructor() : this("", "", null, null, null, null, null, arrayListOf(), arrayListOf(), 0)
+    constructor() : this("", "", null, null, null, null, null, null, null, arrayListOf(), arrayListOf(), 0)
 }
 
 @Serializable

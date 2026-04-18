@@ -7,6 +7,7 @@ object AgentStrategistGovernor {
         empireObservation: AgentEmpireObservation,
         refreshRequest: AgentStrategistRefreshRequest,
     ): AgentStrategistBrief {
+        val victoryIntent = AgentVictoryIntentResolver.resolve(memory, observation, empireObservation)
         val lastMemo = memory.lastStrategistMemo.takeIf { it.campaignStage.isNotBlank() }
         val rivalCities = buildRivalCitySnapshots(observation)
         val rivalUnits = buildRivalUnitSnapshots(observation)
@@ -95,6 +96,7 @@ object AgentStrategistGovernor {
             refreshRequest = refreshRequest,
             gameContext = empireObservation.gameContext,
             enabledVictoryTypes = empireObservation.enabledVictoryTypes,
+            victoryIntent = victoryIntent,
             empireSummary = observation.empireSummary,
             currentResearch = empireObservation.currentResearch,
             currentResearchStatus = empireObservation.currentResearchStatus,

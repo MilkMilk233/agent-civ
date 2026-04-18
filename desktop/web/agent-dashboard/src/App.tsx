@@ -4334,8 +4334,8 @@ function deriveTurnMetrics(turn: TurnRecord) {
   const plannedActions = summary?.plannedActions ?? countActions(turn.parsedPlan);
   const executedActions = summary?.executedActions ?? plannedActions;
   const executionRejectedActions = summary?.rejectedActions ?? 0;
-  const fallback = summary?.fallback ?? turn.statusLabel.toLowerCase().includes("fallback");
-  const blocked = summary?.blocked ?? turn.statusLabel.toLowerCase().includes("blocked");
+  const fallback = summary?.fallback ?? countEvents(turn.events, "fallback_legacy") > 0;
+  const blocked = summary?.blocked ?? countEvents(turn.events, "plan_missing") > 0;
   const retryCount = countEvents(turn.events, "plan_validation_failed");
   const validationFailureCount = countValidationFailures(turn.events);
   const tacticalPasses = countEvents(turn.events, "llm_request");

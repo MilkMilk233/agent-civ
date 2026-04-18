@@ -37,12 +37,30 @@ function summarizeStatus(
   const parsedPlan = latestEventOfType(events, "llm_plan_parsed");
   const plan = parseJsonValue<Record<string, unknown>>(parsedPlan?.details?.parsedPlan);
   const notes = typeof plan?.notes === "string" ? plan.notes : null;
+  const fallbackEvent = latestEventOfType(events, "fallback_legacy");
+  const planMissingEvent = latestEventOfType(events, "plan_missing");
 
   if (events.some((event) => event.type === "plan_applied")) {
     return {
       statusLabel: "Applied",
       statusTone: "success",
       synopsis: notes || latest.message,
+    };
+  }
+
+  if (fallbackEvent) {
+    return {
+      statusLabel: "Fallback",
+      statusTone: "warning",
+      synopsis: notes || fallbackEvent.message,
+    };
+  }
+
+  if (planMissingEvent) {
+    return {
+      statusLabel: "Blocked",
+      statusTone: "warning",
+      synopsis: notes || planMissingEvent.message,
     };
   }
 

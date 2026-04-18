@@ -25,9 +25,11 @@ object AgentStrategistPromptBuilder {
         refreshRequest: AgentStrategistRefreshRequest,
     ): String {
         val strategistBriefJson = strategistBriefJson(memory, observation, empireObservation, refreshRequest)
+        val victoryIntent = AgentVictoryIntentResolver.resolve(memory, observation, empireObservation)
         val cheatSheet = AgentStrategicCheatSheetBank.resolve(
             empireObservation.gameContext,
-            memory.lastStrategistMemo
+            memory.lastStrategistMemo,
+            victoryIntent,
         )
         val cheatSheetSection = cheatSheet?.let { sheet ->
             buildString {
@@ -105,6 +107,7 @@ object AgentStrategistPromptBuilder {
             Rules:
             - Think like a strong Civilization V Vanilla strategist by default. Use normal Civ V Vanilla priors confidently.
             - The packet defines the real current state for this match. If a mechanic or option is not supported by the surfaced state, do not assume it exists.
+            - Strategist Brief JSON may include victoryIntent. Treat it as the engine-owned routing packet for what wins are legal, what win path is currently routed, what military is for, and which rival matters for the race versus the campaign.
             - Build one coherent memo and notebook update. Do not hedge across multiple win paths unless the game state truly demands a flexible fallback.
             - On tiny duel maps, think about tempo, expansion, defensive coverage, and pressure on the only rival.
             $cheatSheetSection
@@ -144,6 +147,9 @@ object AgentStrategistPromptBuilder {
             - When a city assault is becoming real, be explicit about the basic battlefield jobs a good tactician should maintain: a staging line before war, an assault ring once war begins, damaged units cycling out to recover, and a healthy melee capture unit being preserved instead of traded away.
             - Do not let existing units disappear from the strategic story once production becomes the bottleneck. If the current campaign depends on pressure against a visible objective, currentSituation, futurePlan, and controlLanes should make the intended posture of existing forces understandable in plain teammate language.
             - refreshRequest tells you why this strategist call happened. Respect it as the phase boundary that just fired rather than retelling the previous memo from habit.
+            - memo.winPath must be one of enabledVictoryTypes from the brief.
+            - If the brief shows exactly one allowed victory type, memo.winPath must use that legal victory type rather than an unavailable alternative.
+            - If victoryIntent says militaryPurpose is defense or deterrence, military action can still matter, but it should support the legal routed win path instead of replacing it with an illegal conquest story.
             - campaignStage is required. Use a short natural stage label such as scouting, expansion, staging, assault, rebuild, or consolidation.
             - decisiveObjective is required. Name the next objective that most directly converts the current position into progress. Keep it concrete and game-specific.
             - conversionBlocker should name the main thing still preventing that objective from converting cleanly, if there is one. If the path is already open, leave it empty instead of inventing filler.

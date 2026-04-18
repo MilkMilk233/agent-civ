@@ -11,6 +11,7 @@ object AgentObservability {
             .toIntOrNull()
             ?.coerceIn(500, 20000)
             ?: 4000
+    private const val maxDetailEntries = 80
     private const val maxDetailValueLength = 20000
     private const val maxStructuredDetailValueLength = 200000
     private const val maxMessageLength = 2000
@@ -56,7 +57,9 @@ object AgentObservability {
             turn = turn,
             details = details
                 .entries
-                .take(30)
+                // Turn-start payloads now legitimately carry more routed packet fields.
+                // Keep enough keys to preserve downstream replay/dashboard JSON blobs.
+                .take(maxDetailEntries)
                 .associate { entry ->
                     val key = entry.key.take(80)
                     val maxLength = if (key in largeDetailKeys || key.endsWith("Json")) {

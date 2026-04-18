@@ -5,6 +5,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class AgentPlannerBrief(
     val gameContext: AgentPublicGameContextObservation,
+    val victoryIntent: AgentVictoryIntentObservation? = null,
     val strategy: AgentPlannerStrategyObservation,
     val campaignControl: AgentCampaignControlObservation? = null,
     val decisionFocus: AgentPlannerDecisionFocusObservation? = null,

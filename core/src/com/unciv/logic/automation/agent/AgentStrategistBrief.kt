@@ -7,6 +7,7 @@ data class AgentStrategistBrief(
     val refreshRequest: AgentStrategistRefreshRequest,
     val gameContext: AgentPublicGameContextObservation,
     val enabledVictoryTypes: List<String>,
+    val victoryIntent: AgentVictoryIntentObservation? = null,
     val empireSummary: EmpireSummaryObservation,
     val currentResearch: String? = null,
     val currentResearchStatus: String? = null,

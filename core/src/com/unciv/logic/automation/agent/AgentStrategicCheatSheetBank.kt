@@ -9,10 +9,15 @@ object AgentStrategicCheatSheetBank {
     fun resolve(
         gameContext: AgentPublicGameContextObservation,
         memo: AgentStrategistMemoMemory?,
+        victoryIntent: AgentVictoryIntentObservation? = null,
     ): AgentStrategicCheatSheet? {
         val archetype = memo?.gameArchetype?.ifBlank { null } ?: gameContext.archetype
         return when (archetype) {
-            "tiny_duel_pangaea_no_city_states_no_barbs" -> tinyDuelDomination()
+            "tiny_duel_pangaea_no_city_states_no_barbs" -> when (victoryIntent?.effectiveWinPath) {
+                "Science" -> tinyDuelScience()
+                "Domination", null -> tinyDuelDomination()
+                else -> null
+            }
             else -> null
         }
     }
@@ -85,6 +90,24 @@ object AgentStrategicCheatSheetBank {
             "Another major losing pattern is paying for more and more recon after the empire already has enough pieces on the board to reveal the rival naturally. This wastes the narrow expansion window and leaves the army and second city late.",
             "If the rival is still not found after a reasonable search window, the pro response is usually to choose the best robust expansion line and continue scouting with existing units, not to keep sacrificing city tempo to new Scouts.",
             "Only deviate from the default opener if contact and second-city certainty are already solved unusually early or if the rival is close enough that immediate military is clearly required.",
+        ),
+    )
+
+    private fun tinyDuelScience() = AgentStrategicCheatSheet(
+        title = "Tiny 1v1 science snowball prior",
+        bullets = listOf(
+            "When science is the only legal win, the primary job is to snowball cities, science tempo, and safe expansion instead of treating early conquest as the default story.",
+            "The normal backbone is still tempo first: found the capital immediately, use the starting Warrior plus only as much recon as needed, secure the second city, and convert production into growth, labor, and science rather than a conquest-sized army.",
+            "Do not overbuild Scouts once the map is reasonably understood. Extra recon is only worth it when it clearly changes the next few turns more than growth, Settler timing, or economy.",
+            "On tiny duel maps, military still matters, but mostly as deterrence and self-defense. Build enough to stay safe and protect expansion tempo, not enough to carry a stalled prewar package with no legal conquest payoff.",
+            "If the rival is visible, read that as a race and threat signal first, not automatically as permission to turn the empire into a city-assault machine.",
+            "A second city is still a major checkpoint because it improves production, science, and flexibility. Do not let fear or unnecessary staging delay that city without a concrete immediate threat.",
+            "Worker timing matters, but do not let labor urgency crowd out second-city timing. Use Workers to unlock food, production, and connection tempo once the expansion line is secure.",
+            "In this mode, passive infrastructure is not automatically wrong. The question is whether each build accelerates science tempo, city growth, or safe expansion enough to beat its opportunity cost.",
+            "When military is needed, prefer efficient deterrence and defensive posture. A compact force that can punish overextension is better than an oversized army that slows research and city development.",
+            "If war starts anyway, defend efficiently and protect the snowball. Fight to keep cities, workers, and science tempo safe; do not drift into a conquest campaign unless the routed win path actually changes later.",
+            "Gold should usually support tempo: city growth, key infrastructure, defensive necessity, or science acceleration. Avoid floating gold while also paying upkeep for military that is not converting into safety.",
+            "The main losing pattern to avoid is carrying domination posture costs in a science game: too much early army, too much border staging, and too many turns where expansion or science timing is delayed for a war that is not the win condition.",
         ),
     )
 }
