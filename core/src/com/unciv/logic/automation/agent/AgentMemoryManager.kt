@@ -10,6 +10,11 @@ object AgentMemoryManager {
     private const val maxRecentFailures = 8
     private const val cityIntentHorizonTurns = 5
     private const val unitAssignmentHorizonTurns = 4
+    private const val holdPositionReviewTurns = 3
+    private const val frontlineHoldMaxTurns = 5
+    private const val combatHoldHealthyThreshold = 85
+    private const val combatHoldThreatRadius = 3
+    private const val combatHoldCityRadius = 4
     private const val recentChangeHorizonTurns = 12
     private const val maxRecentChanges = 10
     private const val maxLessons = 8
@@ -1397,6 +1402,13 @@ object AgentMemoryManager {
                 completed += "${assignment.unitName.ifBlank { "Unit #${assignment.unitId}" }} is healthy again, so that fallback-and-heal carry-over is complete."
                 continue
             }
+            if (assignment.completionPolicy == "until_reviewed") {
+                val reviewedHoldReason = staleHoldReviewReason(civInfo, liveUnit, assignment, turn)
+                if (reviewedHoldReason != null) {
+                    completed += reviewedHoldReason
+                    continue
+                }
+            }
             activeUnitAssignments += assignment.copy(staleAfterTurn = turn + unitAssignmentHorizonTurns)
         }
 
@@ -2327,11 +2339,67 @@ object AgentMemoryManager {
         "auto_explore",
         "stage_near_target_city",
         "attack_target_city",
-        "hold_position",
         "heal_and_hold",
         -> "until_switched"
+        "hold_position" -> "until_reviewed"
         "fallback_and_heal" -> "until_recovered"
         else -> "until_stale"
+    }
+
+    private fun staleHoldReviewReason(
+        civInfo: Civilization,
+        liveUnit: MapUnit,
+        assignment: UnitAssignmentMemory,
+        turn: Int,
+    ): String? {
+        if (assignment.role != "hold_position") return null
+
+        val assignmentAgeTurns = (turn - assignment.lastProgressTurn).coerceAtLeast(0)
+        if (assignmentAgeTurns < holdPositionReviewTurns) return null
+        if (!liveUnit.hasMovement()) return null
+
+        val unitLabel = assignment.unitName.ifBlank { "Unit #${assignment.unitId}" }
+        if (!liveUnit.isMilitary()) {
+            return "$unitLabel has been holding long enough that the tactician should explicitly review that posture."
+        }
+        if (liveUnit.health < combatHoldHealthyThreshold) return null
+
+        val (nearbyHostileUnits, nearbyHostileCities) = countNearbyVisibleHostiles(civInfo, liveUnit)
+        if (nearbyHostileUnits == 0 && nearbyHostileCities == 0) {
+            return "$unitLabel has been sitting on hold without nearby threats for $assignmentAgeTurns turns, so that carry-over now needs an explicit fresh order."
+        }
+        if (assignmentAgeTurns >= frontlineHoldMaxTurns) {
+            return "$unitLabel has been anchored on hold for $assignmentAgeTurns turns in the war theater, so that posture must be explicitly re-justified instead of carrying forever."
+        }
+        return null
+    }
+
+    private fun countNearbyVisibleHostiles(
+        civInfo: Civilization,
+        liveUnit: MapUnit,
+    ): Pair<Int, Int> {
+        val origin = liveUnit.getTile()
+        val visibleTiles = civInfo.viewableTiles
+        var hostileUnits = 0
+        var hostileCities = 0
+
+        for (tile in origin.getTilesInDistanceRange(0..combatHoldCityRadius)) {
+            if (tile !in visibleTiles) continue
+            val distance = origin.aerialDistanceTo(tile)
+            if (distance <= combatHoldThreatRadius) {
+                hostileUnits += tile.getUnits().count { other ->
+                    other.civ != civInfo && civInfo.isAtWarWith(other.civ)
+                }
+            }
+            if (distance <= combatHoldCityRadius && tile.isCityCenter()) {
+                val city = tile.getCity()
+                if (city != null && city.civ != civInfo && civInfo.isAtWarWith(city.civ)) {
+                    hostileCities += 1
+                }
+            }
+        }
+
+        return hostileUnits to hostileCities
     }
 
     private fun extractTouchedUnitIds(plan: AgentActionPlan): Set<Int> {

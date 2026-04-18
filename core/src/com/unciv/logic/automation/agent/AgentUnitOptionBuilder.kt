@@ -1586,7 +1586,7 @@ object AgentUnitOptionBuilder {
             UnitActionType.SleepUntilHealed -> DirectAssignmentSurface(
                 role = "hold_position",
                 title = "assign: hold position",
-                detail = "Set an ongoing hold-position assignment on the current tile. The lower heuristic can keep this unit anchored here until you switch it.",
+                detail = "Set a hold-position assignment on the current tile. The lower heuristic can keep this unit anchored here for the next few turns, but the tactician should explicitly review the hold instead of letting it sit forever.",
                 successMessage = "{unit} assigned to hold position",
             )
             else -> DirectAssignmentSurface(

@@ -18,6 +18,11 @@ object AgentObservationBuilder {
     private const val maxVisibleTargets = 8
     private const val maxLocalFactsPerEntity = 4
     private const val maxCompactFactsPerEntity = 2
+    private const val holdPositionReviewTurns = 3
+    private const val frontlineHoldMaxTurns = 5
+    private const val combatHoldHealthyThreshold = 85
+    private const val combatHoldThreatRadius = 3
+    private const val combatHoldCityRadius = 4
 
     fun build(civInfo: Civilization, memory: AgentMemory = civInfo.agentMemory): AgentObservation {
         civInfo.updateStatsForNextTurn()
@@ -996,14 +1001,17 @@ object AgentObservationBuilder {
         val onTarget = AgentUnitOptionBuilder.isAssignmentOnTarget(unit, assignment)
         val matchingCandidate = unitOptionCandidates.any { candidateMatchesAssignment(it.candidateId, assignment) }
         val groundedStep = AgentUnitOptionBuilder.hasGroundedAssignmentStep(unit, assignment)
+        val staleCombatHold = isStaleCombatHold(unit, assignment)
         val readyToFinish = unitOptionCandidates.any { candidate ->
             candidate.candidateId.startsWith("unitworkerimprove:${unit.id}:${assignment.targetX},${assignment.targetY}:") ||
                 candidate.candidateId == "unitsettle:${unit.id}:${assignment.targetX},${assignment.targetY}" ||
                 candidateMatchesAssignment(candidate.candidateId, assignment)
-        } || (assignment.role == "fallback_and_heal" && unit.health >= 85)
+        } || (assignment.role == "fallback_and_heal" && unit.health >= 85) ||
+            staleCombatHold
         val status = when {
             assignment.role == "auto_explore" && unit.isExploring() -> "automation_active"
             assignment.role == "fallback_and_heal" && unit.health >= 85 -> "ready_to_finish"
+            assignment.role == "hold_position" && staleCombatHold -> "ready_to_finish"
             onTarget && readyToFinish -> "ready_to_finish"
             onTarget -> "on_target"
             groundedStep && assignment.executionMode != "memory_only" -> "moving_to_target"
@@ -1013,6 +1021,7 @@ object AgentObservationBuilder {
         val progressNote = assignmentProgressNote(status, assignment)
         val switchCost = when {
             assignment.role in setOf("improve_tile", "settle_city_site") && status != "assignment_at_risk" -> "high"
+            assignment.role == "hold_position" && status == "ready_to_finish" -> "low"
             assignment.role in setOf(
                 "auto_explore",
                 "move_to_tile",
@@ -1094,6 +1103,12 @@ object AgentObservationBuilder {
                 "moving_to_target" -> "This unit is disengaging toward a safer healing tile."
                 else -> "This unit was supposed to fall back and heal, but the current turn no longer shows a clean matching route."
             }
+            "hold_position" -> when (status) {
+                "ready_to_finish" -> "This hold-position order has gone stale. Re-justify it explicitly or give the unit a fresh combat job instead of carrying the hold forever."
+                "on_target" -> "This unit is anchored on its hold tile for now; keep that posture only if the tile still matters this turn."
+                "moving_to_target" -> "This unit is still moving into a hold tile and may become an anchor if left alone."
+                else -> "This unit was supposed to hold position, but the current turn no longer shows a clean grounded reason to keep that anchor."
+            }
             else -> when (status) {
                 "ready_to_finish" -> "This unit is already in position to finish its carried assignment."
                 "on_target" -> "This unit is on the assigned target tile; prefer finishing the current job over switching away."
@@ -1101,6 +1116,49 @@ object AgentObservationBuilder {
                 else -> "This unit had a carried assignment, but the current turn no longer surfaces a matching grounded option."
             }
         }
+    }
+
+    private fun isStaleCombatHold(
+        unit: MapUnit,
+        assignment: UnitAssignmentMemory,
+    ): Boolean {
+        if (assignment.role != "hold_position") return false
+        if (!unit.isMilitary()) return false
+        if (!unit.hasMovement()) return false
+        if (unit.health < combatHoldHealthyThreshold) return false
+
+        val assignmentAgeTurns = (unit.civ.gameInfo.turns - assignment.lastProgressTurn).coerceAtLeast(0)
+        if (assignmentAgeTurns < holdPositionReviewTurns) return false
+
+        val (nearbyHostileUnits, nearbyHostileCities) = countNearbyVisibleHostiles(unit)
+        if (nearbyHostileUnits == 0 && nearbyHostileCities == 0) return true
+        return assignmentAgeTurns >= frontlineHoldMaxTurns
+    }
+
+    private fun countNearbyVisibleHostiles(unit: MapUnit): Pair<Int, Int> {
+        val civInfo = unit.civ
+        val origin = unit.getTile()
+        val visibleTiles = civInfo.viewableTiles
+        var hostileUnits = 0
+        var hostileCities = 0
+
+        for (tile in origin.getTilesInDistanceRange(0..combatHoldCityRadius)) {
+            if (tile !in visibleTiles) continue
+            val distance = origin.aerialDistanceTo(tile)
+            if (distance <= combatHoldThreatRadius) {
+                hostileUnits += tile.getUnits().count { other ->
+                    other.civ != civInfo && civInfo.isAtWarWith(other.civ)
+                }
+            }
+            if (distance <= combatHoldCityRadius && tile.isCityCenter()) {
+                val city = tile.getCity()
+                if (city != null && city.civ != civInfo && civInfo.isAtWarWith(city.civ)) {
+                    hostileCities += 1
+                }
+            }
+        }
+
+        return hostileUnits to hostileCities
     }
 
     private fun publicAssignmentRole(role: String): String = role
