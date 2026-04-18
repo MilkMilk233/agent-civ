@@ -238,6 +238,16 @@ What landed:
   - city scoring is now victory-intent-aware for non-conquest science games, with new penalties for excess military churn, Barracks drift, and unit upkeep overshoot
   - unit auto-fill is now more willing to push excess deterrence units into exploration instead of letting them all inherit local `hold_position` anchors
   - the tiny-duel science cheat sheet now explicitly teaches one-Scout tempo, active Warrior scouting, and non-blob deterrence posture
+  - a narrow forced-science peacetime surface cap now applies at the city-option layer:
+    - the only surfaced military build / purchase whitelist is Scout-style recon and Archer-style land ranged defense
+    - Scout is capped at `1` total
+    - Archer-style defenders are capped at `1` per city
+    - once those caps are met, additional military unit options stop being surfaced while the empire remains at peace in a forced-science game
+  - prompt-thinning work has now started in the packet layer:
+    - the static tactician and strategist manuals were shortened substantially so each call spends less budget on repeated doctrine text
+    - non-war planner unit surfacing is now capped so the tactician sees a ranked subset of the most decisionful units instead of every rear-area unit card
+    - strategist unit snapshots are now capped to a ranked subset instead of serializing the full empire roster every refresh
+    - low-signal units now default to compact cards unless they are settlers, workers with meaningful jobs, local-threat units, review-worthy assignments, or otherwise high-signal units
 - war-facing packet shaping is partially gated by victory intent:
   - `campaignContext.objectiveTarget` is only surfaced when war is live or `militaryPurpose == conquest`
   - pressure-context surfacing in the planner now consults `militaryPurpose`

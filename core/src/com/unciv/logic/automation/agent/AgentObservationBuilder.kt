@@ -18,6 +18,8 @@ object AgentObservationBuilder {
     private const val maxVisibleTargets = 8
     private const val maxLocalFactsPerEntity = 4
     private const val maxCompactFactsPerEntity = 2
+    private const val maxExpandedUnitCardsAtPeace = 16
+    private const val maxExpandedUnitCardsAtWar = 24
     private const val holdPositionReviewTurns = 3
     private const val frontlineHoldMaxTurns = 5
     private const val combatHoldHealthyThreshold = 85
@@ -81,7 +83,8 @@ object AgentObservationBuilder {
                 unitOptionCandidates = unitOptionContext.observationsByUnitId[unit.id] ?: emptyList(),
             )
         }
-        val units = unitCandidates.map { candidate ->
+        val contactComplete = civInfo.getKnownCivs().any { !it.isBarbarian && !it.isCityState }
+        val unitDrafts = unitCandidates.map { candidate ->
             val unit = candidate.unit
             val unitOptionCandidates = unitOptionContext.observationsByUnitId[unit.id] ?: emptyList()
             val assignmentProgress = buildUnitAssignmentProgress(
@@ -94,27 +97,48 @@ object AgentObservationBuilder {
                 unitOptionCandidates = unitOptionCandidates,
                 assignmentProgress = assignmentProgress,
             )
-            val expanded = detailReasons.isNotEmpty()
+            UnitObservationDraft(
+                candidate = candidate,
+                unitOptionCandidates = unitOptionCandidates,
+                assignmentProgress = assignmentProgress,
+                detailReasons = detailReasons,
+                expansionPriority = unitExpansionPriority(
+                    candidate = candidate,
+                    unitOptionCandidates = unitOptionCandidates,
+                    assignmentProgress = assignmentProgress,
+                    contactComplete = contactComplete,
+                ),
+            )
+        }
+        val expandedUnitIds = unitDrafts
+            .asSequence()
+            .filter { shouldExpandUnitCard(it, contactComplete) }
+            .sortedByDescending { it.expansionPriority }
+            .take(if (civInfo.isAtWar()) maxExpandedUnitCardsAtWar else maxExpandedUnitCardsAtPeace)
+            .mapTo(hashSetOf()) { it.candidate.unit.id }
+        val units = unitDrafts.map { draft ->
+            val unit = draft.candidate.unit
+            val expanded = unit.id in expandedUnitIds
             AgentUnitObservation(
                 detailLevel = if (expanded) "expanded" else "compact",
-                detailReasons = detailReasons,
+                detailReasons = if (expanded) draft.detailReasons else emptyList(),
                 id = unit.id,
                 x = unit.getTile().position.x,
                 y = unit.getTile().position.y,
                 name = unit.name,
-                role = candidate.role,
+                role = draft.candidate.role,
                 health = unit.health,
                 hasMovement = unit.hasMovement(),
                 movementPoints = unit.getMovementString(),
-                strength = candidate.strength,
-                rangedStrength = candidate.rangedStrength,
-                range = candidate.range,
-                unitOptionCandidates = if (expanded) unitOptionCandidates else emptyList(),
-                nearbyHostileUnits = candidate.nearbyHostileUnits,
-                nearbyHostileCities = candidate.nearbyHostileCities,
-                reasons = candidate.reasons.take(if (expanded) maxLocalFactsPerEntity else maxCompactFactsPerEntity),
-                localFacts = candidate.localFacts.take(if (expanded) maxLocalFactsPerEntity else maxCompactFactsPerEntity),
-                assignmentProgress = assignmentProgress,
+                strength = draft.candidate.strength,
+                rangedStrength = draft.candidate.rangedStrength,
+                range = draft.candidate.range,
+                unitOptionCandidates = if (expanded) draft.unitOptionCandidates else emptyList(),
+                nearbyHostileUnits = draft.candidate.nearbyHostileUnits,
+                nearbyHostileCities = draft.candidate.nearbyHostileCities,
+                reasons = draft.candidate.reasons.take(if (expanded) maxLocalFactsPerEntity else 1),
+                localFacts = draft.candidate.localFacts.take(if (expanded) maxLocalFactsPerEntity else 1),
+                assignmentProgress = if (expanded) draft.assignmentProgress else null,
             )
         }
         val expandedUnits = units.filter { it.detailLevel == "expanded" }
@@ -877,6 +901,66 @@ object AgentObservationBuilder {
         return reasons.take(4)
     }
 
+    private fun shouldExpandUnitCard(
+        draft: UnitObservationDraft,
+        contactComplete: Boolean,
+    ): Boolean {
+        val candidate = draft.candidate
+        val assignmentStatus = draft.assignmentProgress?.status
+        if (candidate.role == "settler") return true
+        if (candidate.role == "worker" && hasHighSignalUnitCandidate(draft.unitOptionCandidates)) return true
+        if (candidate.nearbyHostileUnits > 0 || candidate.nearbyHostileCities > 0) return true
+        if (assignmentStatus in setOf("ready_to_finish", "assignment_at_risk")) return true
+        if (candidate.objectiveTheater && candidate.unit.isMilitary()) return true
+        if (!contactComplete && candidate.role == "scout" && hasExplorationCandidate(draft.unitOptionCandidates)) return true
+        if (highSignalUnitCandidateCount(draft.unitOptionCandidates) > 0) return true
+        return draft.unitOptionCandidates.size > 1
+    }
+
+    private fun unitExpansionPriority(
+        candidate: UnitCandidate,
+        unitOptionCandidates: List<UnitOptionCandidateObservation>,
+        assignmentProgress: UnitAssignmentProgressObservation?,
+        contactComplete: Boolean,
+    ): Int {
+        var score = candidate.score
+        if (candidate.role == "settler") score += 220
+        if (candidate.role == "worker") score += 70
+        if (candidate.nearbyHostileUnits > 0 || candidate.nearbyHostileCities > 0) score += 120
+        if (candidate.objectiveTheater && candidate.unit.isMilitary()) score += 90
+        if (assignmentProgress?.status in setOf("ready_to_finish", "assignment_at_risk")) score += 80
+        if (!contactComplete && candidate.role == "scout" && hasExplorationCandidate(unitOptionCandidates)) score += 80
+        score += highSignalUnitCandidateCount(unitOptionCandidates) * 35
+        score += unitOptionCandidates.size * 8
+        return score
+    }
+
+    private fun highSignalUnitCandidateCount(
+        unitOptionCandidates: List<UnitOptionCandidateObservation>,
+    ): Int = unitOptionCandidates.count { hasHighSignalUnitCandidateId(it.candidateId) }
+
+    private fun hasHighSignalUnitCandidate(
+        unitOptionCandidates: List<UnitOptionCandidateObservation>,
+    ): Boolean = unitOptionCandidates.any { hasHighSignalUnitCandidateId(it.candidateId) }
+
+    private fun hasExplorationCandidate(
+        unitOptionCandidates: List<UnitOptionCandidateObservation>,
+    ): Boolean = unitOptionCandidates.any {
+        it.candidateId.startsWith("unitautoexplore:") || it.candidateId.startsWith("unitstopautoexplore:")
+    }
+
+    private fun hasHighSignalUnitCandidateId(candidateId: String): Boolean {
+        return candidateId.startsWith("unitsettle:") ||
+            candidateId.startsWith("unitworkerimprove:") ||
+            candidateId.startsWith("unitworkerreposition:") ||
+            candidateId.startsWith("unitattack:") ||
+            candidateId.startsWith("unitattackcity:") ||
+            candidateId.startsWith("unitfallbackheal:") ||
+            candidateId.startsWith("unitstagecity:") ||
+            candidateId.startsWith("unitupgrade:") ||
+            candidateId.startsWith("unitability:")
+    }
+
     private fun buildCitySignals(
         candidate: CityCandidate,
         project: AgentCityProjectObservation?,
@@ -1325,6 +1409,14 @@ object AgentObservationBuilder {
         val localFacts: List<String>,
         val facts: List<ScoredFact>,
         val opportunities: List<ScoredFact>,
+    )
+
+    private data class UnitObservationDraft(
+        val candidate: UnitCandidate,
+        val unitOptionCandidates: List<UnitOptionCandidateObservation>,
+        val assignmentProgress: UnitAssignmentProgressObservation?,
+        val detailReasons: List<String>,
+        val expansionPriority: Int,
     )
 
     private data class ObjectiveTheaterHint(

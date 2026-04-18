@@ -1,6 +1,10 @@
 package com.unciv.logic.automation.agent
 
 object AgentStrategicGovernor {
+    private const val maxPeaceUnitHighlights = 18
+    private const val maxWarUnitHighlights = 28
+    private const val maxStrategistUnitSnapshots = 20
+
     fun buildPlannerBrief(
         memory: AgentMemory,
         observation: AgentObservation,
@@ -714,7 +718,22 @@ object AgentStrategicGovernor {
         }
 
         val ranked = candidateUnits.sortedByDescending { unitScore(it, observation, gameContext, primaryThreat, campaignContext, victoryIntent) }
-        return UnitSurfacingResult(units = ranked)
+        val selected = (
+            ranked.filter { shouldPinNonWarUnitHighlight(it, gameContext) } +
+                ranked.filter { it.unitOptionCandidates.isNotEmpty() } +
+                ranked
+            )
+            .distinctBy { it.id }
+            .take(maxPeaceUnitHighlights)
+        val hiddenUnits = ranked.size - selected.size
+        return UnitSurfacingResult(
+            units = selected,
+            suppressedNotes = if (hiddenUnits > 0) {
+                listOf("$hiddenUnits lower-priority unit cards were collapsed so the tactician sees the most decisionful units first.")
+            } else {
+                emptyList()
+            },
+        )
     }
 
     private fun selectObjectiveTheaterUnits(
@@ -733,7 +752,13 @@ object AgentStrategicGovernor {
         val remaining = ranked.filter { rankedUnit -> theaterUnits.none { it.id == rankedUnit.id } }
         val reserveUnits = remaining.filter { shouldSurfaceAsReserve(it) }
         val backgroundUnits = remaining.filterNot { unit -> reserveUnits.any { it.id == unit.id } }
-        val selected = (theaterUnits + reserveUnits + backgroundUnits).distinctBy { it.id }
+        val selected = (
+            theaterUnits.take(maxWarUnitHighlights / 2) +
+                reserveUnits.take(maxWarUnitHighlights / 4) +
+                backgroundUnits.take(maxWarUnitHighlights)
+            )
+            .distinctBy { it.id }
+            .take(maxWarUnitHighlights)
 
         val theaterCombatUnits = theaterUnits.filter { isCombatRole(it.role) }
         val reserveCombatUnits = remaining.filter { shouldSurfaceAsReserve(it) && isCombatRole(it.role) }
@@ -763,6 +788,11 @@ object AgentStrategicGovernor {
         return UnitSurfacingResult(
             units = selected.distinctBy { it.id },
             objectiveTheater = objectiveTheater,
+            suppressedNotes = if (candidateUnits.size > selected.size) {
+                listOf("${candidateUnits.size - selected.size} rear-area unit cards were collapsed behind the objective theater.")
+            } else {
+                emptyList()
+            },
         )
     }
 
@@ -977,6 +1007,25 @@ object AgentStrategicGovernor {
         }
         if (unit.hasMovement && hasExplorationAssignmentSurface && !gameContext.contactComplete) score += 10
         return score
+    }
+
+    private fun shouldPinNonWarUnitHighlight(
+        unit: AgentUnitObservation,
+        gameContext: AgentPublicGameContextObservation,
+    ): Boolean {
+        if (unit.role == "settler") return true
+        if (unit.nearbyHostileUnits > 0 || unit.nearbyHostileCities > 0) return true
+        if (unit.assignmentProgress?.status in setOf("ready_to_finish", "assignment_at_risk")) return true
+        if (!gameContext.contactComplete && unit.role == "scout" && unit.hasMovement) return true
+        return unit.unitOptionCandidates.any { candidate ->
+            candidate.candidateId.startsWith("unitsettle:") ||
+                candidate.candidateId.startsWith("unitworkerimprove:") ||
+                candidate.candidateId.startsWith("unitworkerreposition:") ||
+                candidate.candidateId.startsWith("unitattack:") ||
+                candidate.candidateId.startsWith("unitattackcity:") ||
+                candidate.candidateId.startsWith("unitfallbackheal:") ||
+                candidate.candidateId.startsWith("unitstagecity:")
+        }
     }
 
     private fun buildCampaignContext(

@@ -70,6 +70,9 @@ object AgentCityOptionBuilder {
                 val construction = runCatching { city.cityConstructions.getConstruction(name) }.getOrNull()
                     ?: return@mapIndexedNotNull null
                 if (!construction.isBuildable(city.cityConstructions)) return@mapIndexedNotNull null
+                if (shouldSuppressForcedSciencePeaceMilitarySurface(construction, conversionContext)) {
+                    return@mapIndexedNotNull null
+                }
                 val score = scoreConstructionChoice(city, construction, index, conversionContext)
                 if (!needsExplicitChoice && score <= 0) return@mapIndexedNotNull null
                 RankedConstructionChoice(
@@ -182,6 +185,9 @@ object AgentCityOptionBuilder {
             .mapNotNull { name -> runCatching { city.cityConstructions.getConstruction(name) }.getOrNull() }
             .filterIsInstance<INonPerpetualConstruction>()
             .mapNotNull { construction ->
+                if (shouldSuppressForcedSciencePeaceMilitarySurface(construction, conversionContext)) {
+                    return@mapNotNull null
+                }
                 val cost = construction.getStatBuyCost(city, Stat.Gold) ?: return@mapNotNull null
                 if (!city.cityConstructions.isConstructionPurchaseAllowed(construction, Stat.Gold, cost)) return@mapNotNull null
                 val purchaseScore = scorePurchaseCandidate(city, construction, cost, conversionContext)
@@ -768,14 +774,18 @@ object AgentCityOptionBuilder {
     }
 
     private fun buildConversionContext(civInfo: Civilization, memory: AgentMemory): ConversionContext {
-        val effectiveWinPath = memory.victoryIntent.effectiveWinPath ?: memory.victoryIntent.forcedVictoryType
+        val forcedVictoryType = memory.victoryIntent.forcedVictoryType
+        val effectiveWinPath = memory.victoryIntent.effectiveWinPath ?: forcedVictoryType
         val scientificSnowballMode = AgentVictoryIntentResolver.isScientificVictoryType(effectiveWinPath)
+        val forcedScientificPeaceTrack =
+            AgentVictoryIntentResolver.isScientificVictoryType(forcedVictoryType) && !civInfo.isAtWar()
         val militaryPurpose = memory.victoryIntent.militaryPurpose.ifBlank { "deterrence" }
         val economicPosture = memory.victoryIntent.economicPosture.ifBlank { "boom" }
         val contactComplete = civInfo.getKnownCivs().any { !it.isBarbarian && !it.isCityState }
         val stage = memory.campaign.stage.lowercase()
         val decisiveObjective = memory.campaign.decisiveObjective?.lowercase().orEmpty()
         val conversionBlocker = memory.campaign.conversionBlocker?.lowercase().orEmpty()
+        val units = civInfo.units.getCivUnits()
         val objectivePressure = civInfo.isAtWar() ||
             militaryPurpose == "conquest" ||
             (
@@ -805,6 +815,7 @@ object AgentCityOptionBuilder {
                 conversionBlocker.contains("siege") ||
                 conversionBlocker.contains("support"),
             scientificSnowballMode = scientificSnowballMode,
+            forcedScientificPeaceTrack = forcedScientificPeaceTrack,
             militaryPurpose = militaryPurpose,
             economicPosture = economicPosture,
             cityCount = cityCount,
@@ -815,8 +826,35 @@ object AgentCityOptionBuilder {
             unitSupply = civInfo.stats.getUnitSupply(),
             unitSupplyDeficit = civInfo.stats.getUnitSupplyDeficit(),
             unitSupplyProductionPenaltyPercent = (-civInfo.stats.getUnitSupplyProductionPenalty()).roundToInt(),
-            militaryUnitCount = civInfo.units.getCivUnits().count { it.isMilitary() },
+            militaryUnitCount = units.count { it.isMilitary() },
+            scoutUnitCount = units.count { it.name == "Scout" },
+            peaceScienceArcherCount = units.count { isForcedSciencePeaceArcher(it.baseUnit) },
         )
+    }
+
+    private fun shouldSuppressForcedSciencePeaceMilitarySurface(
+        construction: IConstruction,
+        conversionContext: ConversionContext,
+    ): Boolean {
+        if (!conversionContext.forcedScientificPeaceTrack) return false
+
+        val unit = construction as? BaseUnit ?: return false
+        if (!unit.isMilitary) return false
+
+        return when {
+            unit.name == "Scout" -> conversionContext.scoutUnitCount >= 1
+            isForcedSciencePeaceArcher(unit) ->
+                conversionContext.peaceScienceArcherCount >= conversionContext.cityCount
+            else -> true
+        }
+    }
+
+    private fun isForcedSciencePeaceArcher(unit: BaseUnit): Boolean {
+        return unit.isMilitary &&
+            unit.isLandUnit &&
+            unit.isRanged() &&
+            !unit.isProbablySiegeUnit() &&
+            unit.name != "Scout"
     }
 
     private fun nonConquestMilitaryDisciplineAdjustment(
@@ -1026,6 +1064,7 @@ object AgentCityOptionBuilder {
         val frontlineShortage: Boolean,
         val rangedShortage: Boolean,
         val scientificSnowballMode: Boolean,
+        val forcedScientificPeaceTrack: Boolean,
         val militaryPurpose: String,
         val economicPosture: String,
         val cityCount: Int,
@@ -1037,6 +1076,8 @@ object AgentCityOptionBuilder {
         val unitSupplyDeficit: Int,
         val unitSupplyProductionPenaltyPercent: Int,
         val militaryUnitCount: Int,
+        val scoutUnitCount: Int,
+        val peaceScienceArcherCount: Int,
     )
 
     private data class AgentCityActionBuckets(

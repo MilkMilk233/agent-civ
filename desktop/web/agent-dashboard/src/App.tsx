@@ -1147,10 +1147,16 @@ function TurnDetail({
   const observation = asRecord(turn.observation);
   const empireObservation = asRecord(turn.empireObservation);
   const worldFacts = asRecord(turn.worldFacts);
-  const plannerBrief = asRecord(turn.plannerBrief);
+  const turnStartPlannerBrief = asRecord(turn.plannerBrief);
   const strategistBrief = asRecord(turn.strategistBrief);
-  const strategistMemo = asRecord(turn.strategistMemo);
+  const carriedStrategistMemo = asRecord(turn.strategistMemo);
+  const rawStrategistMemo = asRecord(turn.rawStrategistMemo);
   const parsedPlan = asRecord(turn.parsedPlan);
+  const tacticalAttempts = buildTacticalAttempts(turn.events);
+  const strategistArtifacts = buildStrategistArtifacts(turn.events);
+  const latestTacticalAttempt = tacticalAttempts[tacticalAttempts.length - 1] ?? null;
+  const plannerBrief = asRecord(parseJsonValue(latestTacticalAttempt?.plannerBriefJson)) ?? turnStartPlannerBrief;
+  const exactTacticalMemoryRecord = asRecord(parseJsonValue(latestTacticalAttempt?.memoryJson)) ?? asRecord(turn.memory);
   const empireSummary = asRecord(observation?.empireSummary);
   const strategy = asRecord(plannerBrief?.strategy);
   const plannerDecisionFocus = asRecord(plannerBrief?.decisionFocus);
@@ -1173,12 +1179,8 @@ function TurnDetail({
   const empireChoices = asRecord(plannerBrief?.empireChoices);
   const suppressedContext = stringList(plannerBrief?.suppressedContext);
   const plannedActions = objectArray(parsedPlan?.actions);
-  const memoCreatedTurn = numberValue(strategistMemo?.createdTurn);
-  const memoLastReviewedTurn = numberValue(strategistMemo?.lastReviewedTurn);
   const turnMetrics = deriveTurnMetrics(turn);
   const candidateLookup = buildCandidateLookup(empireChoices, cityHighlights, unitHighlights);
-  const tacticalAttempts = buildTacticalAttempts(turn.events);
-  const strategistArtifacts = buildStrategistArtifacts(turn.events);
   const latestTerminalEvent = findLatestEvent(turn.events, ["plan_applied", "fallback_legacy", "plan_missing"]);
   const hiddenCities = Math.max(0, (numberValue(perceptionSummary?.totalCities) ?? cityHighlights.length) - cityHighlights.length);
   const hiddenUnits = Math.max(0, (numberValue(perceptionSummary?.totalUnits) ?? unitHighlights.length) - unitHighlights.length);
@@ -1205,6 +1207,24 @@ function TurnDetail({
   const unitAssignmentsMemory = objectArray(memoryRecord?.unitAssignments);
   const recentFailuresMemory = objectArray(memoryRecord?.recentFailures);
   const worldFactsCivs = objectArray(worldFacts?.civs);
+  const exactTacticalWorldModel = asRecord(exactTacticalMemoryRecord?.worldModel);
+  const exactTacticalCampaign = asRecord(exactTacticalMemoryRecord?.campaign);
+  const exactTacticalRecentChanges = objectArray(exactTacticalMemoryRecord?.recentChanges);
+  const exactTacticalLessons = objectArray(exactTacticalMemoryRecord?.lessons);
+  const tacticianBriefSource = latestTacticalAttempt?.plannerBriefJson
+    ? tacticalAttempts.length > 1
+      ? "Exact plannerBriefJson from the latest tactical request after retries/replans."
+      : "Exact plannerBriefJson from the tactical request on this turn."
+    : "Falling back to the turn-start planner brief because no tactical request payload was captured.";
+  const tacticianMemorySource = latestTacticalAttempt?.memoryJson
+    ? "Exact memoryJson that accompanied the latest tactical request."
+    : "Falling back to the turn-start shared-memory snapshot because no tactical request payload was captured.";
+  const strategistBriefSource = strategistArtifacts?.briefJson
+    ? "Exact strategistBriefJson from strategist_llm_request."
+    : "No strategist request payload was captured on this turn.";
+  const rawStrategistSource = strategistArtifacts?.rawResponse
+    ? "Exact memo lifted from strategist_llm_response."
+    : "No strategist response payload was captured on this turn.";
   const [worldFactsOpen, setWorldFactsOpen] = useState(false);
   const worldFactsView = useMemo(
     () => buildWorldFactsViewModel({
@@ -1248,7 +1268,7 @@ function TurnDetail({
           <StoryStage
             title="Perception"
             subtitle={`${formatNumber(attentionFacts.length)} reminders · ${formatNumber(cityHighlights.length)} city cards · ${formatNumber(unitHighlights.length)} unit cards`}
-            detail="What the tactician actually saw in the planner brief."
+            detail="What the tactician actually saw in the latest tactical request payloads."
           />
           <StoryStage
             title="Decision"
@@ -1341,8 +1361,8 @@ function TurnDetail({
       <SectionShell
         id="section-memory"
         eyebrow="Memory"
-        title="What's in the memory"
-        body="This is the shared notebook carried into the turn before any new strategist or tactical inference. It shows the durable world model, campaign notes, campaign-control state, and carried intents/failures."
+        title="What's in memory at turn start"
+        body="This is the shared notebook snapshot carried into the turn before any new strategist or tactical inference. It reflects the stored memory state at turn start, not a post-turn writeback."
       >
         <div className="compact-card-grid">
           <Card title="World model" subtitle="What the agent currently believes about the map and board-level reality across turns.">
@@ -1453,11 +1473,12 @@ function TurnDetail({
         id="section-strategist-input"
         eyebrow="Strategist"
         title="What the strategist saw"
-        body="This is the strategist's input space: broad current state, the previous memo, factual changes since then, and compact city/unit snapshots."
+        body="This section comes from the exact strategist request payload when a strategist pass ran. If no strategist request happened on this turn, there is no fresh strategist view to display."
       >
         {strategistInferenceRan ? (
           <div className="compact-card-grid">
             <div className="full-span">
+              <p className="mini-note">{strategistBriefSource}</p>
               <StrategistContextSection
                 title="Strategist inputs"
                 brief={strategistBrief}
@@ -1479,87 +1500,42 @@ function TurnDetail({
       <SectionShell
         id="section-strategist-output"
         eyebrow="Strategist"
-        title="What the strategist output"
-        body="This section contains only the strategist-generated memo and notebook handoff. It is kept separate from strategist inputs so you can compare what the strategist saw against what it concluded."
+        title="What the strategist output vs what memory already held"
+        body="The exact strategist response and the memo already in shared memory are different sources. This section keeps them separate so the dashboard does not imply that a raw response was already the persisted memo."
       >
-        {strategistInferenceRan ? (
-          <Card title="Strategist memo" subtitle="A compact report with fixed Past / Now / Future subtitles.">
-            {strategistMemo ? (
-              <>
-                <div className="summary-grid compact">
-                  <SummaryStat label="Win path" value={stringValue(strategistMemo.winPath)} />
-                  <SummaryStat label="Stage" value={stringValue(strategistMemo.campaignStage)} />
-                  <SummaryStat label="Decisive objective" value={stringValue(strategistMemo.decisiveObjective)} />
-                  <SummaryStat label="Strategist pass" value={strategistArtifacts ? "Ran this turn" : "Carried memo"} />
-                  <SummaryStat
-                    label="Review max age"
-                    value={(numberValue(asRecord(strategistMemo.reviewContract)?.maxAgeTurns) ?? 0) > 0
-                      ? formatNumber(numberValue(asRecord(strategistMemo.reviewContract)?.maxAgeTurns))
-                      : "—"}
-                  />
-                  <SummaryStat label="Created" value={memoCreatedTurn === null ? "Unknown" : `Turn ${formatNumber(memoCreatedTurn)}`} />
-                  <SummaryStat label="Last reviewed" value={memoLastReviewedTurn === null ? "Unknown" : `Turn ${formatNumber(memoLastReviewedTurn)}`} />
-                </div>
-                <p className="mini-note">
-                  {strategistArtifacts
-                    ? "A fresh strategist LLM pass ran on this turn. Use the literal artifacts section below to inspect the exact request, raw response, and parsed strategist plan."
-                    : "No strategist LLM pass ran on this turn. The memo shown here was carried forward from earlier turns, and the tactician relied on current observation plus memory deltas."}
-                </p>
-                <p className="card-paragraph">{stringValue(strategistMemo.thesis) || "No strategist thesis recorded."}</p>
-                {stringValue(strategistMemo.conversionBlocker) ? (
-                  <>
-                    <SectionLabel text="Conversion blocker" />
-                    <p className="card-paragraph">{stringValue(strategistMemo.conversionBlocker)}</p>
-                  </>
-                ) : null}
-                <DecisionFrameBlock frame={asRecord(strategistMemo.decisionFrame)} />
-                <ControlLanesBlock lanes={asRecord(strategistMemo.controlLanes)} />
-                <ReviewContractBlock contract={asRecord(strategistMemo.reviewContract)} />
-                <CampaignControlLabelsBlock labels={asRecord(strategistMemo.campaignControl)} />
-                {stringValue(strategistMemo.pastSummary) ? (
-                  <>
-                    <SectionLabel text="Past" />
-                    <p className="card-paragraph">{stringValue(strategistMemo.pastSummary)}</p>
-                  </>
-                ) : null}
-                {stringValue(strategistMemo.currentSituation) ? (
-                  <>
-                    <SectionLabel text="Now" />
-                    <p className="card-paragraph">{stringValue(strategistMemo.currentSituation)}</p>
-                  </>
-                ) : null}
-                {stringValue(strategistMemo.futurePlan) ? (
-                  <>
-                    <SectionLabel text="Future" />
-                    <p className="card-paragraph">{stringValue(strategistMemo.futurePlan)}</p>
-                  </>
-                ) : null}
-                {stringValue(strategistMemo.tacticianHandoff) ? (
-                  <>
-                    <SectionLabel text="Tactician handoff" />
-                    <p className="card-paragraph">{stringValue(strategistMemo.tacticianHandoff)}</p>
-                  </>
-                ) : null}
-              </>
-            ) : (
-              <p className="muted-text">No strategist memo was recorded for this turn.</p>
-            )}
-          </Card>
-        ) : (
-          <p className="muted-text">There&apos;s no strategist inference at current turn.</p>
-        )}
+        <div className="compact-card-grid">
+          <StrategistMemoCard
+            title="Raw strategist response memo"
+            subtitle="Exact memo extracted from strategist_llm_response on this turn."
+            memo={rawStrategistMemo}
+            emptyTitle={strategistInferenceRan ? "No raw strategist memo" : "No strategist pass on this turn"}
+            emptyBody={strategistInferenceRan
+              ? "The strategist request did not produce a raw memo payload that the dashboard could decode on this turn."
+              : "There was no strategist request on this turn, so there is no fresh strategist response to display."}
+            note={rawStrategistSource}
+          />
+          <StrategistMemoCard
+            title="Memo already in shared memory at turn start"
+            subtitle="The carried memo snapshot that existed before this turn's strategist pass ran."
+            memo={carriedStrategistMemo}
+            emptyTitle="No carried memo"
+            emptyBody="Shared memory did not contain a strategist memo snapshot at the start of this turn."
+            note="If the engine sanitized or rewrote the strategist memo on this turn, that persisted version becomes visible on the next turn's memory snapshot, not here."
+          />
+        </div>
       </SectionShell>
 
       <SectionShell
         id="section-perception"
         eyebrow="Tactician"
         title="What the tactician saw"
-        body="This is the compressed tactical packet that the planner actually used. It separates full board reality from the smaller planner brief so you can see what was surfaced and what stayed hidden."
+        body="This section prefers the exact latest tactical request payloads when they were logged. If retries or replans happened, it shows the final request the tactician actually saw rather than an earlier turn-start proxy."
       >
         <div className="compact-card-grid">
-          <Card title="Tactical brief" subtitle="Only the tactician-specific tactical context that shaped this turn. The strategist's Past / Now / Future report is shown only in the strategist output section.">
+          <Card title="Tactical brief" subtitle="Exact planner brief used by the latest tactical request when captured.">
             {plannerBrief ? (
               <>
+                <p className="mini-note">{tacticianBriefSource}</p>
                 <div className="summary-grid compact">
                   <SummaryStat label="Archetype" value={stringValue(strategy?.gameArchetype)} />
                   <SummaryStat label="Stage" value={stringValue(strategy?.campaignStage)} />
@@ -1615,6 +1591,43 @@ function TurnDetail({
               </>
             ) : (
               <p className="muted-text">Planner brief missing from this turn.</p>
+            )}
+          </Card>
+          <Card title="Tactical memory handoff" subtitle="Exact memory JSON paired with the latest tactical request. Use the Memory section above for the full turn-start notebook.">
+            {exactTacticalMemoryRecord ? (
+              <>
+                <p className="mini-note">{tacticianMemorySource}</p>
+                <div className="summary-grid compact">
+                  <SummaryStat label="Recent changes" value={formatNumber(exactTacticalRecentChanges.length)} />
+                  <SummaryStat label="Lessons" value={formatNumber(exactTacticalLessons.length)} />
+                  <SummaryStat label="City intents" value={formatNumber(arrayLength(exactTacticalMemoryRecord?.cityIntents))} />
+                  <SummaryStat label="Unit assignments" value={formatNumber(arrayLength(exactTacticalMemoryRecord?.unitAssignments))} />
+                  <SummaryStat label="Recent failures" value={formatNumber(arrayLength(exactTacticalMemoryRecord?.recentFailures))} />
+                  <SummaryStat label="Tactical attempts" value={formatNumber(tacticalAttempts.length)} />
+                </div>
+                {stringValue(exactTacticalWorldModel?.summary) ? <p className="card-paragraph">{stringValue(exactTacticalWorldModel?.summary)}</p> : null}
+                {stringValue(exactTacticalCampaign?.summary) ? (
+                  <>
+                    <SectionLabel text="Campaign notebook" />
+                    <p className="card-paragraph">{stringValue(exactTacticalCampaign?.summary)}</p>
+                  </>
+                ) : null}
+                {stringValue(exactTacticalCampaign?.stage) || stringValue(exactTacticalCampaign?.primaryRivalCiv) || stringValue(exactTacticalCampaign?.decisiveObjective) ? (
+                  <div className="summary-grid compact">
+                    <SummaryStat label="Campaign stage" value={stringValue(exactTacticalCampaign?.stage) || "—"} />
+                    <SummaryStat label="Primary rival" value={stringValue(exactTacticalCampaign?.primaryRivalCiv) || "—"} />
+                    <SummaryStat label="Objective" value={stringValue(exactTacticalCampaign?.decisiveObjective) || "—"} />
+                  </div>
+                ) : null}
+                {exactTacticalRecentChanges.length ? (
+                  <MemoryNotesSection title="Recent changes seen by tactician" notes={exactTacticalRecentChanges} embedded />
+                ) : null}
+                {exactTacticalLessons.length ? (
+                  <MemoryNotesSection title="Lessons seen by tactician" notes={exactTacticalLessons} embedded />
+                ) : null}
+              </>
+            ) : (
+              <EmptyCardState title="No tactical memory payload" body="No exact memory JSON was captured for the tactical request on this turn." />
             )}
           </Card>
           <CampaignControlCard
@@ -2365,19 +2378,36 @@ function MemoryNotesCard({
   );
 }
 
-function StrategistMemoMemorySection({ memo }: { memo: Record<string, unknown> | null }) {
+function StrategistMemoCard({
+  title,
+  subtitle,
+  memo,
+  emptyTitle,
+  emptyBody,
+  note,
+}: {
+  title: string;
+  subtitle: string;
+  memo: Record<string, unknown> | null;
+  emptyTitle: string;
+  emptyBody: string;
+  note?: string;
+}) {
   const reviewMaxAgeTurns = numberValue(asRecord(memo)?.reviewContract?.maxAgeTurns);
+  const createdTurn = numberValue(asRecord(memo)?.createdTurn);
+  const reviewedTurn = numberValue(asRecord(memo)?.lastReviewedTurn);
   return (
-    <Card title="Last strategist memo" subtitle="The exact strategist memo snapshot stored in shared memory at turn start, before any new strategist pass on this turn.">
+    <Card title={title} subtitle={subtitle}>
       {memo && Object.keys(memo).length ? (
         <>
+          {note ? <p className="mini-note">{note}</p> : null}
           <div className="summary-grid compact">
             <SummaryStat label="Archetype" value={stringValue(memo.gameArchetype) || "—"} />
             <SummaryStat label="Win path" value={stringValue(memo.winPath) || "—"} />
             <SummaryStat label="Stage" value={stringValue(memo.campaignStage) || "—"} />
             <SummaryStat label="Decisive objective" value={stringValue(memo.decisiveObjective) || "—"} />
-            <SummaryStat label="Memo created" value={formatNumber(numberValue(memo.createdTurn))} />
-            <SummaryStat label="Memo reviewed" value={formatNumber(numberValue(memo.lastReviewedTurn))} />
+            <SummaryStat label="Memo created" value={createdTurn === null ? "—" : formatNumber(createdTurn)} />
+            <SummaryStat label="Memo reviewed" value={reviewedTurn === null ? "—" : formatNumber(reviewedTurn)} />
             <SummaryStat label="Review max age" value={reviewMaxAgeTurns && reviewMaxAgeTurns > 0 ? formatNumber(reviewMaxAgeTurns) : "—"} />
             <SummaryStat label="Refresh reason" value={stringValue(memo.lastRefreshReason) || "—"} />
           </div>
@@ -2434,9 +2464,24 @@ function StrategistMemoMemorySection({ memo }: { memo: Record<string, unknown> |
           ) : null}
         </>
       ) : (
-        <EmptyCardState title="No stored strategist memo" body="The shared memory did not carry a last-strategist-memo snapshot into this turn." />
+        <>
+          {note ? <p className="mini-note">{note}</p> : null}
+          <EmptyCardState title={emptyTitle} body={emptyBody} />
+        </>
       )}
     </Card>
+  );
+}
+
+function StrategistMemoMemorySection({ memo }: { memo: Record<string, unknown> | null }) {
+  return (
+    <StrategistMemoCard
+      title="Last strategist memo"
+      subtitle="The exact strategist memo snapshot stored in shared memory at turn start, before any new strategist pass on this turn."
+      memo={memo}
+      emptyTitle="No stored strategist memo"
+      emptyBody="The shared memory did not carry a last-strategist-memo snapshot into this turn."
+    />
   );
 }
 

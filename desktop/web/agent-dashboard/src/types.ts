@@ -154,6 +154,7 @@ export interface TurnRecord {
   plannerBrief: unknown | null;
   strategistBrief: unknown | null;
   strategistMemo: unknown | null;
+  rawStrategistMemo: unknown | null;
   parsedPlan: Record<string, unknown> | null;
   outcomeDomainSummary: unknown | null;
   validationFailures: unknown | null;

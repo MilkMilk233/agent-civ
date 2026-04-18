@@ -1,6 +1,8 @@
 package com.unciv.logic.automation.agent
 
 object AgentStrategistGovernor {
+    private const val maxStrategistUnitSnapshots = 20
+
     fun buildBrief(
         memory: AgentMemory,
         observation: AgentObservation,
@@ -62,8 +64,10 @@ object AgentStrategistGovernor {
                 )
             }
 
-        val unitSnapshots = observation.units
-            .sortedByDescending { unitStrategistScore(it, empireObservation.gameContext.contactComplete) }
+        val unitSnapshots = selectStrategistUnitSnapshots(
+            observation.units,
+            empireObservation.gameContext.contactComplete,
+        )
             .map { unit ->
                 AgentStrategistUnitSnapshot(
                     id = unit.id,
@@ -318,6 +322,31 @@ object AgentStrategistGovernor {
         if (unit.nearbyHostileUnits > 0 || unit.nearbyHostileCities > 0) score += 40
         if (unit.assignmentProgress != null) score += 15
         return score
+    }
+
+    private fun selectStrategistUnitSnapshots(
+        units: List<AgentUnitObservation>,
+        contactComplete: Boolean,
+    ): List<AgentUnitObservation> {
+        val ranked = units.sortedByDescending { unitStrategistScore(it, contactComplete) }
+        return (
+            ranked.filter { shouldPinStrategistUnitSnapshot(it, contactComplete) } +
+                ranked
+            )
+            .distinctBy { it.id }
+            .take(maxStrategistUnitSnapshots)
+    }
+
+    private fun shouldPinStrategistUnitSnapshot(
+        unit: AgentUnitObservation,
+        contactComplete: Boolean,
+    ): Boolean {
+        if (unit.role == "settler") return true
+        if (unit.nearbyHostileUnits > 0 || unit.nearbyHostileCities > 0) return true
+        if (unit.assignmentProgress?.status in setOf("ready_to_finish", "assignment_at_risk")) return true
+        if (!contactComplete && unit.role == "scout" && unit.hasMovement) return true
+        if (unit.role == "worker" && unit.assignmentProgress != null) return true
+        return unit.detailLevel == "expanded" && unit.unitOptionCandidates.isNotEmpty()
     }
 
 }
