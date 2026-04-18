@@ -132,7 +132,7 @@ object AgentEvaluationStore {
     private const val finalSaveFile = "final-game.uncivsave"
     private const val turnCheckpointDirName = "turn-checkpoints"
     private const val battlefieldRenderDirName = "battlefield-renders"
-    private const val battlefieldRenderVersion = "v4"
+    private const val battlefieldRenderVersion = "v6"
     private const val staleRunThresholdMs = 3 * 60 * 1000L
 
     fun rootDir(): Path = Paths.get(

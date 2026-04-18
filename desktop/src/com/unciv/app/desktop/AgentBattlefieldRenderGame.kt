@@ -55,6 +55,12 @@ private data class ExploredFrame(
     val centerY: Float get() = (top + bottom) * 0.5f
 }
 
+private data class AnchorCandidate(
+    val group: com.unciv.ui.components.tilegroups.WorldTileGroup,
+    val priority: Int,
+    val enemyContact: Boolean = false,
+)
+
 private const val VIEWPORT_USAGE_TARGET = 0.72f
 private val FRAME_MARGIN = TileGroupMap.groupSizeDiagonal * 3.5f
 private val ASSET_SIGHT_MARGIN = TileGroupMap.groupSizeDiagonal * 4.5f
@@ -193,35 +199,150 @@ class AgentBattlefieldRenderGame(
     }
 
     private fun anchorFrameFor(mapHolder: WorldMapHolder, viewingCiv: Civilization): ExploredFrame? {
-        val anchorGroups = LinkedHashSet<com.unciv.ui.components.tilegroups.WorldTileGroup>()
+        val friendlyAnchors = buildFriendlyAnchorCandidates(mapHolder, viewingCiv)
+        val enemyAnchors = buildVisibleEnemyAnchorCandidates(mapHolder, viewingCiv)
+        val focusGroups = selectFocusGroups(viewingCiv, friendlyAnchors, enemyAnchors)
+        if (focusGroups.isEmpty()) return null
+        return frameFromGroups(focusGroups)
+    }
 
-        fun addGroupForTile(tile: com.unciv.logic.map.tile.Tile?) {
+    private fun buildFriendlyAnchorCandidates(
+        mapHolder: WorldMapHolder,
+        viewingCiv: Civilization,
+    ): List<AnchorCandidate> {
+        val anchors = LinkedHashMap<HexCoord, AnchorCandidate>()
+
+        fun addCandidate(
+            tile: com.unciv.logic.map.tile.Tile?,
+            priority: Int,
+            enemyContact: Boolean = false,
+        ) {
             if (tile == null) return
-            mapHolder.tileGroups[tile]?.let(anchorGroups::add)
+            val group = mapHolder.tileGroups[tile] ?: return
+            val existing = anchors[tile.position]
+            if (existing == null || priority > existing.priority || (enemyContact && !existing.enemyContact)) {
+                anchors[tile.position] = AnchorCandidate(group = group, priority = priority, enemyContact = enemyContact)
+            }
         }
 
         viewingCiv.cities.forEach { city ->
-            addGroupForTile(city.getCenterTile())
+            addCandidate(city.getCenterTile(), priority = 40)
         }
-        viewingCiv.units.getCivUnits().forEach { unit ->
-            addGroupForTile(unit.getTile())
+
+        viewingCiv.units.getCivUnits()
+            .filter { it.isMilitary() }
+            .forEach { unit ->
+                addCandidate(unit.getTile(), priority = 18)
+            }
+
+        if (anchors.isEmpty()) {
+            viewingCiv.units.getCivUnits().forEach { unit ->
+                addCandidate(unit.getTile(), priority = 8)
+            }
+        }
+
+        return anchors.values.toList()
+    }
+
+    private fun buildVisibleEnemyAnchorCandidates(
+        mapHolder: WorldMapHolder,
+        viewingCiv: Civilization,
+    ): List<AnchorCandidate> {
+        val anchors = LinkedHashMap<HexCoord, AnchorCandidate>()
+
+        fun addCandidate(tile: com.unciv.logic.map.tile.Tile?, priority: Int) {
+            if (tile == null) return
+            val group = mapHolder.tileGroups[tile] ?: return
+            val existing = anchors[tile.position]
+            if (existing == null || priority > existing.priority) {
+                anchors[tile.position] = AnchorCandidate(group = group, priority = priority, enemyContact = true)
+            }
         }
 
         viewingCiv.viewableTiles.forEach { tile ->
             if (tile.isCityCenter()) {
                 val city = tile.getCity()
                 if (city != null && city.civ != viewingCiv && viewingCiv.isAtWarWith(city.civ)) {
-                    addGroupForTile(tile)
+                    addCandidate(tile, priority = 55)
                 }
             }
 
             tile.getUnits()
-                .filter { unit -> unit.civ != viewingCiv && viewingCiv.isAtWarWith(unit.civ) }
-                .forEach { unit -> addGroupForTile(unit.getTile()) }
+                .filter { unit -> unit.civ != viewingCiv && viewingCiv.isAtWarWith(unit.civ) && unit.isMilitary() }
+                .forEach { unit -> addCandidate(unit.getTile(), priority = 24) }
         }
 
-        if (anchorGroups.isEmpty()) return null
-        return frameFromGroups(anchorGroups)
+        return anchors.values.toList()
+    }
+
+    private fun selectFocusGroups(
+        viewingCiv: Civilization,
+        friendlyAnchors: List<AnchorCandidate>,
+        enemyAnchors: List<AnchorCandidate>,
+    ): List<com.unciv.ui.components.tilegroups.WorldTileGroup> {
+        val combinedAnchors = (friendlyAnchors + enemyAnchors).distinctBy { it.group.tile.position }
+        if (combinedAnchors.isEmpty()) return emptyList()
+
+        if (enemyAnchors.isNotEmpty()) {
+            val combatClusters = clusterAnchors(combinedAnchors)
+                .filter { cluster -> cluster.any { it.enemyContact } }
+            if (combatClusters.isNotEmpty()) {
+                return combatClusters
+                    .maxByOrNull { scoreCluster(it) }
+                    .orEmpty()
+                    .map { it.group }
+            }
+        }
+
+        if (friendlyAnchors.size <= 3) {
+            return friendlyAnchors.map { it.group }
+        }
+
+        return clusterAnchors(friendlyAnchors)
+            .maxByOrNull { scoreCluster(it) }
+            .orEmpty()
+            .map { it.group }
+    }
+
+    private fun clusterAnchors(candidates: List<AnchorCandidate>): List<List<AnchorCandidate>> {
+        if (candidates.isEmpty()) return emptyList()
+
+        val pending = candidates.toMutableSet()
+        val clusters = ArrayList<List<AnchorCandidate>>()
+        while (pending.isNotEmpty()) {
+            val seed = pending.first()
+            val cluster = ArrayList<AnchorCandidate>()
+            val queue = ArrayDeque<AnchorCandidate>()
+            queue.add(seed)
+            pending.remove(seed)
+
+            while (queue.isNotEmpty()) {
+                val current = queue.removeFirst()
+                cluster.add(current)
+
+                val iterator = pending.iterator()
+                val neighbors = ArrayList<AnchorCandidate>()
+                while (iterator.hasNext()) {
+                    val other = iterator.next()
+                    if (current.group.tile.aerialDistanceTo(other.group.tile) <= 7) {
+                        neighbors.add(other)
+                        iterator.remove()
+                    }
+                }
+                neighbors.forEach(queue::addLast)
+            }
+
+            clusters.add(cluster)
+        }
+
+        return clusters
+    }
+
+    private fun scoreCluster(cluster: List<AnchorCandidate>): Int {
+        val priorityScore = cluster.sumOf { it.priority }
+        val enemyBonus = if (cluster.any { it.enemyContact }) 120 else 0
+        val sizeBonus = cluster.size * 6
+        return priorityScore + enemyBonus + sizeBonus
     }
 
     private fun assetFrameFor(mapHolder: WorldMapHolder, viewingCiv: Civilization): ExploredFrame? {
@@ -276,7 +397,10 @@ class AgentBattlefieldRenderGame(
     }
 
     private fun centerOnFrame(mapHolder: WorldMapHolder, frame: ExploredFrame) {
-        mapHolder.scrollTo(frame.centerX, frame.centerY, immediately = true)
+        // WorldMapHolder/ZoomableScrollPane use an inverted scrollY axis:
+        // 0 is the top of the world, while our frame coordinates are in
+        // stage/world space with origin at the bottom.
+        mapHolder.scrollTo(frame.centerX, mapHolder.maxY - frame.centerY, immediately = true)
     }
 
     private fun ExploredFrame.expanded(margin: Float): ExploredFrame {
