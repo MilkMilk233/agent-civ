@@ -115,6 +115,7 @@ export default function App() {
   }, [selectedTurnKey, turns]);
 
   const selectedTurn = turns.find((turn) => turn.key === selectedTurnKey) ?? turns[0] ?? null;
+  const selectedTurnIndex = selectedTurn ? turns.findIndex((turn) => turn.key === selectedTurn.key) : -1;
   const resolvedRunnerOptions = getRunnerOptions(runnerOptions);
   const selectedRuleset = rulesetOptions(resolvedRunnerOptions, launchForm.baseRuleset);
   const launchPreviewJson = useMemo(
@@ -135,6 +136,33 @@ export default function App() {
       setMode("replay");
     }
   }, [mode, replayOnlyMode]);
+
+  useEffect(() => {
+    if (!turns.length || launchModalOpen) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (isEditableTarget(event.target)) return;
+      if (selectedTurnIndex < 0) return;
+
+      if (event.key === "ArrowLeft") {
+        const olderTurn = turns[selectedTurnIndex + 1];
+        if (!olderTurn) return;
+        event.preventDefault();
+        setSelectedTurnKey(olderTurn.key);
+      }
+
+      if (event.key === "ArrowRight") {
+        const newerTurn = turns[selectedTurnIndex - 1];
+        if (!newerTurn) return;
+        event.preventDefault();
+        setSelectedTurnKey(newerTurn.key);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [launchModalOpen, selectedTurnIndex, turns]);
 
   async function loadSnapshot() {
     try {
@@ -407,6 +435,13 @@ export default function App() {
       ) : null}
     </div>
   );
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  const element = target instanceof HTMLElement ? target : null;
+  if (!element) return false;
+  if (element.isContentEditable) return true;
+  return Boolean(element.closest("input, textarea, select, [contenteditable='true']"));
 }
 
 function LaunchModal({
