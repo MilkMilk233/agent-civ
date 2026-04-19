@@ -70,7 +70,7 @@ object AgentCityOptionBuilder {
                 val construction = runCatching { city.cityConstructions.getConstruction(name) }.getOrNull()
                     ?: return@mapIndexedNotNull null
                 if (!construction.isBuildable(city.cityConstructions)) return@mapIndexedNotNull null
-                if (shouldSuppressForcedSciencePeaceMilitarySurface(construction, conversionContext)) {
+                if (shouldSuppressConstructionSurface(construction, conversionContext)) {
                     return@mapIndexedNotNull null
                 }
                 val score = scoreConstructionChoice(city, construction, index, conversionContext)
@@ -185,7 +185,7 @@ object AgentCityOptionBuilder {
             .mapNotNull { name -> runCatching { city.cityConstructions.getConstruction(name) }.getOrNull() }
             .filterIsInstance<INonPerpetualConstruction>()
             .mapNotNull { construction ->
-                if (shouldSuppressForcedSciencePeaceMilitarySurface(construction, conversionContext)) {
+                if (shouldSuppressConstructionSurface(construction, conversionContext)) {
                     return@mapNotNull null
                 }
                 val cost = construction.getStatBuyCost(city, Stat.Gold) ?: return@mapNotNull null
@@ -827,9 +827,30 @@ object AgentCityOptionBuilder {
             unitSupplyDeficit = civInfo.stats.getUnitSupplyDeficit(),
             unitSupplyProductionPenaltyPercent = (-civInfo.stats.getUnitSupplyProductionPenalty()).roundToInt(),
             militaryUnitCount = units.count { it.isMilitary() },
+            workerUnitCount = units.count {
+                it.cache.hasUniqueToBuildImprovements ||
+                    it.baseUnit.hasUnique(UniqueType.BuildImprovements, GameContext.IgnoreConditionals)
+            },
             scoutUnitCount = units.count { it.name == "Scout" },
             peaceScienceArcherCount = units.count { isForcedSciencePeaceArcher(it.baseUnit) },
         )
+    }
+
+    private fun shouldSuppressConstructionSurface(
+        construction: IConstruction,
+        conversionContext: ConversionContext,
+    ): Boolean {
+        return shouldSuppressWorkerSurface(construction, conversionContext) ||
+            shouldSuppressForcedSciencePeaceMilitarySurface(construction, conversionContext)
+    }
+
+    private fun shouldSuppressWorkerSurface(
+        construction: IConstruction,
+        conversionContext: ConversionContext,
+    ): Boolean {
+        val unit = construction as? BaseUnit ?: return false
+        if (!unit.hasUnique(UniqueType.BuildImprovements, GameContext.IgnoreConditionals)) return false
+        return conversionContext.workerUnitCount >= conversionContext.workerUnitCap
     }
 
     private fun shouldSuppressForcedSciencePeaceMilitarySurface(
@@ -1076,8 +1097,10 @@ object AgentCityOptionBuilder {
         val unitSupplyDeficit: Int,
         val unitSupplyProductionPenaltyPercent: Int,
         val militaryUnitCount: Int,
+        val workerUnitCount: Int,
         val scoutUnitCount: Int,
         val peaceScienceArcherCount: Int,
+        val workerUnitCap: Int = cityCount * 2,
     )
 
     private data class AgentCityActionBuckets(

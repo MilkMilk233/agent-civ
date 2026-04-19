@@ -244,6 +244,9 @@ What landed:
     - Scout is capped at `1` total
     - Archer-style defenders are capped at `1` per city
     - once those caps are met, additional military unit options stop being surfaced while the empire remains at peace in a forced-science game
+  - worker-like build / purchase surfacing is now capped globally at `2` per city:
+    - once the empire already has at least `cityCount * 2` units that can build tile improvements, additional worker candidates stop being surfaced
+    - this cap applies regardless of victory track or war state, so it acts as a simple city-option safety rail rather than a science-only doctrine rule
   - science-side review cadence is now less queue-shaped:
     - old trigger aliases such as `pottery_queued`, `writing_queued`, and `library_queued` are normalized onto state-based metrics like `pottery_selected`, `writing_selected`, and `library_started`
     - deadline-style science triggers no longer fire just because a desired next tech is absent while another tech is still legitimately in progress
