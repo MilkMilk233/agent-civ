@@ -293,6 +293,7 @@ object AgentMemoryManager {
         requested: AgentStrategistRefreshRequest,
     ): AgentStrategistRefreshRequest? {
         if (!requested.urgency.equals("emergency", ignoreCase = true)) return null
+        if (isBenignMidResearchChoiceDelay(memory, empireObservation, requested)) return null
         return hardRefreshIfEmergency(memory, observation, empireObservation, requested)
     }
 
@@ -456,28 +457,30 @@ object AgentMemoryManager {
         observation: AgentObservation,
         empireObservation: AgentEmpireObservation,
     ): String? {
+        val normalizedMetric = normalizeStrategistReviewMetric(trigger.metric) ?: return null
         val reviewAnchorTurn = strategistReviewAnchorTurn(memo, observation.turn)
         val turnsSinceReview = (observation.turn - reviewAnchorTurn).coerceAtLeast(0)
-        val currentState = currentReviewMetricState(memo, memory, observation, empireObservation, trigger.metric)
+        val currentState = currentReviewMetricState(memo, memory, observation, empireObservation, normalizedMetric)
         return when (trigger.kind) {
             "milestone_reached" -> if (currentState) {
                 trigger.summary?.takeIf { it.isNotBlank() }
-                    ?: defaultReviewTriggerReason(trigger.kind, trigger.metric)
+                    ?: defaultReviewTriggerReason(trigger.kind, normalizedMetric)
             } else {
                 null
             }
             "deadline_missed" -> {
                 val withinTurns = trigger.withinTurns?.coerceAtLeast(1) ?: return null
+                if (!isReviewMetricActionableNow(normalizedMetric, observation, empireObservation)) return null
                 if (turnsSinceReview >= withinTurns && !currentState) {
                     trigger.summary?.takeIf { it.isNotBlank() }
-                        ?: "The strategist review deadline for ${humanizeReviewMetric(trigger.metric)} was missed and the memo should be rewritten."
+                        ?: "The strategist review deadline for ${humanizeReviewMetric(normalizedMetric)} was missed and the memo should be rewritten."
                 } else {
                     null
                 }
             }
             "assumption_broken", "contract_broken" -> if (currentState) {
                 trigger.summary?.takeIf { it.isNotBlank() }
-                    ?: defaultReviewTriggerReason(trigger.kind, trigger.metric)
+                    ?: defaultReviewTriggerReason(trigger.kind, normalizedMetric)
             } else {
                 null
             }
@@ -506,12 +509,17 @@ object AgentMemoryManager {
             }
             ?.actionSurfaceMismatch
             .orEmpty()
+        val activeProjectNames = observation.cities.mapNotNull { it.project?.name?.trim()?.takeUnless(String::isEmpty) }
         return when (normalizedMetric) {
             "contact_made" -> empireObservation.gameContext.contactComplete
             "city_founded", "city_captured", "city_count_increased", "capture_capital" ->
                 observation.empireSummary.cityCount > memo.reviewCityCount
             "second_city_founded" -> observation.empireSummary.cityCount >= 2
             "war_declared", "war_started_unexpectedly" -> observation.empireSummary.isAtWar
+            "research_choice_available" -> isResearchChoiceActionable(empireObservation)
+            "pottery_selected" -> empireObservation.currentResearch.equals("Pottery", ignoreCase = true)
+            "writing_selected" -> empireObservation.currentResearch.equals("Writing", ignoreCase = true)
+            "library_started" -> activeProjectNames.any { it.equals("Library", ignoreCase = true) }
             "rival_city_visible" -> currentVisibleRivalCities > memo.reviewVisibleRivalCities
             "rival_capital_visible" -> currentVisibleRivalCapitals > memo.reviewVisibleRivalCapitals
             "primary_rival_changed" -> {
@@ -565,8 +573,61 @@ object AgentMemoryManager {
             "enemy_city_visible", "city_visible" -> "rival_city_visible"
             "enemy_capital_visible", "capital_visible" -> "rival_capital_visible"
             "site_contested", "target_site_claimed", "settle_site_contested" -> "target_site_contested"
+            "research_choice_ready", "research_choice_open", "tech_choice_available", "next_research_choice_available" -> "research_choice_available"
+            "pottery_queued", "pottery_chosen" -> "pottery_selected"
+            "writing_queued", "writing_chosen" -> "writing_selected"
+            "library_queued", "library_selected" -> "library_started"
             else -> normalized
         }
+    }
+
+    private fun isResearchChoiceActionable(empireObservation: AgentEmpireObservation): Boolean {
+        return empireObservation.freeTechs > 0 || empireObservation.currentResearchStatus == "needs_research_choice"
+    }
+
+    private fun isReviewMetricActionableNow(
+        normalizedMetric: String,
+        observation: AgentObservation,
+        empireObservation: AgentEmpireObservation,
+    ): Boolean {
+        return when (normalizedMetric) {
+            "pottery_selected", "writing_selected" ->
+                empireObservation.currentResearch.equals(
+                    if (normalizedMetric == "pottery_selected") "Pottery" else "Writing",
+                    ignoreCase = true,
+                ) || isResearchChoiceActionable(empireObservation)
+            "library_started" ->
+                observation.cities.any { city ->
+                    city.project?.name?.equals("Library", ignoreCase = true) == true ||
+                        city.actions.chooseProject.any { candidate ->
+                            candidate.title.contains("Library", ignoreCase = true)
+                        }
+                }
+            else -> true
+        }
+    }
+
+    private fun isBenignMidResearchChoiceDelay(
+        memory: AgentMemory,
+        empireObservation: AgentEmpireObservation,
+        requested: AgentStrategistRefreshRequest,
+    ): Boolean {
+        val effectiveWinPath = memory.victoryIntent.effectiveWinPath
+            ?: memory.lastStrategistMemo.winPath
+            ?: empireObservation.heuristicVictoryGoal
+        if (!AgentVictoryIntentResolver.isScientificVictoryType(effectiveWinPath)) return false
+        if (isResearchChoiceActionable(empireObservation)) return false
+        val reason = requested.reason.trim().lowercase()
+        if (reason.isEmpty()) return false
+        return listOf(
+            "tech-selection",
+            "tech selection",
+            "research choice",
+            "research-choice",
+            "empirechoices",
+            "pottery",
+            "writing",
+        ).any { it in reason }
     }
 
     private fun strategistReviewAnchorTurn(

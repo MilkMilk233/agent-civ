@@ -197,6 +197,7 @@ The current state is:
   - explicit non-conquest `militaryPurpose` propagation in live planner packets
   - war-facing packet suppression in non-conquest games
   - the science-side behavior slice
+  - science-side checkpoint and emergency-refresh cleanup
   - observability and dashboard truthfulness for the new packet fields
 - not complete yet:
   - fresh trace validation of the new science-side tactical posture
@@ -243,6 +244,13 @@ What landed:
     - Scout is capped at `1` total
     - Archer-style defenders are capped at `1` per city
     - once those caps are met, additional military unit options stop being surfaced while the empire remains at peace in a forced-science game
+  - science-side review cadence is now less queue-shaped:
+    - old trigger aliases such as `pottery_queued`, `writing_queued`, and `library_queued` are normalized onto state-based metrics like `pottery_selected`, `writing_selected`, and `library_started`
+    - deadline-style science triggers no longer fire just because a desired next tech is absent while another tech is still legitimately in progress
+    - tactical emergency strategist refreshes now ignore the common forced-science false positive where no research choice is surfaced simply because the empire is still mid-tech
+  - strategist and tactician prompt wording now treats research as single-choice rather than as a hidden queue:
+    - science plans should describe a current line and the next research-choice boundary
+    - mid-tech turns without research choices are now treated as normal wait states rather than automatic strategic failures
   - prompt-thinning work has now started in the packet layer:
     - the static tactician and strategist manuals were shortened substantially so each call spends less budget on repeated doctrine text
     - non-war planner unit surfacing is now capped so the tactician sees a ranked subset of the most decisionful units instead of every rear-area unit card

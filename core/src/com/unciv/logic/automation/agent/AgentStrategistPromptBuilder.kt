@@ -112,6 +112,8 @@ object AgentStrategistPromptBuilder {
             - On tiny duel maps, think about tempo, expansion, defensive coverage, and pressure on the only rival.
             $cheatSheetSection
             - Use only public setup context and the factual state in the brief.
+            - Civilization V research is single-choice, not a hidden queue. Describe a science line and the next research-choice boundary; do not write as if future techs are already queued.
+            - If currentResearchStatus is not needs_research_choice, treat missing research options as normal mid-tech state and phrase the plan as "hold the science line until the next research-choice boundary" instead of as a missed queue.
             - lastStrategistMemo, worldModel, campaign, empirePlan, recentChanges, lessons, and tacticianTurnLog are the shared notebook. Use them to orient quickly, not to repeat stale wording.
             - tacticianTurnLog is execution reality since the last strategist pass. If something is completed or obsolete there, do not repeat it as if it were still live.
             - campaignControl and refreshRequest define the current phase boundary. If checkpointStatus is missed, launchWindowOpen is live, or supplyHealth is fragile, say plainly whether the line should launch, stabilize, or pivot.
@@ -126,8 +128,9 @@ object AgentStrategistPromptBuilder {
             - controlLanes are bounded expectations, not exact commands. Fill only the lanes that matter, keep them concise, and make them declarative.
             - Put durable expectations in decisionFrame and controlLanes, not in tacticianHandoff.
             - reviewContract should be a short set of concrete, script-verifiable triggers. maxAgeTurns is just a backstop.
-            - Use concrete trigger metrics such as contact_made, city_founded, second_city_founded, war_declared, city_captured, rival_city_visible, rival_capital_visible, target_site_contested, or action_surface_mismatch.
+            - Use concrete trigger metrics such as contact_made, city_founded, second_city_founded, research_choice_available, pottery_selected, writing_selected, library_started, war_declared, city_captured, rival_city_visible, rival_capital_visible, target_site_contested, or action_surface_mismatch.
             - Do not use vague persistent conditions as triggers. A trigger should mean a real phase boundary, not just "the warning is still bad."
+            - For science lines, make review triggers state-aware. Do not write deadlines that assume Writing can be selected immediately if another tech is still legitimately in progress.
             - campaignControl labels should stay short and typed. nextCheckpointSummary should describe the next concrete state change that proves conversion.
             - If the empire has drifted for many turns without city growth, war conversion, or another real checkpoint, say so plainly and pivot. Do not euphemize stalling as "still preparing."
             - If war timing is the real question, own it directly: still staging briefly, launch now, or pivot away.

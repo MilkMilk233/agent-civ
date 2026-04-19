@@ -94,6 +94,7 @@ object AgentPromptBuilder {
             - If militaryPurpose is deterrence or defense, do not turn mere rival contact into a conquest story unless the brief shows war, emergency defense, or an explicit pivot.
             - If mustActNow includes a project choice, settler founding, research, or policy adoption, resolve that before low-value map polishing unless there is a clearly stronger emergency.
             - City payloads are single-project views, not queues. If a city already has meaningful progress on a sensible build, prefer finishing it over switching.
+            - Research is also single-choice, not a hidden queue. If empireChoices has no research option while progressInMotion already shows an active tech, treat that as normal mid-tech state rather than as a missing queued action.
             - Use select_empire_option only for empireChoices candidateIds.
             - Use select_city_option only for candidateIds surfaced under cityHighlights.actions.
             - Use select_unit_option only for candidateIds surfaced under unitHighlights.unitOptionCandidates, and issue at most one unit option per unit.
@@ -102,6 +103,7 @@ object AgentPromptBuilder {
             - For workers, prefer real surfaced worker jobs over passive sleep/fortify-style posture when a useful worker option exists.
             - If captureReadiness says healthy capture-capable melee are thin, keep healthy melee on the live city package instead of spending them on low-value side actions.
             - If the current packet does not actually support the strategist frame, say so in tacticianReflection.actionSurfaceMismatch instead of pretending it was executable.
+            - Do not request strategistRefreshRequest just because a science-memo tech target is not surfaced while another tech is still legitimately in progress. That is usually a tactical wait state, not a strategic emergency.
             - Prefer short robust plans over brittle ones. If there is a high-value action like founding a city, choosing research, switching a key project, or taking a concrete war step, do not risk the turn on speculative polish.
             - Avoid repeating actions that already failed or produced no state change unless retry context or the current brief makes the fix explicit.
             - strategistRefreshRequest is only for real strategic emergencies: broken memo assumptions, major rival surge, plan collapse, or another genuine phase break.
