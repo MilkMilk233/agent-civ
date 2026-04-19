@@ -461,7 +461,11 @@ object AgentObservationBuilder {
         if (role == "worker" && unit.hasMovement()) {
             score += 40
             reasons += "Improvement unit"
-            val workerJobs = AgentWorkerJobPlanner.findWorkerJobs(unit, currentAssignment = findUnitAssignment(memory, unit.id))
+            val workerJobs = AgentWorkerJobPlanner.findWorkerJobs(
+                unit,
+                memory = memory,
+                currentAssignment = findUnitAssignment(memory, unit.id),
+            )
             if (workerJobs.isNotEmpty()) {
                 localFacts += workerJobs.map { it.description }
                 val topJob = workerJobs.first()

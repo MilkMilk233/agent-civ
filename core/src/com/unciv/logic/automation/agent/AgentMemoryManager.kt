@@ -2511,6 +2511,7 @@ object AgentMemoryManager {
 
     private fun defaultUnitAssignmentExecutionMode(role: String): String = when (role) {
         "auto_explore" -> "engine_auto"
+        "improve_tile",
         "move_to_tile",
         "settle_city_site",
         "stage_near_target_city",

@@ -247,6 +247,15 @@ What landed:
   - worker-like build / purchase surfacing is now capped globally at `2` per city:
     - once the empire already has at least `cityCount * 2` units that can build tile improvements, additional worker candidates stop being surfaced
     - this cap applies regardless of victory track or war state, so it acts as a simple city-option safety rail rather than a science-only doctrine rule
+  - worker coordination is now less self-conflicting:
+    - worker job planning now treats other live worker `improve_tile` assignments as reservations, so multiple workers are less likely to pile onto the same target tile by default
+    - worker `improve_tile` assignments now use deferred execution, so untouched workers can keep moving toward or starting their reserved improvements without forcing the tactician to reissue the same move every turn
+    - moving workers with a still-valid carried assignment no longer surface redundant worker reposition candidates by default, which should reduce no-op retry churn
+    - a follow-up regression fix now ensures those deferred worker assignments are not mistakenly passed through the combat-only operational refresh path, which had briefly caused friendly-tile worker jobs to idle instead of advancing
+    - worker lane hardening now keeps real improvement jobs stickier:
+      - a worker already on a target tile no longer loses that job simply because another worker still carries an overlapping reservation elsewhere in memory
+      - worker reposition candidates are now suppressed when the target tile is already occupied by another friendly worker, which should reduce blocked duplicate-worker retasks
+      - worker `auto_explore` / `hold_position` direct actions are now hidden whenever the unit still has a valid local improvement lane, which should reduce role drift away from productive worker jobs
   - science-side review cadence is now less queue-shaped:
     - old trigger aliases such as `pottery_queued`, `writing_queued`, and `library_queued` are normalized onto state-based metrics like `pottery_selected`, `writing_selected`, and `library_started`
     - deadline-style science triggers no longer fire just because a desired next tech is absent while another tech is still legitimately in progress

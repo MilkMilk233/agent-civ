@@ -8,7 +8,11 @@ import com.unciv.models.ruleset.tile.ResourceType
 import com.unciv.models.ruleset.unique.GameContext
 
 object AgentWorkerJobPlanner {
-    internal fun findWorkerJobs(unit: MapUnit, currentAssignment: UnitAssignmentMemory? = null): List<WorkerJob> {
+    internal fun findWorkerJobs(
+        unit: MapUnit,
+        memory: AgentMemory = unit.civ.agentMemory,
+        currentAssignment: UnitAssignmentMemory? = null,
+    ): List<WorkerJob> {
         if (!unit.cache.hasUniqueToBuildImprovements || !unit.hasMovement()) return emptyList()
         val civInfo = unit.civ
         val candidateTiles = sequenceOf(unit.getTile()) + unit.movement.getDistanceToTiles().keys.asSequence()
@@ -24,7 +28,10 @@ object AgentWorkerJobPlanner {
             val targetTile = civInfo.gameInfo.tileMap.values.firstOrNull {
                 it.position.x == assignmentTarget.targetX && it.position.y == assignmentTarget.targetY
             }
-            if (targetTile != null && targetTile.getOwner() == civInfo) {
+            if (targetTile != null &&
+                targetTile.getOwner() == civInfo &&
+                !isOccupiedByOtherWorker(unit, targetTile)
+            ) {
                 val stickyJob = jobsByTile["${targetTile.position.x},${targetTile.position.y}"]
                     ?: WorkerJob(
                         priority = 65,
@@ -39,6 +46,14 @@ object AgentWorkerJobPlanner {
                         isCommittedAssignment = true,
                     )
                 jobsByTile["${targetTile.position.x},${targetTile.position.y}"] = boostCommittedJob(unit, stickyJob, assignmentTarget)
+            }
+        }
+
+        val reservedTargets = reservedWorkerTargets(unit, memory)
+        if (reservedTargets.isNotEmpty()) {
+            val currentTileKey = "${unit.getTile().position.x},${unit.getTile().position.y}"
+            jobsByTile.entries.removeIf { (tileKey, _) ->
+                tileKey in reservedTargets && tileKey != currentTileKey
             }
         }
 
@@ -153,6 +168,39 @@ object AgentWorkerJobPlanner {
             intentLabel = assignment.detail ?: job.intentLabel,
             isCommittedAssignment = true,
         )
+    }
+
+    private fun reservedWorkerTargets(
+        unit: MapUnit,
+        memory: AgentMemory,
+    ): Set<String> {
+        val turn = unit.civ.gameInfo.turns
+        val liveWorkerIds = unit.civ.units.getCivUnits()
+            .asSequence()
+            .filter { it.cache.hasUniqueToBuildImprovements }
+            .map { it.id }
+            .toHashSet()
+
+        return memory.unitAssignments
+            .asSequence()
+            .filter { it.unitId != unit.id }
+            .filter { it.unitId in liveWorkerIds }
+            .filter { it.role == "improve_tile" }
+            .filter { it.targetX != null && it.targetY != null }
+            .filter { it.staleAfterTurn == 0 || it.staleAfterTurn >= turn }
+            .map { "${it.targetX},${it.targetY}" }
+            .toSet()
+    }
+
+    private fun isOccupiedByOtherWorker(
+        unit: MapUnit,
+        tile: Tile,
+    ): Boolean {
+        return tile.getUnits().any { occupant ->
+            occupant.id != unit.id &&
+                occupant.civ == unit.civ &&
+                occupant.cache.hasUniqueToBuildImprovements
+        }
     }
 
     internal data class WorkerJob(

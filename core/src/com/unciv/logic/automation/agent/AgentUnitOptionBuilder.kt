@@ -47,7 +47,7 @@ object AgentUnitOptionBuilder {
                 candidates[candidate.observation.candidateId] = candidate
                 observations += candidate.observation
             }
-            buildWorkerCandidates(unit, currentAssignment).forEach { candidate ->
+            buildWorkerCandidates(unit, memory, currentAssignment).forEach { candidate ->
                 candidates[candidate.observation.candidateId] = candidate
                 observations += candidate.observation
             }
@@ -55,7 +55,7 @@ object AgentUnitOptionBuilder {
                 candidates[candidate.observation.candidateId] = candidate
                 observations += candidate.observation
             }
-            buildDirectActionCandidates(unit, availableActions, attackContext, currentAssignment).forEach { candidate ->
+            buildDirectActionCandidates(unit, availableActions, attackContext, currentAssignment, memory).forEach { candidate ->
                 candidates[candidate.observation.candidateId] = candidate
                 observations += candidate.observation
             }
@@ -98,6 +98,7 @@ object AgentUnitOptionBuilder {
         val activeAssignment = refreshOperationalAssignment(unit, assignment) ?: return false
         return when (activeAssignment.role) {
             "auto_explore" -> unit.isExploring() || canInvokeAction(unit, UnitActionType.Explore)
+            "improve_tile" -> hasWorkerAssignmentStep(unit, activeAssignment)
             "move_to_tile" -> findAssignmentTargetTile(unit, activeAssignment)?.let { canAdvanceToward(unit, it) } == true
             "settle_city_site" -> {
                 val targetTile = findAssignmentTargetTile(unit, activeAssignment) ?: return false
@@ -125,6 +126,7 @@ object AgentUnitOptionBuilder {
         val activeAssignment = refreshOperationalAssignment(unit, assignment) ?: return false
         return when (activeAssignment.role) {
             "auto_explore" -> advanceAutoExploreAssignment(unit)
+            "improve_tile" -> advanceWorkerAssignment(unit, activeAssignment)
             "move_to_tile" -> {
                 val targetTile = findAssignmentTargetTile(unit, activeAssignment) ?: return false
                 moveTowardTile(unit, targetTile)
@@ -432,11 +434,25 @@ object AgentUnitOptionBuilder {
         availableActions: List<UnitAction>,
         attackContext: AttackConversionContext,
         currentAssignment: UnitAssignmentMemory?,
+        memory: AgentMemory,
     ): List<AgentUnitRuntimeCandidate> {
+        val shouldPreserveWorkerLane = unit.cache.hasUniqueToBuildImprovements &&
+            shouldPreserveWorkerLane(unit, memory, currentAssignment)
         return availableActions
             .asSequence()
             .filter { it.action != null }
             .filter { isSurfacedDirectActionType(it.type) }
+            .filterNot { action ->
+                shouldPreserveWorkerLane &&
+                    action.type in setOf(
+                        UnitActionType.Explore,
+                        UnitActionType.StopExploration,
+                        UnitActionType.Fortify,
+                        UnitActionType.FortifyUntilHealed,
+                        UnitActionType.Sleep,
+                        UnitActionType.SleepUntilHealed,
+                    )
+            }
             .filterNot { action ->
                 action.type in setOf(UnitActionType.Explore, UnitActionType.StopExploration) &&
                     isOperationalCombatUnit(unit) &&
@@ -504,15 +520,32 @@ object AgentUnitOptionBuilder {
 
     private fun buildWorkerCandidates(
         unit: MapUnit,
+        memory: AgentMemory,
         currentAssignment: UnitAssignmentMemory?,
     ): List<AgentUnitRuntimeCandidate> {
         if (!unit.cache.hasUniqueToBuildImprovements || !unit.hasMovement()) return emptyList()
-        return AgentWorkerJobPlanner.findWorkerJobs(unit, currentAssignment = currentAssignment)
+        val workerJobs = AgentWorkerJobPlanner.findWorkerJobs(unit, memory = memory, currentAssignment = currentAssignment)
+        val assignmentTarget = currentAssignment
+            ?.takeIf { it.role == "improve_tile" && it.targetX != null && it.targetY != null }
+        val assignmentTargetTile = assignmentTarget?.let { findAssignmentTargetTile(unit, it) }
+        val onAssignmentTarget = assignmentTarget != null &&
+            unit.getTile().position.x == assignmentTarget.targetX &&
+            unit.getTile().position.y == assignmentTarget.targetY
+        if (!onAssignmentTarget &&
+            assignmentTarget != null &&
+            !isBlockedByOtherFriendlyWorker(unit, assignmentTargetTile) &&
+            workerJobs.any { it.tileX == assignmentTarget.targetX && it.tileY == assignmentTarget.targetY }
+        ) {
+            return emptyList()
+        }
+        return workerJobs
             .mapNotNull { job ->
                 val isCurrentTile = unit.getTile().position.x == job.tileX && unit.getTile().position.y == job.tileY
                 if (isCurrentTile) {
                     buildCurrentWorkerCandidate(unit, job)
                 } else {
+                    val targetTile = unit.civ.gameInfo.tileMap[HexCoord(job.tileX, job.tileY)]
+                    if (isBlockedByOtherFriendlyWorker(unit, targetTile)) return@mapNotNull null
                     val candidateId = "unitworkerreposition:${unit.id}:${job.tileX},${job.tileY}"
                     AgentUnitRuntimeCandidate(
                         observation = UnitOptionCandidateObservation(
@@ -527,6 +560,9 @@ object AgentUnitOptionBuilder {
                             val liveUnit = currentCiv.units.getCivUnits().firstOrNull { it.id == unit.id }
                                 ?: return@AgentUnitRuntimeCandidate "Unit option rejected: unit missing"
                             val liveTarget = currentCiv.gameInfo.tileMap[HexCoord(job.tileX, job.tileY)]
+                            if (isBlockedByOtherFriendlyWorker(liveUnit, liveTarget)) {
+                                return@AgentUnitRuntimeCandidate "Unit option rejected: worker job is already occupied by another worker"
+                            }
                             if (liveUnit.getTile() == liveTarget) return@AgentUnitRuntimeCandidate null
                             if (!liveUnit.hasMovement()) return@AgentUnitRuntimeCandidate "Unit option rejected: unit has no movement left"
                             if (!liveUnit.movement.canReach(liveTarget) && liveUnit.movement.getShortestPath(liveTarget).isEmpty()) {
@@ -546,6 +582,91 @@ object AgentUnitOptionBuilder {
                 }
             }
             .take(maxWorkerCandidatesPerUnit)
+    }
+
+    private fun hasWorkerAssignmentStep(
+        unit: MapUnit,
+        assignment: UnitAssignmentMemory,
+    ): Boolean {
+        val job = resolveWorkerAssignedJob(unit, assignment) ?: return false
+        val targetTile = findAssignmentTargetTile(unit, assignment) ?: return false
+        if (unit.getTile() != targetTile && isBlockedByOtherFriendlyWorker(unit, targetTile)) return false
+        if (unit.getTile() != targetTile) return canAdvanceToward(unit, targetTile)
+
+        if (job.isRepair) {
+            return targetTile.improvementInProgress == Constants.repair ||
+                UnitActionsFromUniques.getRepairAction(unit)?.action != null
+        }
+
+        val improvementName = resolveWorkerJobImprovementName(unit, targetTile, job) ?: return false
+        if (targetTile.improvementInProgress == improvementName) return true
+        val improvement = resolveBuildableImprovement(unit.civ, unit, improvementName) ?: return false
+        return canStartImprovementNow(unit, targetTile, improvement)
+    }
+
+    private fun advanceWorkerAssignment(
+        unit: MapUnit,
+        assignment: UnitAssignmentMemory,
+    ): Boolean {
+        val job = resolveWorkerAssignedJob(unit, assignment) ?: return false
+        val targetTile = findAssignmentTargetTile(unit, assignment) ?: return false
+        if (unit.getTile() != targetTile && isBlockedByOtherFriendlyWorker(unit, targetTile)) return false
+        if (unit.getTile() != targetTile) return moveTowardTile(unit, targetTile)
+
+        if (job.isRepair) {
+            if (targetTile.improvementInProgress == Constants.repair) return true
+            val repairAction = UnitActionsFromUniques.getRepairAction(unit) ?: return false
+            repairAction.action?.invoke()
+            return targetTile.improvementInProgress == Constants.repair
+        }
+
+        val improvementName = resolveWorkerJobImprovementName(unit, targetTile, job) ?: return false
+        if (targetTile.improvementInProgress == improvementName) return true
+        val improvement = resolveBuildableImprovement(unit.civ, unit, improvementName) ?: return false
+        if (!canStartImprovementNow(unit, targetTile, improvement)) return false
+        targetTile.startWorkingOnImprovement(improvement, unit.civ, unit)
+        return targetTile.improvementInProgress == improvement.name
+    }
+
+    private fun resolveWorkerAssignedJob(
+        unit: MapUnit,
+        assignment: UnitAssignmentMemory,
+    ): AgentWorkerJobPlanner.WorkerJob? {
+        return AgentWorkerJobPlanner.findWorkerJobs(
+            unit,
+            memory = unit.civ.agentMemory,
+            currentAssignment = assignment,
+        ).firstOrNull { it.tileX == assignment.targetX && it.tileY == assignment.targetY }
+    }
+
+    private fun resolveWorkerJobImprovementName(
+        unit: MapUnit,
+        tile: Tile,
+        job: AgentWorkerJobPlanner.WorkerJob,
+    ): String? {
+        return job.improvementName ?: unit.civ.getWorkerAutomation().chooseImprovementForTile(unit, tile)?.name
+    }
+
+    private fun shouldPreserveWorkerLane(
+        unit: MapUnit,
+        memory: AgentMemory,
+        currentAssignment: UnitAssignmentMemory?,
+    ): Boolean {
+        if (currentAssignment?.role == "improve_tile" && hasGroundedAssignmentStep(unit, currentAssignment)) return true
+        return AgentWorkerJobPlanner.findWorkerJobs(unit, memory = memory, currentAssignment = currentAssignment).isNotEmpty()
+    }
+
+    private fun isBlockedByOtherFriendlyWorker(
+        unit: MapUnit,
+        targetTile: Tile?,
+    ): Boolean {
+        targetTile ?: return false
+        if (unit.getTile() == targetTile) return false
+        return targetTile.getUnits().any { occupant ->
+            occupant.id != unit.id &&
+                occupant.civ == unit.civ &&
+                occupant.cache.hasUniqueToBuildImprovements
+        }
     }
 
     private fun buildCurrentWorkerCandidate(
@@ -1014,6 +1135,10 @@ object AgentUnitOptionBuilder {
         unit: MapUnit,
         assignment: UnitAssignmentMemory,
     ): UnitAssignmentMemory? {
+        if (assignment.role !in setOf("stage_near_target_city", "attack_target_city", "fallback_and_heal")) {
+            return assignment
+        }
+
         val objective = resolveAssignmentObjective(unit, assignment) ?: return null
         val objectiveTile = unit.civ.gameInfo.tileMap[HexCoord(objective.x, objective.y)]
         val objectiveOwner = objectiveTile.getOwner()
